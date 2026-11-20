@@ -93,15 +93,22 @@ class MarketValidator:
             return {"is_valid": False, "status": "INSUFFICIENT_HISTORY", "reason": f"Only {len(df)} candles available (< 5 required)"}
 
         df_eval = df.copy()
+        ist = pytz.timezone('Asia/Kolkata')
         now = MarketValidator.get_ist_now()
         now_ts = now.timestamp()
         
-        # Check index type
+        # Check index type and ensure timezone awareness in Asia/Kolkata
         if not pd.api.types.is_datetime64_any_dtype(df_eval.index):
             try:
                 df_eval.index = pd.to_datetime(df_eval.index)
             except Exception as e:
                 return {"is_valid": False, "status": "INVALID_INDEX", "reason": f"Cannot parse datetime index: {e}"}
+
+        # Normalize naive datetime index to Asia/Kolkata
+        if df_eval.index.tz is None:
+            df_eval.index = df_eval.index.tz_localize(ist)
+        elif str(df_eval.index.tz) != 'Asia/Kolkata':
+            df_eval.index = df_eval.index.tz_convert(ist)
 
         last_dt = df_eval.index[-1]
         last_ts = last_dt.timestamp() if hasattr(last_dt, 'timestamp') else float(last_dt)

@@ -43,6 +43,7 @@ screener_state = {
     "raw_market_cache": {},        # 5m OHLCV and raw technicals
     "daily_market_cache": {},      # 1mo 1d OHLC for true Wilder Daily ATR14 calculation
     "enriched_signals_cache": {},  # Full 15-strategy + AI enriched results with timestamps
+    "active_signals_map": {},      # Real-time normalized cache of active trade signal IDs
     "symbol_names": {},            # Dynamic symbol to company name map from Groww API
     "stock_sector_cache": {}       # Dynamic sector mapping cache for all discovered stocks
 }
@@ -455,6 +456,23 @@ def background_screener_worker():
 
             # 2. Stock market-data polling separated from sector refresh (runs every 45-60s)
             if now - last_market_poll > 45:
+                # Refresh active_signals_map directly from database
+                try:
+                    conn = get_db_connection()
+                    cur = conn.cursor()
+                    cur.execute("SELECT id, symbol FROM historical_signals WHERE outcome = 'ACTIVE'")
+                    active_map = {}
+                    for row in cur.fetchall():
+                        s_raw = row["symbol"]
+                        clean_s = s_raw.replace(".NS", "")
+                        active_map[s_raw] = row["id"]
+                        active_map[f"{clean_s}.NS"] = row["id"]
+                        active_map[clean_s] = row["id"]
+                    screener_state["active_signals_map"] = active_map
+                    conn.close()
+                except Exception:
+                    pass
+
                 watchlist_stks = [x["symbol"] for x in (screener_state["bullish_momentum_watchlist"] + screener_state["bearish_momentum_watchlist"])]
                 active_db_symbols = list(get_active_signal_symbols())
                 all_stk_symbols = list(dict.fromkeys(watchlist_stks + active_db_symbols))
@@ -520,7 +538,8 @@ from strategies.institutional_engine import InstitutionalStrategyEngine
 from engine.news_engine import NewsIntelligenceEngine
 from engine.groq_client import GroqIntelligence
 from engine.anomaly_engine import AnomalyDetector
-from core.storage import log_signal, get_recent_signals, evaluate_open_outcomes, get_strategy_performance_stats, get_active_signal_symbols
+from engine.pre_momentum_engine import PreMomentumEngine
+from core.storage import log_signal, get_recent_signals, evaluate_open_outcomes, get_strategy_performance_stats, get_active_signal_symbols, get_db_connection
 
 news_engine = NewsIntelligenceEngine()
 groq_ai = GroqIntelligence()
@@ -692,6 +711,20 @@ def smc_scan():
             opp_eval=inst_res
         )
 
+        # 6c. Run Dedicated Pre-Momentum Prediction Engine
+        pre_mom = PreMomentumEngine.classify_stage(
+            df=eval_df,
+            sector_bias=sector_bias,
+            vwap=inst_res["vwap"],
+            rvol=inst_res["rvol"],
+            composite_score=inst_res["composite_score"],
+            opp_eval=inst_res
+        )
+        res["pre_momentum_stage"] = pre_mom["stage"]
+        res["pre_momentum_score"] = pre_mom["stage_score"]
+        res["pre_momentum_indicators"] = pre_mom["indicators"]
+        res["pre_momentum_details"] = pre_mom["details"]
+
         # 7. Groq AI Institutional Summary
         ai_intel = groq_ai.analyze_signal(
             symbol=clean_sym,
@@ -745,16 +778,21 @@ def smc_scan():
                     "all_triggered": inst_res["triggered_strategies"]
                 })
                 res["signal_id"] = signal_id
+                # Instantly cache to active_signals_map
+                screener_state.setdefault("active_signals_map", {})[symbol] = signal_id
+                screener_state["active_signals_map"][clean_sym] = signal_id
+                screener_state["active_signals_map"][f"{clean_sym}.NS"] = signal_id
             else:
                 res["signal_id"] = None
         else:
             # Institutional engine is NEUTRAL: clear any momentum-only buy/sell action
+            opp_reason = inst_res.get("opportunity_reason") or "Institutional confluence is neutral"
             res["action"] = "WAIT FOR ENTRY (NO TRADE)"
-            res["verdict"] = f"SCORE {inst_res['composite_score']}/100 (NEUTRAL CONFLUENCE)"
+            res["verdict"] = f"SCORE {inst_res['composite_score']}/100 | {opp_reason}"
             res["suggested_sl"] = None
             res["suggested_tp1"] = None
             res["suggested_tp2"] = None
-            res["reasoning"] = f"Institutional confluence is neutral. Score {inst_res['composite_score']}/100. Bot waiting for confirmed setup."
+            res["reasoning"] = f"{opp_reason}. Score {inst_res['composite_score']}/100. Bot waiting for confirmed setup."
             res["signal_id"] = None
             res["signal_status"] = "NEUTRAL"
 

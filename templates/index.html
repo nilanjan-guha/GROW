@@ -351,6 +351,10 @@
             const alertBox = document.getElementById('confirmedTradeAlert');
             const alertDetails = document.getElementById('alertDetails');
             const alertTime = document.getElementById('alertTime');
+            if (!smc || !smc.action || (!smc.action.includes('BUY') && !smc.action.includes('SELL'))) {
+                alertBox.style.display = 'none';
+                return;
+            }
             const isBuy = smc.action.includes('BUY');
             alertBox.style.display = 'block';
             alertBox.style.borderColor = isBuy ? 'var(--accent-green)' : 'var(--accent-red)';
@@ -368,7 +372,7 @@
             const pot1 = smc.potential_pct ? `(${sign}${smc.potential_pct}% room)` : '';
             const pot2 = smc.potential_tp2_pct ? `(${sign}${smc.potential_tp2_pct}%)` : '';
             const rrText = smc.risk_reward_ratio ? `&nbsp;|&nbsp; RR: <span style="color:#a855f7;">1:${smc.risk_reward_ratio}</span>` : '';
-            alertDetails.innerHTML = `<span style="color:${isBuy ? 'var(--accent-green)' : 'var(--accent-red)'}">🔥 BEST CONFIRMED TRADE: ${isBuy ? 'BUY / CALL (CE)' : 'SELL / PUT (PE)'}</span> <strong>${symbol.replace('.NS', '')}</strong> @ ₹${smc.current_price.toFixed(1)} &nbsp;|&nbsp; SL: <span style="color:#f59e0b;">₹${smc.suggested_sl}</span> &nbsp;|&nbsp; Target 1: <span style="color:#38bdf8;">₹${smc.suggested_tp1} ${pot1}</span> ${smc.suggested_tp2 ? '&nbsp;|&nbsp; Target 2: ₹' + smc.suggested_tp2 + ' ' + pot2 : ''} ${rrText}`;
+            alertDetails.innerHTML = `<span style="color:${isBuy ? 'var(--accent-green)' : 'var(--accent-red)'}">🔥 BEST CONFIRMED TRADE: ${isBuy ? 'BUY / CALL (CE)' : 'SELL / PUT (PE)'}</span> <strong>${symbol.replace('.NS', '')}</strong> @ ₹${Number(smc.current_price).toFixed(1)} &nbsp;|&nbsp; SL: <span style="color:#f59e0b;">₹${smc.suggested_sl}</span> &nbsp;|&nbsp; Target 1: <span style="color:#38bdf8;">₹${smc.suggested_tp1} ${pot1}</span> ${smc.suggested_tp2 ? '&nbsp;|&nbsp; Target 2: ₹' + smc.suggested_tp2 + ' ' + pot2 : ''} ${rrText}`;
         }
 
         async function syncActiveTradeBanner() {
@@ -492,6 +496,12 @@
                     // Only refresh radar numbers if user is actively looking at this stock
                     if (target.symbol === currentStockSymbol) {
                         renderRadarData(target.symbol, smc);
+                        // If current on-screen stock is NO TRADE and matches top banner, invalidate stale banner
+                        if ((!smc.action.includes('BUY') && !smc.action.includes('SELL')) && bestActiveSignal && bestActiveSignal.symbol === target.symbol) {
+                            bestActiveSignal = null;
+                            const alertBox = document.getElementById('confirmedTradeAlert');
+                            if (alertBox) alertBox.style.display = 'none';
+                        }
                     }
                 }
             } catch (e) {}
@@ -546,6 +556,12 @@
                         log(`🎯 [EXACT ENTRY ACTIVE] ${symbol} => ${smc.action} | Stop Loss: ₹${smc.suggested_sl} | TP: ₹${smc.suggested_tp1}`, 'ENTRY');
                     } else {
                         log(`[${symbol} Verdict] ${smc.action} - ${smc.reasoning}`, 'NO_ENTRY');
+                        // Invalidate stale banner if user clicked this stock and it evaluates to NO TRADE
+                        if (bestActiveSignal && (bestActiveSignal.symbol === symbol || bestActiveSignal.symbol === symbol.replace('.NS', '') || `${bestActiveSignal.symbol}.NS` === symbol)) {
+                            bestActiveSignal = null;
+                            const alertBox = document.getElementById('confirmedTradeAlert');
+                            if (alertBox) alertBox.style.display = 'none';
+                        }
                     }
                 }
             } catch (e) {

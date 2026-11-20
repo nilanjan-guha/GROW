@@ -120,6 +120,7 @@ class OpportunityPotentialEngine:
                 "range_exhaustion_ratio": 0.0,
                 "daily_atr_source": "NONE",
                 "is_reversal_detected": False,
+                "confidence_penalty": 0,
                 "reason": "Neutral direction or insufficient data"
             }
 
@@ -292,6 +293,9 @@ class OpportunityPotentialEngine:
             else:
                 reason = f"Clear expansion room: +{room_to_tp1_pct}% to {nearest_name} (₹{tp1:.1f}) [{tp1_type}], RR: 1:{rr_ratio}."
 
+            # If daily ATR relied on the 1.8% fallback, apply a strict confidence penalty & warn in signal
+            confidence_penalty = 15 if daily_atr_source == "BASELINE_VOLATILITY_FALLBACK" else 0
+
             return {
                 "is_viable": is_viable,
                 "potential_pct": room_to_tp1_pct,
@@ -307,6 +311,7 @@ class OpportunityPotentialEngine:
                 "range_exhaustion_ratio": range_exhaustion_ratio,
                 "exhaustion_risk": exhaustion_level,
                 "daily_atr_source": daily_atr_source,
+                "confidence_penalty": confidence_penalty,
                 "dynamic_clearance_pct": dynamic_clearance_pct,
                 "is_reversal_detected": reversal_detected,
                 "reason": reason
@@ -396,6 +401,9 @@ class OpportunityPotentialEngine:
             else:
                 reason = f"Clear downside expansion room: -{room_to_tp1_pct}% to {nearest_name} (₹{tp1:.1f}) [{tp1_type}], RR: 1:{rr_ratio}."
 
+            # If daily ATR relied on the 1.8% fallback, apply a strict confidence penalty & warn in signal
+            confidence_penalty = 15 if daily_atr_source == "BASELINE_VOLATILITY_FALLBACK" else 0
+
             return {
                 "is_viable": is_viable,
                 "potential_pct": room_to_tp1_pct,
@@ -411,6 +419,7 @@ class OpportunityPotentialEngine:
                 "range_exhaustion_ratio": range_exhaustion_ratio,
                 "exhaustion_risk": exhaustion_level,
                 "daily_atr_source": daily_atr_source,
+                "confidence_penalty": confidence_penalty,
                 "dynamic_clearance_pct": dynamic_clearance_pct,
                 "is_reversal_detected": reversal_detected,
                 "reason": reason

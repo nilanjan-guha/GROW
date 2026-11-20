@@ -119,6 +119,75 @@ class StrategyLearningEngine:
                 updated_at = excluded.updated_at
             """, (strat, total, round(win_rate, 1), round(npf, 2), multiplier, now))
 
+        # Multi-dimensional Learning: Aggregate and learn by Market Regime and Time-Of-Day
+        regime_stats = {}
+        time_stats = {}
+        for t in trades:
+            regime = t["market_regime"] or "TRENDING"
+            if regime not in regime_stats:
+                regime_stats[regime] = {"wins": 0, "losses": 0, "net_profit": 0.0, "net_loss": 0.0}
+            
+            pnl = float(t["net_pnl"]) if t["net_pnl"] is not None else float(t["final_pnl"])
+            is_win = t["outcome"] in ("WIN", "WIN_FULL", "WIN_PARTIAL")
+            if is_win:
+                regime_stats[regime]["wins"] += 1
+                regime_stats[regime]["net_profit"] += max(0.0, pnl)
+            else:
+                regime_stats[regime]["losses"] += 1
+                regime_stats[regime]["net_loss"] += abs(min(0.0, pnl))
+
+            # Time of day dimension
+            trade_ts = float(t["timestamp"] or now)
+            import datetime
+            dt = datetime.datetime.fromtimestamp(trade_ts)
+            t_bucket = StrategyLearningEngine.get_time_bucket(dt.hour, dt.minute)
+            if t_bucket not in time_stats:
+                time_stats[t_bucket] = {"wins": 0, "losses": 0, "net_profit": 0.0, "net_loss": 0.0}
+            if is_win:
+                time_stats[t_bucket]["wins"] += 1
+                time_stats[t_bucket]["net_profit"] += max(0.0, pnl)
+            else:
+                time_stats[t_bucket]["losses"] += 1
+                time_stats[t_bucket]["net_loss"] += abs(min(0.0, pnl))
+
+        # Record regime calibrations
+        for reg, stats in regime_stats.items():
+            tot = stats["wins"] + stats["losses"]
+            wr = (stats["wins"] / tot * 100) if tot > 0 else 0.0
+            npf_val = (stats["net_profit"] / stats["net_loss"]) if stats["net_loss"] > 0 else (2.0 if stats["net_profit"] > 0 else 1.0)
+            mult = 1.0
+            if tot >= StrategyLearningEngine.MIN_OBSERVATIONS:
+                mult = min(1.30, max(0.70, round(1.0 + (wr - 50.0)/100.0, 2)))
+            c.execute("""
+            INSERT INTO strategy_calibrations (dimension_key, dimension_type, sample_size, win_rate, net_profit_factor, weight_multiplier, updated_at)
+            VALUES (?, 'MARKET_REGIME', ?, ?, ?, ?, ?)
+            ON CONFLICT(dimension_key) DO UPDATE SET
+                sample_size = excluded.sample_size,
+                win_rate = excluded.win_rate,
+                net_profit_factor = excluded.net_profit_factor,
+                weight_multiplier = excluded.weight_multiplier,
+                updated_at = excluded.updated_at
+            """, (f"REGIME_{reg}", tot, round(wr, 1), round(npf_val, 2), mult, now))
+
+        # Record time-of-day calibrations
+        for tb, stats in time_stats.items():
+            tot = stats["wins"] + stats["losses"]
+            wr = (stats["wins"] / tot * 100) if tot > 0 else 0.0
+            npf_val = (stats["net_profit"] / stats["net_loss"]) if stats["net_loss"] > 0 else (2.0 if stats["net_profit"] > 0 else 1.0)
+            mult = 1.0
+            if tot >= StrategyLearningEngine.MIN_OBSERVATIONS:
+                mult = min(1.30, max(0.70, round(1.0 + (wr - 50.0)/100.0, 2)))
+            c.execute("""
+            INSERT INTO strategy_calibrations (dimension_key, dimension_type, sample_size, win_rate, net_profit_factor, weight_multiplier, updated_at)
+            VALUES (?, 'TIME_OF_DAY', ?, ?, ?, ?, ?)
+            ON CONFLICT(dimension_key) DO UPDATE SET
+                sample_size = excluded.sample_size,
+                win_rate = excluded.win_rate,
+                net_profit_factor = excluded.net_profit_factor,
+                weight_multiplier = excluded.weight_multiplier,
+                updated_at = excluded.updated_at
+            """, (f"TIME_{tb}", tot, round(wr, 1), round(npf_val, 2), mult, now))
+
         conn.commit()
         conn.close()
         return calibrations

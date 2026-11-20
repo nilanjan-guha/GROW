@@ -34,13 +34,24 @@ class MissedMoveDetector:
         )
         """)
         # Migration: Ensure unique index exists on existing databases
+        # Clean duplicates safely first by keeping the row with highest move_pct
         try:
+            c.execute("""
+            DELETE FROM missed_moves 
+            WHERE id NOT IN (
+                SELECT id FROM (
+                    SELECT id, MAX(move_pct) 
+                    FROM missed_moves 
+                    GROUP BY symbol, direction, candle_end_time
+                )
+            )
+            """)
             c.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_missed_moves_unique 
             ON missed_moves (symbol, direction, candle_end_time)
             """)
-        except Exception:
-            pass
+        except Exception as e:
+            print("[MISSED MOVE MIGRATION] Warning:", e)
         conn.commit()
         conn.close()
 

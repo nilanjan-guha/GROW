@@ -207,6 +207,8 @@ def evaluate_open_outcomes(data_map):
         cursor.execute("SELECT * FROM historical_signals WHERE outcome = 'ACTIVE'")
         active_signals = cursor.fetchall()
         now = time.time()
+        outcomes_changed = False
+        from engine.cost_engine import IndianMarketCosts
 
         for sig in active_signals:
             sym = sig["symbol"]
@@ -242,9 +244,10 @@ def evaluate_open_outcomes(data_map):
             net_pnl = float(sig["net_pnl"] or 0.0)
             brokerage_costs = float(sig["brokerage_costs"] or 0.0)
 
-            # Realistic Indian F&O equity cost model on turn (approx 0.08% = ₹80 per 1 lakh turnover for STT, stamp duty, exchange turnover fee, SEBI & GST)
-            est_costs = round(entry * 0.0008, 2)
-            outcomes_changed = False
+            # Realistic Indian F&O equity cost model
+            # Computed dynamically per exit point or default conservative baseline (approx 0.06-0.08% of turnover)
+            default_costs = IndianMarketCosts.calculate_intraday_costs(entry, entry, quantity=100)
+            est_costs = default_costs["cost_per_share"]
 
             # Case A: Full DataFrame provided
             import pandas as pd
