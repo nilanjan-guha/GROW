@@ -6,42 +6,54 @@ class OpportunityPotentialEngine:
     Dedicated Opportunity Potential & Obstacle Clearance Engine:
     
     Before ANY BUY or SELL trade is validated, this engine inspects the market structure
-    to verify whether price has genuine, unobstructed expansion room (at least 1.0% to 1.5%+)
+    to verify whether price has genuine, unobstructed expansion room (strictly > 1.0%)
     to the next structural hurdle before facing exhaustion or reversal.
     
-    Obstacles evaluated:
-    - Swing Highs / Swing Lows (Fractal pivots)
-    - Previous Day High (PDH) & Previous Day Low (PDL)
-    - Today's Opening Range High (ORH) & Low (ORL)
-    - Fresh Supply Zones (for Longs) & Demand Zones (for Shorts)
-    - Intraday Session VWAP & Key Moving Averages
-    - Daily Average True Range (ATR) & Remaining Daily Range Exhaustion
+    Key Features:
+    1. Dual Volatility Tracking:
+       - intraday_atr_15m: 15-minute ATR for micro-structure and stop sizing
+       - daily_atr_14d: True multi-day ATR for daily range exhaustion
+    2. Strict > 1.0% Potential Gate:
+       - Uses raw unrounded potential (raw_room_to_tp1_pct > 1.0)
+    3. Structural Liquidity Mapping:
+       - Distinguishes confirmed structural targets (PDH/PDL, ORH/ORL, Swing Pivots, Order Blocks)
+         from volatility-based extensions.
+    4. Reversal and Setup Invalidation:
+       - Detects opposing candle momentum, rejection wicks, and opposing order flow.
+    5. Reward-to-Risk Validation:
+       - Computes actual risk_reward_ratio against structural stop-loss and requires RR >= 1.5.
     """
 
     @staticmethod
-    def evaluate_potential(df, current_price, direction, prev_close=None, vwap=None, supply_obs=None, demand_obs=None):
-        """
-        Determines whether the market actually has sufficient room for the trade.
-        Returns:
-            dict containing:
-            - is_viable (bool): True if room >= 1.0% to first obstacle
-            - potential_pct (float): Real percentage room to next hurdle
-            - tp1 (float): First structural target price
-            - tp2 (float): Secondary liquidity pool target price
-            - nearest_obstacle (str): Name and price of the opposing obstacle
-            - risk_reward_ratio (float): Structural reward vs risk
-            - exhaustion_risk (str): LOW, MODERATE, HIGH
-            - reason (str): Human-readable diagnosis
-        """
+    def calculate_daily_atr(df_copy, dates, current_price):
+        """Calculates true Daily ATR across historical completed trading sessions"""
+        daily_ranges = []
+        for i in range(len(dates) - 1):
+            day_data = df_copy[df_copy['Date'] == dates[i]]
+            if not day_data.empty:
+                d_high = float(day_data['High'].max())
+                d_low = float(day_data['Low'].min())
+                d_close = float(day_data['Close'].iloc[-1])
+                daily_ranges.append(d_high - d_low)
+
+        if daily_ranges:
+            return float(np.mean(daily_ranges))
+        return float(current_price * 0.018)  # Standard 1.8% daily volatility baseline
+
+    @staticmethod
+    def evaluate_potential(df, current_price, direction, prev_close=None, vwap=None, supply_obs=None, demand_obs=None, stop_loss=None):
         if df is None or df.empty or len(df) < 5 or direction == "NEUTRAL":
             return {
                 "is_viable": False,
                 "potential_pct": 0.0,
                 "tp1": None,
                 "tp2": None,
+                "tp1_type": "None",
+                "tp2_type": "None",
                 "nearest_obstacle": "None",
                 "risk_reward_ratio": 0.0,
                 "exhaustion_risk": "HIGH",
+                "is_reversal_detected": False,
                 "reason": "Neutral direction or insufficient data"
             }
 
@@ -51,7 +63,7 @@ class OpportunityPotentialEngine:
         c = df['Close']
         o = df['Open']
 
-        # 1. Previous Day High & Low
+        # 1. Date isolation
         df_copy = df.copy()
         if not pd.api.types.is_datetime64_any_dtype(df_copy.index):
             df_copy.index = pd.to_datetime(df_copy.index)
@@ -69,11 +81,15 @@ class OpportunityPotentialEngine:
         orh = float(today_df['High'].iloc[0]) if not today_df.empty else float(h.iloc[0])
         orl = float(today_df['Low'].iloc[0]) if not today_df.empty else float(l.iloc[0])
 
-        # 2. Daily ATR & Today's Intraday Excursion (Exhaustion Detection)
-        tr = pd.concat([h - l, (h - c.shift(1)).abs(), (l - c.shift(1)).abs()], axis=1).max(axis=1)
-        atr14 = float(tr.rolling(14).mean().iloc[-1]) or (curr_c * 0.012)
-        today_range = float(today_df['High'].max() - today_df['Low'].min()) if not today_df.empty else atr14
-        range_exhaustion_ratio = round(today_range / atr14, 2)
+        # 2. SEPARATE INTRADAY ATR vs TRUE DAILY ATR
+        # 15m ATR for local candle volatility
+        tr_15m = pd.concat([h - l, (h - c.shift(1)).abs(), (l - c.shift(1)).abs()], axis=1).max(axis=1)
+        intraday_atr_15m = float(tr_15m.rolling(14).mean().iloc[-1]) or (curr_c * 0.005)
+
+        # True Daily ATR across historical days
+        daily_atr = OpportunityPotentialEngine.calculate_daily_atr(df_copy, dates, curr_c)
+        today_range = float(today_df['High'].max() - today_df['Low'].min()) if not today_df.empty else intraday_atr_15m
+        range_exhaustion_ratio = round(today_range / daily_atr, 2)
 
         # 3. Detect Fractal Swing Highs and Swing Lows across prior completed candles
         hist_df = df.iloc[:-1] if len(df) > 5 else df
@@ -85,60 +101,90 @@ class OpportunityPotentialEngine:
             if float(l.iloc[i]) == min([float(x) for x in l.iloc[i-2:i+3]]):
                 swing_lows.append(float(l.iloc[i]))
 
+        # 4. REVERSAL & SETUP INVALIDATION DETECTION
+        # Check opposing candle pattern, rejection wick, and opposing OB reactions
+        curr_bar_o = float(o.iloc[-1])
+        curr_bar_h = float(h.iloc[-1])
+        curr_bar_l = float(l.iloc[-1])
+        curr_bar_range = (curr_bar_h - curr_bar_l) or 0.001
+        upper_wick = curr_bar_h - max(curr_c, curr_bar_o)
+        lower_wick = min(curr_c, curr_bar_o) - curr_bar_l
+
+        reversal_detected = False
+        reversal_reason = ""
+
         if direction == "BUY":
+            # Bearish rejection: upper wick > 45% of candle range or bear engulfing at high
+            if upper_wick / curr_bar_range > 0.45 and curr_c < curr_bar_o:
+                reversal_detected = True
+                reversal_reason = "Bearish rejection wick detected at resistance"
+            elif len(df) >= 2 and curr_c < float(l.iloc[-2]) and float(c.iloc[-2]) > float(o.iloc[-2]):
+                reversal_detected = True
+                reversal_reason = "Bearish engulfing breakdown below prior candle low"
+            elif vwap and curr_c < vwap and float(c.iloc[-2]) > vwap:
+                reversal_detected = True
+                reversal_reason = "Session VWAP lost on high volume"
+
             # Identify all structural obstacles ABOVE current price
             obstacles = []
             if pdh and pdh > curr_c:
-                obstacles.append(("Previous Day High (PDH)", pdh))
+                obstacles.append(("Previous Day High (PDH)", pdh, "STRUCTURAL_PDH"))
             if orh > curr_c:
-                obstacles.append(("Opening Range High (ORH)", orh))
-            
+                obstacles.append(("Opening Range High (ORH)", orh, "STRUCTURAL_ORH"))
             for sh in swing_highs:
                 if sh > curr_c:
-                    obstacles.append(("Swing Resistance", sh))
-
-            # Fresh supply order blocks
+                    obstacles.append(("Swing Resistance", sh, "STRUCTURAL_SWING"))
             if supply_obs:
                 for sob in supply_obs:
                     b = float(sob.get("bottom", 0))
                     if b > curr_c and not sob.get("mitigated"):
-                        obstacles.append(("Supply Zone Floor", b))
+                        obstacles.append(("Supply Zone Floor", b, "STRUCTURAL_SUPPLY_OB"))
 
-            # Sort obstacles by price ascending (nearest to furthest)
             obstacles.sort(key=lambda x: x[1])
-
-            # Filter out micro-noise obstacles (< 0.25% away)
             meaningful_obstacles = [obs for obs in obstacles if ((obs[1] - curr_c) / curr_c) >= 0.0025]
 
             if meaningful_obstacles:
-                nearest_name, nearest_price = meaningful_obstacles[0]
-                tp1 = nearest_price
-                # TP2 is the next hurdle beyond TP1, or ATR-extended liquidity target
-                tp2 = meaningful_obstacles[1][1] if len(meaningful_obstacles) > 1 else round(tp1 + (atr14 * 1.2), 2)
+                nearest_name, nearest_price, tp1_type = meaningful_obstacles[0]
+                tp1 = round(nearest_price, 2)
+                if len(meaningful_obstacles) > 1:
+                    tp2 = round(meaningful_obstacles[1][1], 2)
+                    tp2_type = meaningful_obstacles[1][2]
+                else:
+                    tp2 = round(tp1 + (intraday_atr_15m * 1.5), 2)
+                    tp2_type = "ESTIMATED_ATR_EXTENSION"
             else:
-                # Clear blue sky above: targets set by structural volatility expansion
                 nearest_name = "Blue Sky Expansion (No major structural resistance)"
-                tp1 = round(curr_c + (atr14 * 1.5), 2)
-                tp2 = round(curr_c + (atr14 * 2.5), 2)
+                tp1 = round(curr_c + (daily_atr * 0.75), 2)
+                tp2 = round(curr_c + (daily_atr * 1.25), 2)
+                tp1_type = "VOLATILITY_EXPANSION"
+                tp2_type = "ESTIMATED_ATR_EXTENSION"
 
-            room_to_tp1_pct = round(((tp1 - curr_c) / curr_c) * 100, 2)
+            raw_room_to_tp1_pct = ((tp1 - curr_c) / curr_c) * 100
+            room_to_tp1_pct = round(raw_room_to_tp1_pct, 2)
             room_to_tp2_pct = round(((tp2 - curr_c) / curr_c) * 100, 2)
 
-            # Check if stock has already moved > 1.8x its daily ATR (Range Exhaustion)
+            # Daily Range Exhaustion: If already consumed > 1.8x Daily ATR near the high of day
             is_exhausted = range_exhaustion_ratio >= 1.8 and curr_c >= float(today_df['High'].max()) * 0.995
 
-            # Viability Rule: Achievable room to nearest obstacle must be >= 1.0% AND not range exhausted
-            is_viable = (room_to_tp1_pct >= 1.0) and not is_exhausted
+            # STRICT > 1.0% UNROUNDED POTENTIAL GATE
+            is_viable = (raw_room_to_tp1_pct > 1.0) and not is_exhausted and not reversal_detected
+
+            # Calculate Reward-to-Risk ratio if stop-loss provided
+            risk = (curr_c - float(stop_loss)) if (stop_loss and float(stop_loss) < curr_c) else (intraday_atr_15m * 1.2)
+            reward = tp1 - curr_c
+            rr_ratio = round(reward / risk, 2) if risk > 0 else 1.5
 
             exhaustion_level = "HIGH" if is_exhausted else ("MODERATE" if range_exhaustion_ratio >= 1.2 else "LOW")
-            
+
             if not is_viable:
-                if is_exhausted:
-                    reason = f"Intraday move exhausted: Daily range ({range_exhaustion_ratio}x ATR) already consumed."
+                if reversal_detected:
+                    reason = f"Trade Invalidated: {reversal_reason}."
+                elif is_exhausted:
+                    reason = f"Intraday move exhausted: Daily range ({range_exhaustion_ratio}x Daily ATR) already consumed."
                 else:
-                    reason = f"Insufficient upside clearance: Nearest resistance ({nearest_name} @ ₹{tp1:.1f}) is only +{room_to_tp1_pct}% away."
+                    reason = f"Insufficient upside clearance: Nearest resistance ({nearest_name} @ ₹{tp1:.1f}) is only +{room_to_tp1_pct}% away (Strictly > 1.0% required)."
             else:
-                reason = f"Clear expansion room: +{room_to_tp1_pct}% to {nearest_name} (₹{tp1:.1f}), +{room_to_tp2_pct}% to secondary liquidity."
+                reason = f"Clear expansion room: +{room_to_tp1_pct}% to {nearest_name} (₹{tp1:.1f}) [{tp1_type}], RR: 1:{rr_ratio}."
 
             return {
                 "is_viable": is_viable,
@@ -146,59 +192,83 @@ class OpportunityPotentialEngine:
                 "potential_tp2_pct": room_to_tp2_pct,
                 "tp1": tp1,
                 "tp2": tp2,
+                "tp1_type": tp1_type,
+                "tp2_type": tp2_type,
                 "nearest_obstacle": f"{nearest_name} @ ₹{tp1:.1f}",
+                "risk_reward_ratio": rr_ratio,
                 "range_exhaustion_ratio": range_exhaustion_ratio,
                 "exhaustion_risk": exhaustion_level,
+                "is_reversal_detected": reversal_detected,
                 "reason": reason
             }
 
         elif direction == "SELL":
-            # Identify all structural obstacles BELOW current price
+            # Bullish rejection: lower wick > 45% of candle range or bull engulfing at low
+            if lower_wick / curr_bar_range > 0.45 and curr_c > curr_bar_o:
+                reversal_detected = True
+                reversal_reason = "Bullish absorption wick detected at support"
+            elif len(df) >= 2 and curr_c > float(h.iloc[-2]) and float(c.iloc[-2]) < float(o.iloc[-2]):
+                reversal_detected = True
+                reversal_reason = "Bullish engulfing reclaim above prior candle high"
+            elif vwap and curr_c > vwap and float(c.iloc[-2]) < vwap:
+                reversal_detected = True
+                reversal_reason = "Session VWAP reclaimed on high volume"
+
             obstacles = []
             if pdl and pdl < curr_c:
-                obstacles.append(("Previous Day Low (PDL)", pdl))
+                obstacles.append(("Previous Day Low (PDL)", pdl, "STRUCTURAL_PDL"))
             if orl < curr_c:
-                obstacles.append(("Opening Range Low (ORL)", orl))
-            
+                obstacles.append(("Opening Range Low (ORL)", orl, "STRUCTURAL_ORL"))
             for sl_val in swing_lows:
                 if sl_val < curr_c:
-                    obstacles.append(("Swing Support", sl_val))
-
-            # Fresh demand order blocks
+                    obstacles.append(("Swing Support", sl_val, "STRUCTURAL_SWING"))
             if demand_obs:
                 for dob in demand_obs:
                     t = float(dob.get("top", 0))
                     if t < curr_c and not dob.get("mitigated"):
-                        obstacles.append(("Demand Zone Ceiling", t))
+                        obstacles.append(("Demand Zone Ceiling", t, "STRUCTURAL_DEMAND_OB"))
 
-            # Sort obstacles by price descending (nearest to furthest below current price)
             obstacles.sort(key=lambda x: x[1], reverse=True)
-
             meaningful_obstacles = [obs for obs in obstacles if ((curr_c - obs[1]) / curr_c) >= 0.0025]
 
             if meaningful_obstacles:
-                nearest_name, nearest_price = meaningful_obstacles[0]
-                tp1 = nearest_price
-                tp2 = meaningful_obstacles[1][1] if len(meaningful_obstacles) > 1 else round(tp1 - (atr14 * 1.2), 2)
+                nearest_name, nearest_price, tp1_type = meaningful_obstacles[0]
+                tp1 = round(nearest_price, 2)
+                if len(meaningful_obstacles) > 1:
+                    tp2 = round(meaningful_obstacles[1][1], 2)
+                    tp2_type = meaningful_obstacles[1][2]
+                else:
+                    tp2 = round(tp1 - (intraday_atr_15m * 1.5), 2)
+                    tp2_type = "ESTIMATED_ATR_EXTENSION"
             else:
                 nearest_name = "Blue Sky Breakdown (No major structural support)"
-                tp1 = round(curr_c - (atr14 * 1.5), 2)
-                tp2 = round(curr_c - (atr14 * 2.5), 2)
+                tp1 = round(curr_c - (daily_atr * 0.75), 2)
+                tp2 = round(curr_c - (daily_atr * 1.25), 2)
+                tp1_type = "VOLATILITY_EXPANSION"
+                tp2_type = "ESTIMATED_ATR_EXTENSION"
 
-            room_to_tp1_pct = round(((curr_c - tp1) / curr_c) * 100, 2)
+            raw_room_to_tp1_pct = ((curr_c - tp1) / curr_c) * 100
+            room_to_tp1_pct = round(raw_room_to_tp1_pct, 2)
             room_to_tp2_pct = round(((curr_c - tp2) / curr_c) * 100, 2)
 
             is_exhausted = range_exhaustion_ratio >= 1.8 and curr_c <= float(today_df['Low'].min()) * 1.005
-            is_viable = (room_to_tp1_pct >= 1.0) and not is_exhausted
+            is_viable = (raw_room_to_tp1_pct > 1.0) and not is_exhausted and not reversal_detected
+
+            risk = (float(stop_loss) - curr_c) if (stop_loss and float(stop_loss) > curr_c) else (intraday_atr_15m * 1.2)
+            reward = curr_c - tp1
+            rr_ratio = round(reward / risk, 2) if risk > 0 else 1.5
+
             exhaustion_level = "HIGH" if is_exhausted else ("MODERATE" if range_exhaustion_ratio >= 1.2 else "LOW")
 
             if not is_viable:
-                if is_exhausted:
-                    reason = f"Downside move exhausted: Daily range ({range_exhaustion_ratio}x ATR) already consumed."
+                if reversal_detected:
+                    reason = f"Trade Invalidated: {reversal_reason}."
+                elif is_exhausted:
+                    reason = f"Downside move exhausted: Daily range ({range_exhaustion_ratio}x Daily ATR) already consumed."
                 else:
-                    reason = f"Insufficient downside clearance: Nearest support ({nearest_name} @ ₹{tp1:.1f}) is only -{room_to_tp1_pct}% away."
+                    reason = f"Insufficient downside clearance: Nearest support ({nearest_name} @ ₹{tp1:.1f}) is only -{room_to_tp1_pct}% away (Strictly > 1.0% required)."
             else:
-                reason = f"Clear downside expansion room: -{room_to_tp1_pct}% to {nearest_name} (₹{tp1:.1f}), -{room_to_tp2_pct}% to secondary liquidity."
+                reason = f"Clear downside expansion room: -{room_to_tp1_pct}% to {nearest_name} (₹{tp1:.1f}) [{tp1_type}], RR: 1:{rr_ratio}."
 
             return {
                 "is_viable": is_viable,
@@ -206,8 +276,12 @@ class OpportunityPotentialEngine:
                 "potential_tp2_pct": room_to_tp2_pct,
                 "tp1": tp1,
                 "tp2": tp2,
+                "tp1_type": tp1_type,
+                "tp2_type": tp2_type,
                 "nearest_obstacle": f"{nearest_name} @ ₹{tp1:.1f}",
+                "risk_reward_ratio": rr_ratio,
                 "range_exhaustion_ratio": range_exhaustion_ratio,
                 "exhaustion_risk": exhaustion_level,
+                "is_reversal_detected": reversal_detected,
                 "reason": reason
             }

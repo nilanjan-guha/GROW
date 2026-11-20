@@ -411,106 +411,20 @@ def evaluate_explosive_momentum(df, symbol):
         "suggested_tp2": tp2
     }
 
+from engine.groww_sector_engine import GrowwSectorEngine
+
+groww_sector_engine = GrowwSectorEngine()
+
 def calculate_dynamic_sectors():
-    """Calculates live sector performance across all 18 Groww Sector Indices and ranks dynamic F&O constituents"""
-    # 1. Download live sector index returns via direct index tickers (5d to guarantee prior close)
-    sec_index_tickers = list(set(INDEX_TICKER_MAP.values()))
-    try:
-        sec_data = yf.download(sec_index_tickers, period="5d", interval="1d", progress=False)
-        sec_data = sec_data['Close'] if 'Close' in sec_data else sec_data
-    except Exception as e:
-        print("[DYNAMIC SECTOR] Index download failed:", e)
-        sec_data = pd.DataFrame()
-
-    # 2. Get live FNO stocks discovered dynamically from Groww API
-    fno_list = screener_state.get("fno_universe", [])
-    INDEX_SYMBOLS = {'NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'BANKEX', 'SENSEX', 'NIFTYNXT50', 'NIFTYFPI'}
-    clean_fno = [s for s in fno_list if s not in INDEX_SYMBOLS and 'TEST' not in s]
-
-    # 3. Download price data for all active Groww FNO candidates in one batch (5d period)
-    fno_tickers = [f"{s}.NS" for s in clean_fno]
-    try:
-        fno_raw = yf.download(fno_tickers, period="5d", interval="1d", progress=False)
-        fno_prices = fno_raw['Close'] if 'Close' in fno_raw else fno_raw
-    except Exception as e:
-        print("[DYNAMIC SECTOR] FNO prices download failed:", e)
-        fno_prices = pd.DataFrame()
-
-    # Calculate change for all FNO stocks
-    stock_changes = {}
-    for sym in fno_tickers:
-        if sym in fno_prices.columns:
-            sr = fno_prices[sym].dropna()
-            if len(sr) >= 2:
-                prev_p = float(sr.iloc[-2])
-                curr_p = float(sr.iloc[-1])
-                pct = ((curr_p - prev_p) / prev_p) * 100 if prev_p else 0.0
-                stock_changes[sym] = {"symbol": sym, "price": round(curr_p, 2), "change": round(pct, 2)}
-
-    # Rank all FNO stocks by overall market gainers and losers
-    all_fno_ranked = sorted(stock_changes.values(), key=lambda x: x["change"], reverse=True)
-    fno_gainers = [x for x in all_fno_ranked if x["change"] >= 0]
-    fno_losers = sorted([x for x in all_fno_ranked if x["change"] < 0], key=lambda x: x["change"])
-
-    # 4. Group all F&O stocks into their actual Sector Buckets dynamically across all tracked sectors
-    sector_buckets = {sec: [] for sec in GROWW_SECTOR_INDICES}
-    sector_buckets["UNCLASSIFIED"] = []
-    for item in stock_changes.values():
-        assigned_sec = classify_stock_sector(item["symbol"])
-        if assigned_sec in sector_buckets:
-            sector_buckets[assigned_sec].append(item)
-        else:
-            sector_buckets["UNCLASSIFIED"].append(item)
-
-    # 5. Compute each Sector's live status & rank its true F&O constituents
-    # STRICT RULE: A sector is only included if it has genuine tradeable F&O constituents (at least 3 stocks)
-    sector_results = {}
-    for sec_name, groww_code in GROWW_SECTOR_INDICES.items():
-        constituents = sector_buckets.get(sec_name, [])
-        # If sector has fewer than 3 tradeable F&O stocks, skip it so only sectors with real F&O trades are ranked
-        if len(constituents) < 3:
-            continue
-
-        sec_pct = 0.0
-        direct_ticker = INDEX_TICKER_MAP.get(sec_name)
-
-        # Primary: Direct index price change from official NSE index ticker
-        if direct_ticker and direct_ticker in sec_data.columns:
-            s = sec_data[direct_ticker].dropna()
-            if len(s) >= 2:
-                p = float(s.iloc[-2])
-                c = float(s.iloc[-1])
-                sec_pct = ((c - p) / p) * 100 if p else 0.0
-            else:
-                sec_pct = sum(stk["change"] for stk in constituents) / len(constituents)
-        elif constituents:
-            # Secondary: Equal-weighted average of constituent F&O stocks
-            sec_pct = sum(stk["change"] for stk in constituents) / len(constituents)
-
-        # Calculate Relative Strength for each stock vs its sector index
-        for stk in constituents:
-            stk["relative_strength"] = round(stk["change"] - sec_pct, 2)
-
-        constituents.sort(key=lambda x: x["change"], reverse=True)
-        is_bull = sec_pct >= 0
-        gainers_count = len([x for x in constituents if x["change"] >= 0])
-        losers_count = len([x for x in constituents if x["change"] < 0])
-
-        top_stocks = constituents[:5] if is_bull else sorted(constituents, key=lambda x: x["change"])[:5]
-
-        sector_results[sec_name] = {
-            "ticker": direct_ticker or groww_code,
-            "groww_code": groww_code,
-            "change": round(sec_pct, 2),
-            "is_bullish": is_bull,
-            "gainers": gainers_count,
-            "losers": losers_count,
-            "top_5": top_stocks
-        }
-
-    # Sort sectors by live index performance
-    sorted_sectors = dict(sorted(sector_results.items(), key=lambda x: x[1]["change"], reverse=True))
-    return sorted_sectors
+    """
+    Fetches real-time Trending Sectors directly from Groww (https://groww.in/stocks/sectors-trending).
+    Matches 1D performance, gainers/losers, and filters strictly for moving F&O tradeable stocks:
+    - Top 3 Bullish Sectors with Top 5 F&O Gainers
+    - Top 3 Bearish Sectors with Top 5 F&O Losers (Skips non-F&O or zero-moving sectors)
+    """
+    fno_universe_set = set(screener_state.get("fno_universe", []))
+    sectors = groww_sector_engine.fetch_groww_trending_sectors(fno_universe_set)
+    return sectors
 
 # Background Screener Daemon: dynamically scans Sectors, updates watchlists, and pre-caches market data
 def background_screener_worker():
@@ -523,12 +437,9 @@ def background_screener_worker():
                 sorted_sectors = calculate_dynamic_sectors()
                 screener_state["sectors"] = sorted_sectors
 
-                # Bullish & Bearish momentum watchlist from Top 3 Bullish and True Top 3 Bearish sectors (sorted ascending for negative change)
-                # Only select sectors that have real, tradeable F&O stocks (at least 3 stocks)
-                valid_sectors = [s for s in sorted_sectors.values() if (s.get("top_5") and len(s.get("top_5")) >= 3)]
-                bull_sectors = [s for s in valid_sectors if s["is_bullish"]][:3]
-                # STRICT: Bearish sectors must actually be negative (change < 0). NEVER fill bearish list with positive sectors!
-                bear_sectors = sorted([s for s in valid_sectors if not s["is_bullish"]], key=lambda x: x["change"])[:3]
+                # Bullish & Bearish momentum watchlist from Top 3 Bullish and Top 3 Bearish Groww sectors
+                bull_sectors = [s for s in sorted_sectors.values() if s.get("is_bullish")][:3]
+                bear_sectors = [s for s in sorted_sectors.values() if not s.get("is_bullish")][:3]
 
                 bull_watchlist = []
                 for b in bull_sectors:
@@ -599,7 +510,9 @@ def status():
 
 @app.route("/api/groww/sectors-dynamic")
 def get_sectors_dynamic():
-    """Serves 100% dynamically computed Sector Rankings and Top 5 FNO Stocks (No hardcoded values)"""
+    """Serves 100% dynamically computed Sector Rankings and Top 5 FNO Stocks directly from Groww Trending Sectors"""
+    if not screener_state["sectors"]:
+        screener_state["sectors"] = calculate_dynamic_sectors()
     return jsonify({
         "success": True,
         "sectors": screener_state["sectors"]

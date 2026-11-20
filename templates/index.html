@@ -224,17 +224,12 @@
             bullEl.innerHTML = '';
             bearEl.innerHTML = '';
 
-            // Only consider sectors that have genuine tradeable F&O constituents (at least 3 stocks)
-            const allSectors = Object.entries(sectors).filter(([_, sec]) => (sec.top_5 || []).length >= 3);
+            const allSectors = Object.entries(sectors);
             
             const bullishList = allSectors.filter(([_, sec]) => sec.is_bullish).slice(0, 3);
-            // STRICT: Bearish sectors must actually be negative (change < 0). NEVER fill bearish list with positive sectors!
-            const bearishList = allSectors
-                .filter(([_, sec]) => !sec.is_bullish && sec.change < 0)
-                .sort((a, b) => a[1].change - b[1].change)
-                .slice(0, 3);
+            const bearishList = allSectors.filter(([_, sec]) => !sec.is_bullish).slice(0, 3);
 
-            // Rebuild active watchlist from the Top 3 Bullish + Top 3 Bearish sectors (total 30 stocks: 15 bull + 15 bear)
+            // Rebuild active watchlist from the Top 3 Bullish + Top 3 Bearish sectors
             activeWatchlist = [];
 
             bullishList.forEach(([name, sec], idx) => {
