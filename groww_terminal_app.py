@@ -11,9 +11,26 @@ import yfinance as yf
 import growwapi
 from growwapi import GrowwAPI
 
+import datetime
+import pytz
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
 load_dotenv(ENV_PATH)
+
+def is_market_open():
+    """Returns True if the Indian market (NSE/BSE) is open right now (Mon-Fri 09:15 to 15:30 IST)"""
+    try:
+        ist = pytz.timezone('Asia/Kolkata')
+        now = datetime.datetime.now(ist)
+        # Weekdays: Monday is 0, Sunday is 6
+        if now.weekday() >= 5:
+            return False
+        minute = now.hour * 60 + now.minute
+        # 09:15 is 555 min, 15:30 is 930 min
+        return 555 <= minute <= 930
+    except Exception:
+        return True
 
 app = Flask(__name__, template_folder=os.path.join(BASE_DIR, "templates"), static_folder=os.path.join(BASE_DIR, "static"))
 
@@ -541,11 +558,14 @@ def index():
 
 @app.route("/api/status")
 def status():
+    mkt_open = is_market_open()
     return jsonify({
         "connected": screener_state["connected"],
         "profile": screener_state["user_profile"],
         "margin": screener_state["margin"],
-        "fno_count": len(screener_state["fno_universe"])
+        "fno_count": len(screener_state["fno_universe"]),
+        "is_market_open": mkt_open,
+        "market_status": "LIVE MARKET OPEN" if mkt_open else "MARKET CLOSED (Using Last Session Data)"
     })
 
 @app.route("/api/groww/sectors-dynamic")

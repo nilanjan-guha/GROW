@@ -50,6 +50,22 @@ def init_db():
         updated_at REAL
     )
     """)
+    # Automatic migration to guarantee columns exist if table was created in an earlier schema
+    cursor.execute("PRAGMA table_info(historical_signals)")
+    existing_cols = {r[1] for r in cursor.fetchall()}
+    for col_name, col_type in [
+        ("mfe", "REAL DEFAULT 0.0"),
+        ("mae", "REAL DEFAULT 0.0"),
+        ("outcome", "TEXT DEFAULT 'ACTIVE'"),
+        ("final_pnl", "REAL DEFAULT 0.0"),
+        ("closed_at", "REAL")
+    ]:
+        if col_name not in existing_cols:
+            try:
+                cursor.execute(f"ALTER TABLE historical_signals ADD COLUMN {col_name} {col_type}")
+            except Exception:
+                pass
+
     conn.commit()
     conn.close()
 

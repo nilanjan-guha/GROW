@@ -12,6 +12,7 @@
     <header>
         <div class="header-title">
             <span>⚡ GROWW DYNAMIC F&O SECTOR & SMC SNIPER SCANNER</span>
+            <span class="badge" id="mktBadge" style="color:var(--accent-yellow); border-color:var(--accent-yellow);">Checking Market...</span>
             <span class="badge" id="uccBadge">Groww UCC: Active</span>
             <span class="badge" id="fnoBadge">FNO Universe: Loading...</span>
             <span class="badge" id="cycleStatus" style="color:var(--accent-blue);">Cycle: Scanning Stock Loop</span>
@@ -166,6 +167,17 @@
                 const d = await res.json();
                 if (d.fno_count) {
                     document.getElementById('fnoBadge').innerText = `FNO Universe: ${d.fno_count} Active`;
+                }
+                if (d.market_status) {
+                    const mb = document.getElementById('mktBadge');
+                    mb.innerText = d.market_status;
+                    if (d.is_market_open) {
+                        mb.style.color = 'var(--accent-green)';
+                        mb.style.borderColor = 'var(--accent-green)';
+                    } else {
+                        mb.style.color = '#f59e0b';
+                        mb.style.borderColor = '#f59e0b';
+                    }
                 }
             } catch (e) {}
 
