@@ -230,16 +230,31 @@ class InstitutionalStrategyEngine:
         buy_signals.sort(key=lambda x: x["weight"], reverse=True)
         sell_signals.sort(key=lambda x: x["weight"], reverse=True)
 
-        # DEDICATED OPPORTUNITY POTENTIAL & OBSTACLE CLEARANCE EVALUATION
+        # Pre-calculate candidate directional structural Stop-Loss
+        candidate_dir = "BUY" if (buy_score >= 50 and buy_score > sell_score) else ("SELL" if (sell_score >= 50 and sell_score > buy_score) else "NEUTRAL")
+        candidate_sl = None
+        if candidate_dir == "BUY":
+            raw_sl = vwap * 0.996 if curr_c > vwap else (curr_c - (atr14 * 1.5))
+            candidate_sl = round(min(raw_sl, curr_c - (atr14 * 1.2)), 2)
+            if candidate_sl >= curr_c:
+                candidate_sl = round(curr_c - (atr14 * 1.5), 2)
+        elif candidate_dir == "SELL":
+            raw_sl = vwap * 1.004 if curr_c < vwap else (curr_c + (atr14 * 1.5))
+            candidate_sl = round(max(raw_sl, curr_c + (atr14 * 1.2)), 2)
+            if candidate_sl <= curr_c:
+                candidate_sl = round(curr_c + (atr14 * 1.5), 2)
+
+        # DEDICATED OPPORTUNITY POTENTIAL & OBSTACLE CLEARANCE EVALUATION WITH ACTUAL STOP LOSS
         from engine.opportunity_potential_engine import OpportunityPotentialEngine
         opp_eval = OpportunityPotentialEngine.evaluate_potential(
             df=df,
             current_price=curr_c,
-            direction="BUY" if (buy_score >= 50 and buy_score > sell_score) else ("SELL" if (sell_score >= 50 and sell_score > buy_score) else "NEUTRAL"),
+            direction=candidate_dir,
             prev_close=prev_close,
             vwap=vwap,
             supply_obs=bear_obs,
-            demand_obs=bull_obs
+            demand_obs=bull_obs,
+            stop_loss=candidate_sl
         )
 
         if buy_score >= 50 and buy_score > sell_score and opp_eval["is_viable"]:
@@ -247,12 +262,7 @@ class InstitutionalStrategyEngine:
             composite_score = buy_score
             primary_strategy = buy_signals[0]["strategy"]
             triggered = [s["strategy"] for s in buy_signals]
-            
-            # Safe directional SL calculation: Stop Loss MUST always be strictly below current entry price
-            raw_sl = vwap * 0.996 if curr_c > vwap else (curr_c - (atr14 * 1.5))
-            sl = round(min(raw_sl, curr_c - (atr14 * 1.2)), 2)
-            if sl >= curr_c:
-                sl = round(curr_c - (atr14 * 1.5), 2)
+            sl = candidate_sl
             tp1 = opp_eval["tp1"]
             tp2 = opp_eval["tp2"]
 
@@ -261,12 +271,7 @@ class InstitutionalStrategyEngine:
             composite_score = sell_score
             primary_strategy = sell_signals[0]["strategy"]
             triggered = [s["strategy"] for s in sell_signals]
-            
-            # Safe directional SL calculation: Stop Loss MUST always be strictly above current entry price
-            raw_sl = vwap * 1.004 if curr_c < vwap else (curr_c + (atr14 * 1.5))
-            sl = round(max(raw_sl, curr_c + (atr14 * 1.2)), 2)
-            if sl <= curr_c:
-                sl = round(curr_c + (atr14 * 1.5), 2)
+            sl = candidate_sl
             tp1 = opp_eval["tp1"]
             tp2 = opp_eval["tp2"]
 

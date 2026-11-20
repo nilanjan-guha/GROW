@@ -26,18 +26,33 @@ class OpportunityPotentialEngine:
 
     @staticmethod
     def calculate_daily_atr(df_copy, dates, current_price):
-        """Calculates true Daily ATR across historical completed trading sessions"""
-        daily_ranges = []
+        """Calculates true Daily ATR14 using True Range formula across historical daily sessions"""
+        daily_records = []
         for i in range(len(dates) - 1):
             day_data = df_copy[df_copy['Date'] == dates[i]]
             if not day_data.empty:
                 d_high = float(day_data['High'].max())
                 d_low = float(day_data['Low'].min())
                 d_close = float(day_data['Close'].iloc[-1])
-                daily_ranges.append(d_high - d_low)
+                daily_records.append({"high": d_high, "low": d_low, "close": d_close})
 
-        if daily_ranges:
-            return float(np.mean(daily_ranges))
+        if len(daily_records) >= 2:
+            true_ranges = []
+            for j in range(1, len(daily_records)):
+                prev_c = daily_records[j - 1]["close"]
+                cur_h = daily_records[j]["high"]
+                cur_l = daily_records[j]["low"]
+                tr = max(cur_h - cur_l, abs(cur_h - prev_c), abs(cur_l - prev_c))
+                true_ranges.append(tr)
+            if true_ranges:
+                avg_atr = float(np.mean(true_ranges))
+                if not pd.isna(avg_atr) and avg_atr > 0:
+                    return avg_atr
+        elif len(daily_records) == 1:
+            tr = daily_records[0]["high"] - daily_records[0]["low"]
+            if not pd.isna(tr) and tr > 0:
+                return float(tr)
+
         return float(current_price * 0.018)  # Standard 1.8% daily volatility baseline
 
     @staticmethod
@@ -166,13 +181,13 @@ class OpportunityPotentialEngine:
             # Daily Range Exhaustion: If already consumed > 1.8x Daily ATR near the high of day
             is_exhausted = range_exhaustion_ratio >= 1.8 and curr_c >= float(today_df['High'].max()) * 0.995
 
-            # STRICT > 1.0% UNROUNDED POTENTIAL GATE
-            is_viable = (raw_room_to_tp1_pct > 1.0) and not is_exhausted and not reversal_detected
-
-            # Calculate Reward-to-Risk ratio if stop-loss provided
+            # Calculate Reward-to-Risk ratio against stop-loss
             risk = (curr_c - float(stop_loss)) if (stop_loss and float(stop_loss) < curr_c) else (intraday_atr_15m * 1.2)
             reward = tp1 - curr_c
-            rr_ratio = round(reward / risk, 2) if risk > 0 else 1.5
+            rr_ratio = round(reward / risk, 2) if risk > 0 else 0.0
+
+            # STRICT > 1.0% UNROUNDED POTENTIAL GATE + STRICT RR >= 1.5 GATE
+            is_viable = (raw_room_to_tp1_pct > 1.0) and (rr_ratio >= 1.5) and not is_exhausted and not reversal_detected
 
             exhaustion_level = "HIGH" if is_exhausted else ("MODERATE" if range_exhaustion_ratio >= 1.2 else "LOW")
 
@@ -181,6 +196,8 @@ class OpportunityPotentialEngine:
                     reason = f"Trade Invalidated: {reversal_reason}."
                 elif is_exhausted:
                     reason = f"Intraday move exhausted: Daily range ({range_exhaustion_ratio}x Daily ATR) already consumed."
+                elif rr_ratio < 1.5:
+                    reason = f"Insufficient Risk:Reward ratio (RR: 1:{rr_ratio:.2f} < 1:1.50 required)."
                 else:
                     reason = f"Insufficient upside clearance: Nearest resistance ({nearest_name} @ ₹{tp1:.1f}) is only +{room_to_tp1_pct}% away (Strictly > 1.0% required)."
             else:
@@ -251,12 +268,12 @@ class OpportunityPotentialEngine:
             room_to_tp1_pct = round(raw_room_to_tp1_pct, 2)
             room_to_tp2_pct = round(((curr_c - tp2) / curr_c) * 100, 2)
 
-            is_exhausted = range_exhaustion_ratio >= 1.8 and curr_c <= float(today_df['Low'].min()) * 1.005
-            is_viable = (raw_room_to_tp1_pct > 1.0) and not is_exhausted and not reversal_detected
-
             risk = (float(stop_loss) - curr_c) if (stop_loss and float(stop_loss) > curr_c) else (intraday_atr_15m * 1.2)
             reward = curr_c - tp1
-            rr_ratio = round(reward / risk, 2) if risk > 0 else 1.5
+            rr_ratio = round(reward / risk, 2) if risk > 0 else 0.0
+
+            # STRICT > 1.0% UNROUNDED POTENTIAL GATE + STRICT RR >= 1.5 GATE
+            is_viable = (raw_room_to_tp1_pct > 1.0) and (rr_ratio >= 1.5) and not is_exhausted and not reversal_detected
 
             exhaustion_level = "HIGH" if is_exhausted else ("MODERATE" if range_exhaustion_ratio >= 1.2 else "LOW")
 
@@ -265,6 +282,8 @@ class OpportunityPotentialEngine:
                     reason = f"Trade Invalidated: {reversal_reason}."
                 elif is_exhausted:
                     reason = f"Downside move exhausted: Daily range ({range_exhaustion_ratio}x Daily ATR) already consumed."
+                elif rr_ratio < 1.5:
+                    reason = f"Insufficient Risk:Reward ratio (RR: 1:{rr_ratio:.2f} < 1:1.50 required)."
                 else:
                     reason = f"Insufficient downside clearance: Nearest support ({nearest_name} @ ₹{tp1:.1f}) is only -{room_to_tp1_pct}% away (Strictly > 1.0% required)."
             else:

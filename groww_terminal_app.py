@@ -571,10 +571,21 @@ def smc_scan():
         else:
             prev_close = float(df_copy['Close'].iloc[0].item() if hasattr(df_copy['Close'].iloc[0], 'item') else df_copy['Close'].iloc[0])
 
-        # 2. Extract Stock Sector & Live Sector Bias
-        assigned_sector = classify_stock_sector(symbol)
-        sec_info = screener_state["sectors"].get(assigned_sector, {})
-        sector_bias = "BULLISH" if sec_info.get("is_bullish") else ("BEARISH" if sec_info else "NEUTRAL")
+        # 2. Extract Stock Sector & Live Sector Bias directly from Groww Sector Engine
+        sector_bias = "NEUTRAL"
+        assigned_sector = "UNCLASSIFIED"
+        # Check if stock exists in active Groww sectors
+        for s_name, s_data in screener_state["sectors"].items():
+            stks = s_data.get("top_5", [])
+            if any(x.get("symbol") == symbol for x in stks):
+                assigned_sector = s_name
+                sector_bias = "BULLISH" if s_data.get("is_bullish") else "BEARISH"
+                break
+        
+        if sector_bias == "NEUTRAL":
+            assigned_sector = classify_stock_sector(symbol)
+            sec_info = screener_state["sectors"].get(assigned_sector, {})
+            sector_bias = "BULLISH" if sec_info.get("is_bullish") else ("BEARISH" if sec_info else "NEUTRAL")
 
         # 3. Match Verified News Catalyst (Before Strategy Evaluation)
         clean_sym = symbol.replace(".NS", "")
@@ -627,8 +638,8 @@ def smc_scan():
             res["suggested_tp2"] = inst_res["suggested_tp2"]
             res["reasoning"] = f"{inst_res['primary_strategy']} active. {ai_intel.get('ai_summary', '')}"
             
-            # Persist to historical signals database and capture logged signal ID
-            logged = log_signal({
+            # Persist to historical signals database and capture logged signal ID directly
+            signal_id = log_signal({
                 "symbol": symbol,
                 "direction": inst_res["direction"],
                 "strategy": inst_res["primary_strategy"],
@@ -642,15 +653,16 @@ def smc_scan():
                 "features": {"rvol": inst_res["rvol"], "rsi": inst_res["rsi"], "vwap": inst_res["vwap"]},
                 "all_triggered": inst_res["triggered_strategies"]
             })
-            # Attach confirmed status and signal ID if active in DB
-            from core.storage import get_db_connection
-            conn = get_db_connection()
-            cur = conn.cursor()
-            cur.execute("SELECT id FROM historical_signals WHERE symbol = ? AND outcome = 'ACTIVE' ORDER BY id DESC LIMIT 1", (symbol,))
-            row = cur.fetchone()
-            conn.close()
-            res["signal_id"] = row["id"] if row else None
-            res["signal_status"] = "CONFIRMED (Completed Candle)" if not is_market_open() or len(df) >= 20 else "PROVISIONAL (Live Candle)"
+            res["signal_id"] = signal_id
+
+            # Completed candle vs Provisional candle confirmation:
+            # Check if the latest candle is completed (timestamp + 900s <= current time or market closed)
+            last_candle_end = 0
+            if hasattr(df.index[-1], 'timestamp'):
+                last_candle_end = df.index[-1].timestamp() + 900
+            
+            is_completed_candle = (not is_market_open()) or (now >= last_candle_end and last_candle_end > 0)
+            res["signal_status"] = "CONFIRMED (Completed Candle)" if is_completed_candle else "PROVISIONAL (Live Candle)"
         else:
             # Institutional engine is NEUTRAL: clear any momentum-only buy/sell action
             res["action"] = "WAIT FOR ENTRY (NO TRADE)"

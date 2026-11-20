@@ -7,6 +7,16 @@ DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 os.makedirs(DATA_DIR, exist_ok=True)
 DB_PATH = os.path.join(DATA_DIR, "trading_signals.db")
 
+# One-time migration: If old root trading_signals.db exists and new data/ db does not, copy it over
+OLD_ROOT_DB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "trading_signals.db")
+if os.path.exists(OLD_ROOT_DB) and not os.path.exists(DB_PATH):
+    try:
+        import shutil
+        shutil.move(OLD_ROOT_DB, DB_PATH)
+        print("[STORAGE MIGRATION] Migrated legacy root trading_signals.db to data/trading_signals.db")
+    except Exception as me:
+        print("[STORAGE MIGRATION] Error migrating database:", me)
+
 def get_db_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -95,10 +105,13 @@ def log_signal(signal_dict):
         cursor.execute("""
         SELECT id FROM historical_signals 
         WHERE symbol = ? AND direction = ? AND (outcome = 'ACTIVE' OR (strategy = ? AND timestamp > ?))
+        ORDER BY id DESC LIMIT 1
         """, (sym, direction, strategy, now - 900))
-        if cursor.fetchone():
+        existing = cursor.fetchone()
+        if existing:
+            existing_id = existing["id"]
             conn.close()
-            return False
+            return existing_id
 
         cursor.execute("""
         INSERT INTO historical_signals (
@@ -135,10 +148,10 @@ def log_signal(signal_dict):
 
         conn.commit()
         conn.close()
-        return True
+        return signal_id
     except Exception as e:
         print("[STORAGE] Error logging signal:", e)
-        return False
+        return None
 
 def get_active_signal_symbols():
     """Returns a set of all stock symbols that have open ACTIVE signals requiring monitoring"""
