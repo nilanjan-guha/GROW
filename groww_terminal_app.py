@@ -557,7 +557,13 @@ def background_screener_worker():
                             "data": res,
                             "df": cdf
                         }
-                        latest_prices[sym] = res["current_price"]
+                        # Pass rich OHLC dict to outcome tracker for accurate intrabar excursion tracking
+                        latest_prices[sym] = {
+                            "price": res["current_price"],
+                            "close": res["current_price"],
+                            "high": float(cdf['High'].iloc[-1].item() if hasattr(cdf['High'].iloc[-1], 'item') else cdf['High'].iloc[-1]),
+                            "low": float(cdf['Low'].iloc[-1].item() if hasattr(cdf['Low'].iloc[-1], 'item') else cdf['Low'].iloc[-1])
+                        }
                 except Exception:
                     pass
                 time.sleep(0.5)
@@ -698,7 +704,7 @@ def smc_scan():
         res["risk_rating"] = ai_intel.get("risk_rating", "MODERATE")
         res["anomaly_info"] = anomaly_info
         
-        # If institutional engine flagged BUY or SELL, upgrade action
+        # Enforce strict institutional action: if institutional engine is NEUTRAL, action MUST be NO TRADE
         if inst_res["direction"] != "NEUTRAL":
             res["action"] = f"{inst_res['direction']} / {'CALL (CE)' if inst_res['direction'] == 'BUY' else 'PUT (PE)'} [{inst_res['primary_strategy'].upper()}]"
             res["verdict"] = f"SCORE {inst_res['composite_score']}/100 | WIN PROB {inst_res['probability_pct']}%"
@@ -719,8 +725,17 @@ def smc_scan():
                 "score": inst_res["composite_score"],
                 "confidence": f"{inst_res['probability_pct']}%",
                 "catalyst": news_headline or "Institutional Order Flow",
-                "features": {"rvol": inst_res["rvol"], "rsi": inst_res["rsi"], "vwap": inst_res["vwap"]}
+                "features": {"rvol": inst_res["rvol"], "rsi": inst_res["rsi"], "vwap": inst_res["vwap"]},
+                "all_triggered": inst_res["triggered_strategies"]
             })
+        else:
+            # Institutional engine is NEUTRAL: clear any momentum-only buy/sell action
+            res["action"] = "WAIT FOR ENTRY (NO TRADE)"
+            res["verdict"] = f"SCORE {inst_res['composite_score']}/100 (NEUTRAL CONFLUENCE)"
+            res["suggested_sl"] = None
+            res["suggested_tp1"] = None
+            res["suggested_tp2"] = None
+            res["reasoning"] = f"Institutional confluence is neutral. Score {inst_res['composite_score']}/100. Bot waiting for confirmed setup."
 
         # Save to enriched signals cache with TTL
         screener_state["enriched_signals_cache"][symbol] = {

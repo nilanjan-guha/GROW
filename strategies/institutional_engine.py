@@ -152,12 +152,14 @@ class InstitutionalStrategyEngine:
         elif curr_c < or_low and curr_c < vwap and rvol >= 1.2:
             evaluated_signals.append({"strategy": "Opening Range Breakdown", "direction": "SELL", "weight": 24})
 
-        # Strategy E & F: VWAP Reclaim / Rejection
-        prev_c = float(c.iloc[-2]) if len(c) >= 2 else curr_c
-        if prev_c < vwap and curr_c > vwap and ema9 >= ema21:
-            evaluated_signals.append({"strategy": "VWAP Reclaim", "direction": "BUY", "weight": 22})
-        elif prev_c > vwap and curr_c < vwap and ema9 <= ema21:
-            evaluated_signals.append({"strategy": "VWAP Rejection", "direction": "SELL", "weight": 22})
+        # Strategy E & F: VWAP Reclaim / Rejection (Comparing historical candle to its own session VWAP)
+        if len(today_df) >= 2 and len(session_vwap_series) >= 2:
+            prev_candle_c = float(today_df['Close'].iloc[-2])
+            prev_candle_vwap = float(session_vwap_series.iloc[-2])
+            if prev_candle_c < prev_candle_vwap and curr_c > vwap and ema9 >= ema21:
+                evaluated_signals.append({"strategy": "VWAP Reclaim", "direction": "BUY", "weight": 22})
+            elif prev_candle_c > prev_candle_vwap and curr_c < vwap and ema9 <= ema21:
+                evaluated_signals.append({"strategy": "VWAP Rejection", "direction": "SELL", "weight": 22})
 
         # Strategy G: EMA 9/21 Trend Momentum
         if ema9 > ema21 and curr_c > ema9 and 52 <= rsi <= 76:
@@ -233,7 +235,12 @@ class InstitutionalStrategyEngine:
             composite_score = buy_score
             primary_strategy = buy_signals[0]["strategy"]
             triggered = [s["strategy"] for s in buy_signals]
-            sl = round(max(curr_c - (atr14 * 1.5), vwap * 0.996), 2)
+            
+            # Safe directional SL calculation: Stop Loss MUST always be strictly below current entry price
+            raw_sl = vwap * 0.996 if curr_c > vwap else (curr_c - (atr14 * 1.5))
+            sl = round(min(raw_sl, curr_c - (atr14 * 1.2)), 2)
+            if sl >= curr_c:
+                sl = round(curr_c - (atr14 * 1.5), 2)
             risk = max(curr_c - sl, curr_c * 0.005)
             tp1 = round(curr_c + (risk * 1.5), 2)
             tp2 = round(curr_c + (risk * 2.5), 2)
@@ -242,7 +249,12 @@ class InstitutionalStrategyEngine:
             composite_score = sell_score
             primary_strategy = sell_signals[0]["strategy"]
             triggered = [s["strategy"] for s in sell_signals]
-            sl = round(min(curr_c + (atr14 * 1.5), vwap * 1.004), 2)
+            
+            # Safe directional SL calculation: Stop Loss MUST always be strictly above current entry price
+            raw_sl = vwap * 1.004 if curr_c < vwap else (curr_c + (atr14 * 1.5))
+            sl = round(max(raw_sl, curr_c + (atr14 * 1.2)), 2)
+            if sl <= curr_c:
+                sl = round(curr_c + (atr14 * 1.5), 2)
             risk = max(sl - curr_c, curr_c * 0.005)
             tp1 = round(curr_c - (risk * 1.5), 2)
             tp2 = round(curr_c - (risk * 2.5), 2)
