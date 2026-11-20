@@ -228,21 +228,11 @@
             const allSectors = Object.entries(sectors).filter(([_, sec]) => (sec.top_5 || []).length >= 3);
             
             const bullishList = allSectors.filter(([_, sec]) => sec.is_bullish).slice(0, 3);
-            // Sort bearish sectors ascending by change (most negative change first)
+            // STRICT: Bearish sectors must actually be negative (change < 0). NEVER fill bearish list with positive sectors!
             const bearishList = allSectors
-                .filter(([_, sec]) => !sec.is_bullish)
+                .filter(([_, sec]) => !sec.is_bullish && sec.change < 0)
                 .sort((a, b) => a[1].change - b[1].change)
                 .slice(0, 3);
-
-            // If fewer than 3 bearish sectors exist (strong bull market), pick lowest ranked remaining sectors
-            if (bearishList.length < 3) {
-                const remaining = allSectors
-                    .filter(([name, _]) => !bullishList.some(([bName]) => bName === name) && !bearishList.some(([rName]) => rName === name))
-                    .sort((a, b) => a[1].change - b[1].change);
-                for (const rem of remaining) {
-                    if (bearishList.length < 3) bearishList.push(rem);
-                }
-            }
 
             // Rebuild active watchlist from the Top 3 Bullish + Top 3 Bearish sectors (total 30 stocks: 15 bull + 15 bear)
             activeWatchlist = [];
@@ -457,7 +447,7 @@
                             // Update Top Banner with highest composite score confirmed trade
                             const curScore = smc.composite_score || 0;
                             if (!bestActiveSignal || curScore >= (bestActiveSignal.smc.composite_score || 0)) {
-                                bestActiveSignal = { symbol: item.symbol, smc: smc, time: Date.now() };
+                                bestActiveSignal = { signal_id: smc.signal_id || null, symbol: item.symbol, smc: smc, time: Date.now() };
                                 updateConfirmedBanner(item.symbol, smc);
                             }
                         }
@@ -484,7 +474,7 @@
                         // Update Top Banner only if this has highest conviction/score or prior trade completed
                         const newScore = smc.composite_score || 0;
                         if (!bestActiveSignal || newScore >= (bestActiveSignal.smc.composite_score || 0) || (Date.now() - bestActiveSignal.time > 300000)) {
-                            bestActiveSignal = { symbol: target.symbol, smc: smc, time: Date.now() };
+                            bestActiveSignal = { signal_id: smc.signal_id || null, symbol: target.symbol, smc: smc, time: Date.now() };
                             updateConfirmedBanner(target.symbol, smc);
                         }
                     } else {

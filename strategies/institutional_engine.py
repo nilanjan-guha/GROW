@@ -242,9 +242,36 @@ class InstitutionalStrategyEngine:
             if sl >= curr_c:
                 sl = round(curr_c - (atr14 * 1.5), 2)
             risk = max(curr_c - sl, curr_c * 0.005)
-            # Guarantee at least 1.0% to 1.5% target potential so signals have genuine expansion room
-            tp1 = round(max(curr_c * 1.012, curr_c + (risk * 1.5)), 2)
-            tp2 = round(max(curr_c * 1.025, curr_c + (risk * 2.5)), 2)
+
+            # REALISTIC MARKET STRUCTURE TARGETS (Resistance & Liquidity levels)
+            potential_resistances = []
+            if prev_swing_high > curr_c:
+                potential_resistances.append(prev_swing_high)
+            if or_high > curr_c:
+                potential_resistances.append(or_high)
+            if near_supply_ob and near_supply_ob['bottom'] > curr_c:
+                potential_resistances.append(near_supply_ob['bottom'])
+            potential_resistances.append(curr_c + (risk * 2.0))
+            potential_resistances.sort()
+
+            # TP1: Next realistic structural resistance
+            tp1_candidate = min(potential_resistances)
+            # TP2: Next major liquidity pool beyond TP1
+            tp2_candidates = [r for r in potential_resistances if r > tp1_candidate]
+            tp2_candidate = tp2_candidates[0] if tp2_candidates else (tp1_candidate + (risk * 1.5))
+
+            upside_pct = round(((tp1_candidate - curr_c) / curr_c) * 100, 2)
+            upside_tp2_pct = round(((tp2_candidate - curr_c) / curr_c) * 100, 2)
+
+            # STRICT FILTER: Only generate trade if achievable upside to next obstacle is GREATER THAN 1.0%
+            if upside_pct < 1.0:
+                direction = "NEUTRAL"
+                primary_strategy = f"WAIT FOR ENTRY (Next Resistance too close: +{upside_pct}%)"
+                sl, tp1, tp2 = None, None, None
+            else:
+                tp1 = round(tp1_candidate, 2)
+                tp2 = round(tp2_candidate, 2)
+
         elif sell_score >= 50 and sell_score > buy_score:
             direction = "SELL"
             composite_score = sell_score
@@ -257,9 +284,36 @@ class InstitutionalStrategyEngine:
             if sl <= curr_c:
                 sl = round(curr_c + (atr14 * 1.5), 2)
             risk = max(sl - curr_c, curr_c * 0.005)
-            # Guarantee at least 1.0% to 1.5% target potential on downside
-            tp1 = round(min(curr_c * 0.988, curr_c - (risk * 1.5)), 2)
-            tp2 = round(min(curr_c * 0.975, curr_c - (risk * 2.5)), 2)
+
+            # REALISTIC MARKET STRUCTURE TARGETS (Support & Demand levels)
+            potential_supports = []
+            if prev_swing_low < curr_c:
+                potential_supports.append(prev_swing_low)
+            if or_low < curr_c:
+                potential_supports.append(or_low)
+            if near_demand_ob and near_demand_ob['top'] < curr_c:
+                potential_supports.append(near_demand_ob['top'])
+            potential_supports.append(curr_c - (risk * 2.0))
+            potential_supports.sort(reverse=True)
+
+            # TP1: Next realistic structural support
+            tp1_candidate = max(potential_supports)
+            # TP2: Next major liquidity pool below TP1
+            tp2_candidates = [s for s in potential_supports if s < tp1_candidate]
+            tp2_candidate = tp2_candidates[0] if tp2_candidates else (tp1_candidate - (risk * 1.5))
+
+            downside_pct = round(((curr_c - tp1_candidate) / curr_c) * 100, 2)
+            downside_tp2_pct = round(((curr_c - tp2_candidate) / curr_c) * 100, 2)
+
+            # STRICT FILTER: Only generate trade if achievable downside to next obstacle is GREATER THAN 1.0%
+            if downside_pct < 1.0:
+                direction = "NEUTRAL"
+                primary_strategy = f"WAIT FOR ENTRY (Next Support too close: -{downside_pct}%)"
+                sl, tp1, tp2 = None, None, None
+            else:
+                tp1 = round(tp1_candidate, 2)
+                tp2 = round(tp2_candidate, 2)
+
         else:
             direction = "NEUTRAL"
             composite_score = max(buy_score, sell_score)
