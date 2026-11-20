@@ -39,6 +39,15 @@ def init_db():
     """)
     
     cursor.execute("""
+    CREATE TABLE IF NOT EXISTS signal_strategies (
+        signal_id INTEGER,
+        strategy_name TEXT,
+        PRIMARY KEY (signal_id, strategy_name),
+        FOREIGN KEY (signal_id) REFERENCES historical_signals(id) ON DELETE CASCADE
+    )
+    """)
+
+    cursor.execute("""
     CREATE TABLE IF NOT EXISTS strategy_performance (
         strategy TEXT PRIMARY KEY,
         total_signals INTEGER DEFAULT 0,
@@ -79,10 +88,10 @@ def log_signal(signal_dict):
         direction = signal_dict.get("direction")
         strategy = signal_dict.get("strategy")
 
-        # Deduplication: skip if identical signal logged in last 15 minutes (900 seconds)
+        # Deduplication: skip if identical active signal exists or logged in last 15 minutes (900s)
         cursor.execute("""
         SELECT id FROM historical_signals 
-        WHERE symbol = ? AND direction = ? AND strategy = ? AND timestamp > ?
+        WHERE symbol = ? AND direction = ? AND (outcome = 'ACTIVE' OR (strategy = ? AND timestamp > ?))
         """, (sym, direction, strategy, now - 900))
         if cursor.fetchone():
             conn.close()
@@ -111,6 +120,16 @@ def log_signal(signal_dict):
             signal_dict.get("market_regime", "TRENDING"),
             "ACTIVE"
         ))
+        signal_id = cursor.lastrowid
+
+        # Record all triggered strategies into signal_strategies association table
+        all_triggered = signal_dict.get("all_triggered", [strategy])
+        for strat in all_triggered:
+            try:
+                cursor.execute("INSERT OR IGNORE INTO signal_strategies (signal_id, strategy_name) VALUES (?, ?)", (signal_id, strat))
+            except Exception:
+                pass
+
         conn.commit()
         conn.close()
         return True
@@ -118,7 +137,25 @@ def log_signal(signal_dict):
         print("[STORAGE] Error logging signal:", e)
         return False
 
+def get_active_signal_symbols():
+    """Returns a set of all stock symbols that have open ACTIVE signals requiring monitoring"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT symbol FROM historical_signals WHERE outcome = 'ACTIVE'")
+        rows = cursor.fetchall()
+        conn.close()
+        return {r["symbol"] for r in rows}
+    except Exception:
+        return set()
+
 def evaluate_open_outcomes(latest_prices):
+    """
+    Evaluates all ACTIVE signals against latest OHLC candles.
+    Conservative handling for simultaneous SL/TP hits:
+    If a candle touches both target and stop loss in the same bar, conservatively mark as LOSS/STOPPED OUT.
+    Only evaluates after signal creation timestamp.
+    """
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -156,19 +193,36 @@ def evaluate_open_outcomes(latest_prices):
             if direction == "BUY":
                 mfe = max(mfe, candle_high - entry)
                 mae = min(mae, candle_low - entry)
-                if candle_high >= tp1:
-                    outcome = "WIN"
-                    final_pnl = round(tp1 - entry, 2)
-                elif candle_low <= sl:
+                
+                # Check for simultaneous hit in single candle
+                hit_tp = candle_high >= tp1
+                hit_sl = candle_low <= sl
+                
+                if hit_tp and hit_sl:
+                    # Conservative handling: touch of both is classified as LOSS (stopped out)
                     outcome = "LOSS"
                     final_pnl = round(sl - entry, 2)
+                elif hit_tp:
+                    outcome = "WIN"
+                    final_pnl = round(tp1 - entry, 2)
+                elif hit_sl:
+                    outcome = "LOSS"
+                    final_pnl = round(sl - entry, 2)
+
             elif direction == "SELL":
                 mfe = max(mfe, entry - candle_low)
                 mae = min(mae, entry - candle_high)
-                if candle_low <= tp1:
+                
+                hit_tp = candle_low <= tp1
+                hit_sl = candle_high >= sl
+                
+                if hit_tp and hit_sl:
+                    outcome = "LOSS"
+                    final_pnl = round(entry - sl, 2)
+                elif hit_tp:
                     outcome = "WIN"
                     final_pnl = round(entry - tp1, 2)
-                elif candle_high >= sl:
+                elif hit_sl:
                     outcome = "LOSS"
                     final_pnl = round(entry - sl, 2)
 
@@ -187,6 +241,11 @@ def evaluate_open_outcomes(latest_prices):
         print("[STORAGE] Error evaluating outcomes:", e)
 
 def update_strategy_performance(cursor, strategy):
+    """
+    Computes institutional performance metrics:
+    - Signed Average R-Multiple: (+1.5R on wins, -1.0R on losses)
+    - Valid Profit Factor: gross_profit / gross_loss (or None/Inf formatted if zero losses)
+    """
     cursor.execute("""
     SELECT outcome, final_pnl, entry_price, stop_loss, target_1 
     FROM historical_signals 
@@ -207,14 +266,17 @@ def update_strategy_performance(cursor, strategy):
     if gross_loss > 0:
         profit_factor = round(gross_profit / gross_loss, 2)
     else:
-        profit_factor = round(gross_profit, 2) if gross_profit > 0 else 1.0
+        # If no losses, profit factor is undefined/infinite, cap at 99.0
+        profit_factor = 99.0 if gross_profit > 0 else 1.0
 
-    rr_list = []
+    # Calculate SIGNED R-multiples: positive for WIN, negative for LOSS
+    signed_r_list = []
     for t in trades:
         risk = abs(float(t["entry_price"]) - float(t["stop_loss"])) or 1.0
-        reward = abs(float(t["final_pnl"]))
-        rr_list.append(reward / risk)
-    avg_rr = round(sum(rr_list) / len(rr_list), 2) if rr_list else 1.5
+        pnl = float(t["final_pnl"])
+        r_multiple = pnl / risk
+        signed_r_list.append(r_multiple)
+    avg_rr = round(sum(signed_r_list) / len(signed_r_list), 2) if signed_r_list else 1.0
 
     cursor.execute("""
     INSERT INTO strategy_performance (strategy, total_signals, wins, losses, win_rate, avg_rr, profit_factor, updated_at)

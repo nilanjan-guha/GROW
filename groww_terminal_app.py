@@ -542,10 +542,14 @@ def background_screener_worker():
                 print(f"[CHARTINK ENGINE] Sectors updated. Bullish: {[x['symbol'] for x in bull_watchlist[:4]]}, Bearish: {[x['symbol'] for x in bear_watchlist[:4]]}")
 
             # Pre-compute raw technicals into raw_market_cache (Never overwrite enriched_signals_cache)
-            all_stks = (screener_state["bullish_momentum_watchlist"] + screener_state["bearish_momentum_watchlist"])
+            # Combine current top sectors watchlist + all symbols with open ACTIVE trades across database
+            watchlist_stks = [x["symbol"] for x in (screener_state["bullish_momentum_watchlist"] + screener_state["bearish_momentum_watchlist"])]
+            active_db_symbols = list(get_active_signal_symbols())
+            # Union of both sets to ensure active open trades are ALWAYS tracked even if stock dropped out of top sectors
+            all_stk_symbols = list(dict.fromkeys(watchlist_stks + active_db_symbols))
+            
             latest_prices = {}
-            for item in all_stks:
-                sym = item["symbol"]
+            for sym in all_stk_symbols:
                 try:
                     cdf = yf.download(sym, period="5d", interval="15m", progress=False)
                     if isinstance(cdf.columns, pd.MultiIndex):
@@ -566,7 +570,7 @@ def background_screener_worker():
                         }
                 except Exception:
                     pass
-                time.sleep(0.5)
+                time.sleep(0.4)
 
             # Evaluate open signal outcomes every 60 seconds
             if now - last_outcome_check > 60 and latest_prices:
@@ -608,7 +612,7 @@ from strategies.institutional_engine import InstitutionalStrategyEngine
 from engine.news_engine import NewsIntelligenceEngine
 from engine.groq_client import GroqIntelligence
 from engine.anomaly_engine import AnomalyDetector
-from core.storage import log_signal, get_recent_signals, evaluate_open_outcomes, get_strategy_performance_stats
+from core.storage import log_signal, get_recent_signals, evaluate_open_outcomes, get_strategy_performance_stats, get_active_signal_symbols
 
 news_engine = NewsIntelligenceEngine()
 groq_ai = GroqIntelligence()
@@ -667,12 +671,8 @@ def smc_scan():
         news_cat = news_engine.match_catalyst_for_stock(clean_sym)
         news_headline = news_cat["title"] if news_cat else ""
 
-        # 4. Check Anomaly Detector (Flat-Open Sudden Expansion & RVOL Acceleration)
-        today_date = dates[-1] if dates else None
-        today_df = df_copy[df_copy['Date'] == today_date] if today_date else df_copy
-        anomaly_info = AnomalyDetector.detect_flat_open_breakout(
-            today_df['Open'], today_df['High'], today_df['Low'], today_df['Close'], today_df['Volume'], prev_close
-        )
+        # 4. Check Anomaly Detector (Flat-Open Sudden Expansion & Time-of-Day RVOL Acceleration)
+        anomaly_info = AnomalyDetector.detect_flat_open_breakout(df=df_copy, prev_close=prev_close)
 
         # 5. Evaluate Institutional 15-Strategy Multi-Layer Engine WITH Sector, News & Anomaly Evidence
         inst_res = InstitutionalStrategyEngine.evaluate_strategies(
@@ -751,6 +751,20 @@ def smc_scan():
 def get_performance_stats():
     """Returns actual win rate, profit factor, and outcome stats per strategy"""
     return jsonify({"success": True, "stats": get_strategy_performance_stats()})
+
+@app.route("/api/signals/active")
+def get_active_signals_endpoint():
+    """Returns all open ACTIVE trades so frontend can synchronize top confirmed banner"""
+    try:
+        from core.storage import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM historical_signals WHERE outcome = 'ACTIVE' ORDER BY id DESC")
+        active = [dict(r) for r in cursor.fetchall()]
+        conn.close()
+        return jsonify({"success": True, "active_signals": active})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e), "active_signals": []})
 
 @app.route("/api/signals/recent")
 def get_recent_logged_signals():
