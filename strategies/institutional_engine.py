@@ -235,16 +235,6 @@ class InstitutionalStrategyEngine:
             tp1 = None
             tp2 = None
 
-        # Compute Win Probability from statistical performance database
-        from core.storage import get_strategy_performance_stats
-        perf_list = get_strategy_performance_stats()
-        strat_stat = next((s for s in perf_list if s.get("strategy") == primary_strategy), None)
-        if strat_stat and strat_stat.get("total_signals", 0) >= 5:
-            win_prob = strat_stat.get("win_rate", 50.0)
-        else:
-            # Baseline probability modeled as bounded function of composite score
-            win_prob = round(min(88.0, max(45.0, 40.0 + (composite_score * 0.48))), 1) if direction != "NEUTRAL" else 50.0
-
         return {
             "current_price": curr_c,
             "vwap": round(vwap, 2),
@@ -256,7 +246,6 @@ class InstitutionalStrategyEngine:
             "gap_pct": round(gap_pct, 2),
             "direction": direction,
             "composite_score": composite_score,
-            "probability_pct": win_prob,
             "primary_strategy": primary_strategy,
             "triggered_strategies": triggered,
             "suggested_sl": sl,

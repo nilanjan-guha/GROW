@@ -33,8 +33,30 @@ screener_state = {
     "stock_sector_cache": {}       # Dynamic sector mapping cache for all discovered stocks
 }
 
-# Real-Time NSE Sector Indices (Live index price performance queried directly via API)
-NSE_SECTOR_INDICES = {
+# Comprehensive Groww & NSE Sector Indices (18 Tracked Sectors)
+GROWW_SECTOR_INDICES = {
+    "NIFTY BANK": "NIFTYBANK",
+    "NIFTY REALTY": "NIFTYREALTY",
+    "NIFTY IT": "NIFTYIT",
+    "NIFTY AUTO": "NIFTYAUTO",
+    "NIFTY INFRA": "NIFTYINFRA",
+    "NIFTY PHARMA": "NIFTYPHARMA",
+    "NIFTY FMCG": "NIFTYFMCG",
+    "NIFTY METAL": "NIFTYMETAL",
+    "NIFTY ENERGY": "NIFTYENERGY",
+    "NIFTY PSU BANK": "NIFTYPSUBANK",
+    "NIFTY FINANCIAL SERVICES": "NIFTYFIN",
+    "NIFTY PRIVATE BANK": "NIFTYPVTBANK",
+    "NIFTY MEDIA": "NIFTYMEDIA",
+    "NIFTY HEALTHCARE": "NIFTYHEALTHCARE",
+    "NIFTY CONSUMER DURABLES": "NIFTYCONSUMERDURABLES",
+    "NIFTY OIL AND GAS": "NIFTYOILANDGAS",
+    "NIFTY INDIA DEFENCE": "NIFTYINDIADEFENCE",
+    "NIFTY INDIA RAILWAYS PSU": "NIFTYINDIARAILWAYSPSU"
+}
+
+# Mapping to live market index tickers (for direct index download fallback)
+INDEX_TICKER_MAP = {
     "NIFTY BANK": "^NSEBANK",
     "NIFTY REALTY": "^CNXREALTY",
     "NIFTY IT": "^CNXIT",
@@ -44,7 +66,9 @@ NSE_SECTOR_INDICES = {
     "NIFTY FMCG": "^CNXFMCG",
     "NIFTY METAL": "^CNXMETAL",
     "NIFTY ENERGY": "^CNXENERGY",
-    "NIFTY PSU BANK": "^CNXPSUBANK"
+    "NIFTY PSU BANK": "^CNXPSUBANK",
+    "NIFTY FINANCIAL SERVICES": "NIFTY_FIN_SERVICE.NS",
+    "NIFTY MEDIA": "^CNXMEDIA"
 }
 
 def auto_connect_groww():
@@ -128,24 +152,37 @@ def classify_stock_sector(sym):
         yf_sec = str(t.info.get("sector", "")).strip().lower()
         yf_ind = str(t.info.get("industry", "")).strip().lower()
 
-        if "bank" in yf_ind or "bank" in yf_sec:
-            if "public" in yf_ind or "psu" in yf_ind:
-                sector_name = "NIFTY PSU BANK"
-            else:
-                sector_name = "NIFTY BANK"
-        elif "financial" in yf_sec or "capital markets" in yf_ind or "credit" in yf_ind:
+        if "private" in yf_ind or "private" in yf_sec:
+            sector_name = "NIFTY PRIVATE BANK"
+        elif "psu" in yf_ind or "public bank" in yf_ind or "psu" in yf_sec:
+            sector_name = "NIFTY PSU BANK"
+        elif "bank" in yf_ind or "bank" in yf_sec:
             sector_name = "NIFTY BANK"
+        elif "rail" in yf_ind or "rail" in yf_sec or "locomotive" in yf_ind:
+            sector_name = "NIFTY INDIA RAILWAYS PSU"
+        elif "defence" in yf_ind or "aerospace" in yf_ind or "military" in yf_ind:
+            sector_name = "NIFTY INDIA DEFENCE"
+        elif "oil" in yf_ind or "gas" in yf_ind or "petroleum" in yf_ind:
+            sector_name = "NIFTY OIL AND GAS"
+        elif "consumer durable" in yf_ind or "appliances" in yf_ind or "electronics" in yf_ind:
+            sector_name = "NIFTY CONSUMER DURABLES"
+        elif "media" in yf_sec or "entertainment" in yf_ind or "broadcasting" in yf_ind or "publishing" in yf_ind:
+            sector_name = "NIFTY MEDIA"
+        elif "healthcare" in yf_sec or "hospital" in yf_ind or "diagnostic" in yf_ind:
+            sector_name = "NIFTY HEALTHCARE"
+        elif "pharm" in yf_ind or "biotech" in yf_ind or "drug" in yf_ind or "health" in yf_sec:
+            sector_name = "NIFTY PHARMA"
+        elif "financial" in yf_sec or "capital markets" in yf_ind or "credit" in yf_ind or "insurance" in yf_ind or "asset management" in yf_ind:
+            sector_name = "NIFTY FINANCIAL SERVICES"
         elif "technology" in yf_sec or "software" in yf_ind or "it services" in yf_ind:
             sector_name = "NIFTY IT"
         elif "auto" in yf_ind or "auto" in yf_sec or "vehicles" in yf_ind:
             sector_name = "NIFTY AUTO"
-        elif "health" in yf_sec or "pharm" in yf_ind or "biotech" in yf_ind or "drug" in yf_ind:
-            sector_name = "NIFTY PHARMA"
         elif "real estate" in yf_sec or "reit" in yf_ind:
             sector_name = "NIFTY REALTY"
         elif "steel" in yf_ind or "metals" in yf_sec or "mining" in yf_sec or "aluminum" in yf_ind or "copper" in yf_ind:
             sector_name = "NIFTY METAL"
-        elif "oil" in yf_ind or "gas" in yf_ind or "energy" in yf_sec or "petroleum" in yf_ind or "power" in yf_ind or "utilities" in yf_sec:
+        elif "energy" in yf_sec or "power" in yf_ind or "utilities" in yf_sec or "solar" in yf_ind:
             sector_name = "NIFTY ENERGY"
         elif "consumer defensive" in yf_sec or "fmcg" in yf_ind or "food" in yf_ind or "beverage" in yf_ind or "tobacco" in yf_ind:
             sector_name = "NIFTY FMCG"
@@ -346,11 +383,12 @@ def evaluate_explosive_momentum(df, symbol):
     }
 
 def calculate_dynamic_sectors():
-    """Calculates live sector performance from official NSE Sector Indices and dynamically ranks F&O constituents from Groww"""
-    # 1. Download live sector index returns via API
-    sec_index_tickers = list(NSE_SECTOR_INDICES.values())
+    """Calculates live sector performance across all 18 Groww Sector Indices and ranks dynamic F&O constituents"""
+    # 1. Download live sector index returns via direct index tickers (5d to guarantee prior close)
+    sec_index_tickers = list(set(INDEX_TICKER_MAP.values()))
     try:
-        sec_data = yf.download(sec_index_tickers, period="2d", interval="1d", progress=False)['Close']
+        sec_data = yf.download(sec_index_tickers, period="5d", interval="1d", progress=False)
+        sec_data = sec_data['Close'] if 'Close' in sec_data else sec_data
     except Exception as e:
         print("[DYNAMIC SECTOR] Index download failed:", e)
         sec_data = pd.DataFrame()
@@ -360,10 +398,11 @@ def calculate_dynamic_sectors():
     INDEX_SYMBOLS = {'NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'BANKEX', 'SENSEX', 'NIFTYNXT50', 'NIFTYFPI'}
     clean_fno = [s for s in fno_list if s not in INDEX_SYMBOLS and 'TEST' not in s]
 
-    # 3. Download price data for all active Groww FNO candidates in one batch
+    # 3. Download price data for all active Groww FNO candidates in one batch (5d period)
     fno_tickers = [f"{s}.NS" for s in clean_fno]
     try:
-        fno_prices = yf.download(fno_tickers, period="2d", interval="1d", progress=False)['Close']
+        fno_raw = yf.download(fno_tickers, period="5d", interval="1d", progress=False)
+        fno_prices = fno_raw['Close'] if 'Close' in fno_raw else fno_raw
     except Exception as e:
         print("[DYNAMIC SECTOR] FNO prices download failed:", e)
         fno_prices = pd.DataFrame()
@@ -371,39 +410,48 @@ def calculate_dynamic_sectors():
     # Calculate change for all FNO stocks
     stock_changes = {}
     for sym in fno_tickers:
-        if sym in fno_prices.columns and len(fno_prices[sym].dropna()) >= 2:
+        if sym in fno_prices.columns:
             sr = fno_prices[sym].dropna()
-            prev_p = float(sr.iloc[-2])
-            curr_p = float(sr.iloc[-1])
-            pct = ((curr_p - prev_p) / prev_p) * 100 if prev_p else 0.0
-            stock_changes[sym] = {"symbol": sym, "price": curr_p, "change": round(pct, 2)}
+            if len(sr) >= 2:
+                prev_p = float(sr.iloc[-2])
+                curr_p = float(sr.iloc[-1])
+                pct = ((curr_p - prev_p) / prev_p) * 100 if prev_p else 0.0
+                stock_changes[sym] = {"symbol": sym, "price": round(curr_p, 2), "change": round(pct, 2)}
 
     # Rank all FNO stocks by overall market gainers and losers
     all_fno_ranked = sorted(stock_changes.values(), key=lambda x: x["change"], reverse=True)
     fno_gainers = [x for x in all_fno_ranked if x["change"] >= 0]
     fno_losers = sorted([x for x in all_fno_ranked if x["change"] < 0], key=lambda x: x["change"])
 
-    # 4. Group all F&O stocks into their actual Sector Buckets dynamically
-    sector_buckets = {sec: [] for sec in NSE_SECTOR_INDICES}
+    # 4. Group all F&O stocks into their actual Sector Buckets dynamically across all 18 sectors
+    sector_buckets = {sec: [] for sec in GROWW_SECTOR_INDICES}
     for item in stock_changes.values():
         assigned_sec = classify_stock_sector(item["symbol"])
         if assigned_sec in sector_buckets:
             sector_buckets[assigned_sec].append(item)
+        else:
+            sector_buckets["NIFTY INFRA"].append(item)
 
     # 5. Compute each Sector's live status & rank its true F&O constituents
     sector_results = {}
-    for sec_name, ticker in NSE_SECTOR_INDICES.items():
+    for sec_name, groww_code in GROWW_SECTOR_INDICES.items():
         sec_pct = 0.0
-        if ticker in sec_data.columns and len(sec_data[ticker].dropna()) >= 2:
-            s = sec_data[ticker].dropna()
-            p = float(s.iloc[-2])
-            c = float(s.iloc[-1])
-            sec_pct = ((c - p) / p) * 100 if p else 0.0
-
-        is_bull = sec_pct >= 0
+        direct_ticker = INDEX_TICKER_MAP.get(sec_name)
         constituents = sector_buckets.get(sec_name, [])
         constituents.sort(key=lambda x: x["change"], reverse=True)
 
+        # Primary: Direct index price change if available
+        if direct_ticker and direct_ticker in sec_data.columns:
+            s = sec_data[direct_ticker].dropna()
+            if len(s) >= 2:
+                p = float(s.iloc[-2])
+                c = float(s.iloc[-1])
+                sec_pct = ((c - p) / p) * 100 if p else 0.0
+        elif constituents:
+            # Secondary: Equal-weighted average performance of all constituent F&O stocks in this sector
+            sec_pct = sum(stk["change"] for stk in constituents) / len(constituents)
+
+        is_bull = sec_pct >= 0
         gainers_count = len([x for x in constituents if x["change"] >= 0])
         losers_count = len([x for x in constituents if x["change"] < 0])
 
@@ -413,7 +461,8 @@ def calculate_dynamic_sectors():
             top_stocks = fno_gainers[:5] if is_bull else fno_losers[:5]
 
         sector_results[sec_name] = {
-            "ticker": ticker,
+            "ticker": direct_ticker or groww_code,
+            "groww_code": groww_code,
             "change": round(sec_pct, 2),
             "is_bullish": is_bull,
             "gainers": gainers_count,
