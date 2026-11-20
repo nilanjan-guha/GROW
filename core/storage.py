@@ -217,10 +217,16 @@ def evaluate_open_outcomes(data_map):
                     df.index = pd.to_datetime(df.index)
                 
                 # Iterate each completed candle formed strictly after the signal timestamp
-                for c_dt, row in df.iterrows():
+                now_ts = time.time()
+                for idx, (c_dt, row) in enumerate(df.iterrows()):
                     c_ts = c_dt.timestamp() if hasattr(c_dt, 'timestamp') else float(c_dt)
                     # Ignore candles at or before signal creation, or already processed
                     if c_ts <= last_candle_time or c_ts <= sig_time:
+                        continue
+
+                    # If this is the very last candle in df during live market hours and candle hasn't closed yet, do not process it
+                    is_last_candle = (idx == len(df) - 1)
+                    if is_last_candle and (c_ts + 900 > now_ts):
                         continue
 
                     newest_candle_time = max(newest_candle_time, c_ts)

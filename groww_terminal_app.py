@@ -574,13 +574,19 @@ def smc_scan():
         # 2. Extract Stock Sector & Live Sector Bias directly from Groww Sector Engine
         sector_bias = "NEUTRAL"
         assigned_sector = "UNCLASSIFIED"
-        # Check if stock exists in active Groww sectors
-        for s_name, s_data in screener_state["sectors"].items():
-            stks = s_data.get("top_5", [])
-            if any(x.get("symbol") == symbol for x in stks):
-                assigned_sector = s_name
-                sector_bias = "BULLISH" if s_data.get("is_bullish") else "BEARISH"
-                break
+        # Check comprehensive stock_to_sector_map populated from all Groww constituents
+        groww_mapping = groww_sector_engine.stock_to_sector_map.get(symbol)
+        if groww_mapping:
+            assigned_sector = groww_mapping.get("sector", "UNCLASSIFIED")
+            sector_bias = groww_mapping.get("bias", "NEUTRAL")
+        else:
+            # Fallback: check in active top-5 sector cards
+            for s_name, s_data in screener_state["sectors"].items():
+                stks = s_data.get("top_5", [])
+                if any(x.get("symbol") == symbol for x in stks):
+                    assigned_sector = s_name
+                    sector_bias = "BULLISH" if s_data.get("is_bullish") else "BEARISH"
+                    break
         
         if sector_bias == "NEUTRAL":
             assigned_sector = classify_stock_sector(symbol)
@@ -595,16 +601,27 @@ def smc_scan():
         # 4. Check Anomaly Detector (Flat-Open Sudden Expansion & Time-of-Day RVOL Acceleration)
         anomaly_info = AnomalyDetector.detect_flat_open_breakout(df=df_copy, prev_close=prev_close)
 
-        # 5. Evaluate Institutional 15-Strategy Multi-Layer Engine WITH Sector, News & Anomaly Evidence
+        # 5. Distinguish Completed Candles vs Live Forming Candle
+        # Check if the latest candle in df is completed
+        last_candle_end = 0
+        if hasattr(df.index[-1], 'timestamp'):
+            last_candle_end = df.index[-1].timestamp() + 900
+        
+        is_completed_candle = (not is_market_open()) or (now >= last_candle_end and last_candle_end > 0)
+
+        # Run strategy evaluation strictly on completed candles
+        eval_df = df if is_completed_candle or len(df) <= 20 else df.iloc[:-1]
+
+        # 6. Evaluate Institutional 15-Strategy Multi-Layer Engine WITH Sector, News & Anomaly Evidence
         inst_res = InstitutionalStrategyEngine.evaluate_strategies(
-            df=df,
+            df=eval_df,
             prev_close=prev_close,
             sector_bias=sector_bias,
             catalyst_info=news_cat,
             anomaly_info=anomaly_info
         )
 
-        # 6. Groq AI Institutional Summary
+        # 7. Groq AI Institutional Summary
         ai_intel = groq_ai.analyze_signal(
             symbol=clean_sym,
             direction=inst_res["direction"],
@@ -628,6 +645,7 @@ def smc_scan():
         res["potential_tp2_pct"] = inst_res.get("potential_tp2_pct", 0.0)
         res["nearest_obstacle"] = inst_res.get("nearest_obstacle", "None")
         res["exhaustion_risk"] = inst_res.get("exhaustion_risk", "LOW")
+        res["risk_reward_ratio"] = inst_res.get("risk_reward_ratio", 0.0)
         
         # Enforce strict institutional action: if institutional engine is NEUTRAL, action MUST be NO TRADE
         if inst_res["direction"] != "NEUTRAL":
@@ -637,32 +655,27 @@ def smc_scan():
             res["suggested_tp1"] = inst_res["suggested_tp1"]
             res["suggested_tp2"] = inst_res["suggested_tp2"]
             res["reasoning"] = f"{inst_res['primary_strategy']} active. {ai_intel.get('ai_summary', '')}"
-            
-            # Persist to historical signals database and capture logged signal ID directly
-            signal_id = log_signal({
-                "symbol": symbol,
-                "direction": inst_res["direction"],
-                "strategy": inst_res["primary_strategy"],
-                "entry_price": inst_res["current_price"],
-                "stop_loss": inst_res["suggested_sl"],
-                "target_1": inst_res["suggested_tp1"],
-                "target_2": inst_res["suggested_tp2"],
-                "score": inst_res["composite_score"],
-                "confidence": f"{inst_res['probability_pct']}%",
-                "catalyst": news_headline or "Institutional Order Flow",
-                "features": {"rvol": inst_res["rvol"], "rsi": inst_res["rsi"], "vwap": inst_res["vwap"]},
-                "all_triggered": inst_res["triggered_strategies"]
-            })
-            res["signal_id"] = signal_id
-
-            # Completed candle vs Provisional candle confirmation:
-            # Check if the latest candle is completed (timestamp + 900s <= current time or market closed)
-            last_candle_end = 0
-            if hasattr(df.index[-1], 'timestamp'):
-                last_candle_end = df.index[-1].timestamp() + 900
-            
-            is_completed_candle = (not is_market_open()) or (now >= last_candle_end and last_candle_end > 0)
             res["signal_status"] = "CONFIRMED (Completed Candle)" if is_completed_candle else "PROVISIONAL (Live Candle)"
+            
+            # Persist ONLY CONFIRMED signals to historical signals database
+            if is_completed_candle:
+                signal_id = log_signal({
+                    "symbol": symbol,
+                    "direction": inst_res["direction"],
+                    "strategy": inst_res["primary_strategy"],
+                    "entry_price": inst_res["current_price"],
+                    "stop_loss": inst_res["suggested_sl"],
+                    "target_1": inst_res["suggested_tp1"],
+                    "target_2": inst_res["suggested_tp2"],
+                    "score": inst_res["composite_score"],
+                    "confidence": f"{inst_res['probability_pct']}%",
+                    "catalyst": news_headline or "Institutional Order Flow",
+                    "features": {"rvol": inst_res["rvol"], "rsi": inst_res["rsi"], "vwap": inst_res["vwap"]},
+                    "all_triggered": inst_res["triggered_strategies"]
+                })
+                res["signal_id"] = signal_id
+            else:
+                res["signal_id"] = None
         else:
             # Institutional engine is NEUTRAL: clear any momentum-only buy/sell action
             res["action"] = "WAIT FOR ENTRY (NO TRADE)"

@@ -99,7 +99,8 @@ class OpportunityPotentialEngine:
         # 2. SEPARATE INTRADAY ATR vs TRUE DAILY ATR
         # 15m ATR for local candle volatility
         tr_15m = pd.concat([h - l, (h - c.shift(1)).abs(), (l - c.shift(1)).abs()], axis=1).max(axis=1)
-        intraday_atr_15m = float(tr_15m.rolling(14).mean().iloc[-1]) or (curr_c * 0.005)
+        rolling_atr15 = tr_15m.rolling(14).mean().iloc[-1]
+        intraday_atr_15m = float(rolling_atr15) if (not pd.isna(rolling_atr15) and rolling_atr15 > 0) else float(curr_c * 0.005)
 
         # True Daily ATR across historical days
         daily_atr = OpportunityPotentialEngine.calculate_daily_atr(df_copy, dates, curr_c)
@@ -181,13 +182,14 @@ class OpportunityPotentialEngine:
             # Daily Range Exhaustion: If already consumed > 1.8x Daily ATR near the high of day
             is_exhausted = range_exhaustion_ratio >= 1.8 and curr_c >= float(today_df['High'].max()) * 0.995
 
-            # Calculate Reward-to-Risk ratio against stop-loss
+            # Calculate Reward-to-Risk ratio against stop-loss using exact unrounded precision
             risk = (curr_c - float(stop_loss)) if (stop_loss and float(stop_loss) < curr_c) else (intraday_atr_15m * 1.2)
             reward = tp1 - curr_c
-            rr_ratio = round(reward / risk, 2) if risk > 0 else 0.0
+            raw_rr_ratio = (reward / risk) if risk > 0 else 0.0
 
-            # STRICT > 1.0% UNROUNDED POTENTIAL GATE + STRICT RR >= 1.5 GATE
-            is_viable = (raw_room_to_tp1_pct > 1.0) and (rr_ratio >= 1.5) and not is_exhausted and not reversal_detected
+            # STRICT > 1.0% UNROUNDED POTENTIAL GATE + STRICT UNROUNDED RR >= 1.5 GATE
+            is_viable = (raw_room_to_tp1_pct > 1.0) and (raw_rr_ratio >= 1.5) and not is_exhausted and not reversal_detected
+            rr_ratio = round(raw_rr_ratio, 2)
 
             exhaustion_level = "HIGH" if is_exhausted else ("MODERATE" if range_exhaustion_ratio >= 1.2 else "LOW")
 
@@ -272,10 +274,11 @@ class OpportunityPotentialEngine:
 
             risk = (float(stop_loss) - curr_c) if (stop_loss and float(stop_loss) > curr_c) else (intraday_atr_15m * 1.2)
             reward = curr_c - tp1
-            rr_ratio = round(reward / risk, 2) if risk > 0 else 0.0
+            raw_rr_ratio = (reward / risk) if risk > 0 else 0.0
 
-            # STRICT > 1.0% UNROUNDED POTENTIAL GATE + STRICT RR >= 1.5 GATE
-            is_viable = (raw_room_to_tp1_pct > 1.0) and (rr_ratio >= 1.5) and not is_exhausted and not reversal_detected
+            # STRICT > 1.0% UNROUNDED POTENTIAL GATE + STRICT UNROUNDED RR >= 1.5 GATE
+            is_viable = (raw_room_to_tp1_pct > 1.0) and (raw_rr_ratio >= 1.5) and not is_exhausted and not reversal_detected
+            rr_ratio = round(raw_rr_ratio, 2)
 
             exhaustion_level = "HIGH" if is_exhausted else ("MODERATE" if range_exhaustion_ratio >= 1.2 else "LOW")
 
