@@ -64,10 +64,18 @@ class InstitutionalStrategyEngine:
         session_vwap_series = (today_tp * today_df['Volume']).cumsum() / today_cum_vol
         vwap = float(session_vwap_series.iloc[-1])
 
-        # 3. TRUE OPENING RANGE & GAP FROM TODAY'S FIRST CANDLE
+        # 3. MULTI-DURATION OPENING RANGE (5m, 15m, 30m) & GAP
         today_open = float(today_df['Open'].iloc[0])
-        or_high = float(today_df['High'].iloc[0])
-        or_low = float(today_df['Low'].iloc[0])
+        # 5m ORB (1 candle), 15m ORB (first 3 candles), 30m ORB (first 6 candles)
+        or_5m_h = float(today_df['High'].iloc[0])
+        or_5m_l = float(today_df['Low'].iloc[0])
+        or_15m_h = float(today_df['High'].iloc[:3].max()) if len(today_df) >= 3 else or_5m_h
+        or_15m_l = float(today_df['Low'].iloc[:3].min()) if len(today_df) >= 3 else or_5m_l
+        or_30m_h = float(today_df['High'].iloc[:6].max()) if len(today_df) >= 6 else or_15m_h
+        or_30m_l = float(today_df['Low'].iloc[:6].min()) if len(today_df) >= 6 else or_15m_l
+
+        or_high = or_15m_h if len(today_df) >= 3 else or_5m_h
+        or_low = or_15m_l if len(today_df) >= 3 else or_5m_l
         gap_pct = ((today_open - prev_close) / prev_close) * 100 if prev_close else 0.0
 
         # Technical Indicators across full series
@@ -90,8 +98,8 @@ class InstitutionalStrategyEngine:
         # SMC: Order Blocks & Liquidity Sweeps
         bull_obs, bear_obs = [], []
         swing_highs, swing_lows = [], []
-        # Calculate pivot swing points on historical completed candles (excluding current active candle)
-        hist_df = df.iloc[:-1] if len(df) > 5 else df
+        # df already contains strictly completed candles; utilize all of it without artificial one-candle delay
+        hist_df = df
         for i in range(2, len(hist_df)-2):
             if float(h.iloc[i]) == max([float(x) for x in h.iloc[i-2:i+3]]):
                 swing_highs.append(float(h.iloc[i]))

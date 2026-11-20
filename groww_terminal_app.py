@@ -565,6 +565,24 @@ def smc_scan():
         df_copy['Date'] = df_copy.index.date
         dates = sorted(df_copy['Date'].unique())
         
+        # Verify candle freshness: during live market, reject stale candles older than current date
+        ist_tz = pytz.timezone('Asia/Kolkata')
+        today_ist = datetime.datetime.now(ist_tz).date()
+        latest_candle_date = dates[-1] if dates else None
+        
+        if is_market_open() and latest_candle_date and (latest_candle_date < today_ist):
+            return jsonify({
+                "success": True,
+                "smc": {
+                    "action": "WAIT FOR ENTRY (NO TRADE)",
+                    "verdict": "STALE MARKET DATA - WAITING FOR SESSION OPEN",
+                    "reasoning": f"Latest candle date ({latest_candle_date}) is prior to today ({today_ist}). Waiting for current session feed.",
+                    "current_price": float(df['Close'].iloc[-1]),
+                    "signal_status": "NEUTRAL",
+                    "signal_id": None
+                }
+            })
+
         if len(dates) >= 2:
             prev_date = dates[-2]
             prev_day_df = df_copy[df_copy['Date'] == prev_date]

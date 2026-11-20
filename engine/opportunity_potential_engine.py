@@ -25,8 +25,24 @@ class OpportunityPotentialEngine:
     """
 
     @staticmethod
-    def calculate_daily_atr(df_copy, dates, current_price):
-        """Calculates true Daily ATR14 using True Range formula across historical daily sessions"""
+    def calculate_daily_atr(df_copy, dates, current_price, daily_df=None):
+        """Calculates true Daily Wilder ATR14 using historical completed daily sessions"""
+        # Case 1: Separate dedicated Daily OHLC DataFrame provided (15+ days)
+        if daily_df is not None and not daily_df.empty and len(daily_df) >= 14:
+            try:
+                dh = daily_df['High']
+                dl = daily_df['Low']
+                dc = daily_df['Close']
+                d_prev_c = dc.shift(1)
+                tr = pd.concat([dh - dl, (dh - d_prev_c).abs(), (dl - d_prev_c).abs()], axis=1).max(axis=1)
+                # Wilder's 14-period exponential smoothing
+                atr14 = tr.ewm(alpha=1/14, min_periods=14, adjust=False).mean().iloc[-1]
+                if not pd.isna(atr14) and atr14 > 0:
+                    return float(atr14)
+            except Exception:
+                pass
+
+        # Case 2: Daily records extracted from intraday history
         daily_records = []
         for i in range(len(dates) - 1):
             day_data = df_copy[df_copy['Date'] == dates[i]]
@@ -48,10 +64,6 @@ class OpportunityPotentialEngine:
                 avg_atr = float(np.mean(true_ranges))
                 if not pd.isna(avg_atr) and avg_atr > 0:
                     return avg_atr
-        elif len(daily_records) == 1:
-            tr = daily_records[0]["high"] - daily_records[0]["low"]
-            if not pd.isna(tr) and tr > 0:
-                return float(tr)
 
         return float(current_price * 0.018)  # Standard 1.8% daily volatility baseline
 
