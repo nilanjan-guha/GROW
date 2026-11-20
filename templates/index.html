@@ -255,17 +255,18 @@
                 stocks.forEach(stk => activeWatchlist.push({ sector: name, symbol: stk.symbol, bias: 'BEARISH' }));
             });
 
-            // Find first stock with a confirmed entry, or default to first in watchlist
+            // Initialize default sector and stock only on first load
             if (!currentStockSymbol && activeWatchlist.length > 0) {
                 currentStockSymbol = activeWatchlist[0].symbol;
+                userSelectedStock = currentStockSymbol;
             }
 
             renderStockChips();
-            if (currentStockSymbol) {
+            if (currentStockSymbol && !userSelectedStock) {
                 scanStock(currentStockSymbol);
             }
 
-            // Immediately scan the 15 bull and 15 bear stocks to flag active entries right away
+            // Background scan across all 30 watchlist candidates
             scanAllWatchlistCandidates();
         }
 
@@ -300,14 +301,20 @@
         }
 
         function selectSector(name) {
+            // When user clicks a sector, change to this sector and load its first stock
             currentSectorName = name;
             const sec = sectorsDict[name];
             if (sec) {
                 document.getElementById('selectedSectorTitle').innerText = `${name} (${sec.is_bullish ? '+' : ''}${sec.change.toFixed(2)}%)`;
-                renderSectorsUI(sectorsDict);
+                
+                // Re-render sectors UI cards highlight without re-triggering watchlist scan
+                const bullEl = document.getElementById('bullishSectors');
+                const bearEl = document.getElementById('bearishSectors');
+                document.querySelectorAll('.sector-card').forEach(c => c.classList.remove('selected'));
+                
                 const stocks = sec.top_5 || sec.top_5_stocks || [];
                 if (stocks.length > 0) {
-                    userSelectedStock = stocks[0].symbol; // Set user selected stock
+                    userSelectedStock = stocks[0].symbol;
                     selectStock(stocks[0].symbol);
                 }
             }
@@ -326,7 +333,7 @@
                 chip.className = `stock-chip ${stk.symbol === currentStockSymbol ? 'active' : ''}`;
                 chip.innerText = `${stk.symbol.replace('.NS', '')} (${stk.change >= 0 ? '+' : ''}${stk.change.toFixed(1)}%)`;
                 chip.onclick = () => {
-                    userSelectedStock = stk.symbol; // Explicit user selection lock
+                    userSelectedStock = stk.symbol; // Lock this exact stock tab
                     selectStock(stk.symbol);
                 };
                 bar.appendChild(chip);
@@ -335,6 +342,7 @@
 
         function selectStock(stk) {
             currentStockSymbol = stk;
+            userSelectedStock = stk;
             document.getElementById('radarStockTitle').innerText = stk;
             renderStockChips();
             scanStock(stk);
@@ -354,6 +362,7 @@
 
         async function scanAllWatchlistCandidates() {
             // Background scan across active watchlist (30 candidates: 15 Bullish + 15 Bearish)
+            // Does NOT switch the tabs or modify the current stock selected by user
             for (let i = 0; i < activeWatchlist.length; i++) {
                 const item = activeWatchlist[i];
                 try {
@@ -364,18 +373,11 @@
                         if (smc.action.includes('BUY') || smc.action.includes('SELL')) {
                             log(`🎯 [EXACT ENTRY FOUND] ${item.symbol} (${item.bias}) => ${smc.action} | SL: ₹${smc.suggested_sl} | TP1: ₹${smc.suggested_tp1}`, 'ENTRY');
                             
-                            // Check if this signal has higher composite score or if current best has reached target/stopped out
+                            // Update Top Banner with highest composite score confirmed trade
                             const curScore = smc.composite_score || 0;
                             if (!bestActiveSignal || curScore >= (bestActiveSignal.smc.composite_score || 0)) {
                                 bestActiveSignal = { symbol: item.symbol, smc: smc, time: Date.now() };
                                 updateConfirmedBanner(item.symbol, smc);
-                            }
-
-                            // If user hasn't explicitly locked onto a stock, focus the radar on the best confirmed trade
-                            if (!userSelectedStock) {
-                                currentSectorName = item.sector;
-                                document.getElementById('selectedSectorTitle').innerText = item.sector;
-                                selectStock(item.symbol);
                             }
                         }
                     }
@@ -398,7 +400,7 @@
                     if (smc.action.includes('BUY') || smc.action.includes('SELL')) {
                         log(`🎯 [LIVE SIGNAL DETECTED] ${target.symbol} => ${smc.action} | SL: ₹${smc.suggested_sl} | TP1: ₹${smc.suggested_tp1}`, 'ENTRY');
                         
-                        // Check if previous signal achieved its target or if this new signal has stronger confluence
+                        // Update Top Banner only if this has highest conviction/score or prior trade completed
                         const newScore = smc.composite_score || 0;
                         if (!bestActiveSignal || newScore >= (bestActiveSignal.smc.composite_score || 0) || (Date.now() - bestActiveSignal.time > 300000)) {
                             bestActiveSignal = { symbol: target.symbol, smc: smc, time: Date.now() };
@@ -408,7 +410,7 @@
                         log(`[Scan: ${target.symbol}] Price: ₹${smc.current_price.toFixed(1)} - Waiting for OB or Breakout trigger.`, 'NO_ENTRY');
                     }
 
-                    // If user is actively viewing this exact stock on radar, refresh its live radar metrics
+                    // Only refresh radar numbers if user is actively looking at this stock
                     if (target.symbol === currentStockSymbol) {
                         renderRadarData(target.symbol, smc);
                     }
