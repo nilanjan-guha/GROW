@@ -226,8 +226,17 @@
 
             const allSectors = Object.entries(sectors);
             
-            const bullishList = allSectors.filter(([_, sec]) => sec.is_bullish).slice(0, 3);
-            const bearishList = allSectors.filter(([_, sec]) => !sec.is_bullish).slice(0, 3);
+            // Sort Bullish by highest positive percentage descending
+            const bullishList = allSectors
+                .filter(([_, sec]) => sec.is_bullish)
+                .sort((a, b) => b[1].change - a[1].change)
+                .slice(0, 3);
+
+            // Sort Bearish by biggest negative percentage ascending (e.g. -1.98% before -1.21%)
+            const bearishList = allSectors
+                .filter(([_, sec]) => !sec.is_bullish)
+                .sort((a, b) => a[1].change - b[1].change)
+                .slice(0, 3);
 
             // Rebuild active watchlist from the Top 3 Bullish + Top 3 Bearish sectors
             activeWatchlist = [];
