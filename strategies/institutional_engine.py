@@ -265,6 +265,8 @@ class InstitutionalStrategyEngine:
             sig["weight"] = int(sig["weight"] * mult)
 
         # Macro Market Regime Alignment Boost / Penalty
+        macro_penalty_buy = 0
+        macro_penalty_sell = 0
         if market_regime_info:
             from engine.market_regime_engine import MarketRegimeEngine
             stock_change_pct = ((curr_c - today_open) / today_open) * 100 if today_open else 0.0
@@ -279,13 +281,24 @@ class InstitutionalStrategyEngine:
             if boost > 0:
                 target_dir = "BUY" if stock_change_pct > 0 else "SELL"
                 evaluated_signals.append({"strategy": "Market-Wide Macro Confluence", "direction": target_dir, "weight": boost})
+            elif boost < 0:
+                # Stock is fighting against strong macro regime: apply directional penalty
+                if market_regime_info.get("bias") == "BEARISH":
+                    # Strong bearish macro: penalize buy setups
+                    macro_penalty_buy = abs(boost)
+                elif market_regime_info.get("bias") == "BULLISH":
+                    # Strong bullish macro: penalize short setups
+                    macro_penalty_sell = abs(boost)
 
         # Rank strategies by weight/evidence
         buy_signals = [s for s in evaluated_signals if s["direction"] == "BUY"]
         sell_signals = [s for s in evaluated_signals if s["direction"] == "SELL"]
 
-        buy_score = min(100, sum(s["weight"] for s in buy_signals))
-        sell_score = min(100, sum(s["weight"] for s in sell_signals))
+        # Apply macro penalty with sensible floor
+        raw_buy_score = sum(s["weight"] for s in buy_signals)
+        raw_sell_score = sum(s["weight"] for s in sell_signals)
+        buy_score = max(0, min(100, raw_buy_score - macro_penalty_buy))
+        sell_score = max(0, min(100, raw_sell_score - macro_penalty_sell))
 
         # Sort strategies by weight descending so strongest strategy is primary
         buy_signals.sort(key=lambda x: x["weight"], reverse=True)

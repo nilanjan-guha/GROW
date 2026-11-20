@@ -255,7 +255,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
         conn.close()
 
     def test_market_validator_holidays_and_staleness(self):
-        from engine.market_validator import MarketValidator, NSE_HOLIDAYS_2026
+        from engine.market_validator import MarketValidator, OFFICIAL_NSE_HOLIDAYS
         # Republic Day 2026 is a holiday
         rep_day = datetime.date(2026, 1, 26)
         self.assertFalse(MarketValidator.is_trading_day(rep_day))

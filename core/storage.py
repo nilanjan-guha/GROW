@@ -472,6 +472,12 @@ def evaluate_open_outcomes(data_map):
 
             if outcome in ("WIN", "WIN_FULL", "WIN_PARTIAL", "LOSS"):
                 update_strategy_performance(cursor, strategy, sig["id"])
+                # Trigger strategy learning dynamic calibration upon closed trade
+                try:
+                    from engine.strategy_learning_engine import StrategyLearningEngine
+                    StrategyLearningEngine.calibrate_weights()
+                except Exception:
+                    pass
 
         conn.commit()
         conn.close()
