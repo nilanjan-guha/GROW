@@ -220,8 +220,22 @@
             bearEl.innerHTML = '';
 
             const allSectors = Object.entries(sectors);
-            const bullishList = allSectors.filter(([_, sec]) => sec.is_bullish).slice(0, 3);
-            const bearishList = allSectors.filter(([_, sec]) => !sec.is_bullish).slice(0, 3);
+            const bullishList = allSectors.filter(([_, sec]) => sec.is_bullish && (sec.top_5 || []).length > 0).slice(0, 3);
+            // Sort bearish sectors ascending by change (most negative change first)
+            const bearishList = allSectors
+                .filter(([_, sec]) => !sec.is_bullish && (sec.top_5 || []).length > 0)
+                .sort((a, b) => a[1].change - b[1].change)
+                .slice(0, 3);
+
+            // If fewer than 3 bearish sectors exist (strong bull market), pick lowest ranked remaining sectors
+            if (bearishList.length < 3) {
+                const remaining = allSectors
+                    .filter(([name, sec]) => !bullishList.some(([bName]) => bName === name) && !bearishList.some(([rName]) => rName === name) && (sec.top_5 || []).length > 0)
+                    .sort((a, b) => a[1].change - b[1].change);
+                for (const rem of remaining) {
+                    if (bearishList.length < 3) bearishList.push(rem);
+                }
+            }
 
             // Rebuild active watchlist from the Top 3 Bullish + Top 3 Bearish sectors (total 30 stocks: 15 bull + 15 bear)
             activeWatchlist = [];

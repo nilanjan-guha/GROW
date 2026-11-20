@@ -43,11 +43,13 @@ class AnomalyDetector:
         # Check if open was flat (gap <= 0.65%)
         is_flat_open = gap_pct <= 0.65
         
-        # Current candle velocity
+        # Current candle velocity: compare current candle against completed prior candles
         curr_c = float(c.iloc[-1])
         curr_o = float(o.iloc[-1])
         curr_range = float(h.iloc[-1] - l.iloc[-1])
-        avg_range = float((h - l).rolling(min(len(h), 15)).mean().iloc[-1]) or 0.0001
+        prior_ranges = (h - l).iloc[:-1]
+        avg_range = float(prior_ranges.tail(15).mean()) if len(prior_ranges) > 0 else (curr_range or 0.0001)
+        avg_range = avg_range or 0.0001
         
         range_expansion = curr_range / avg_range
         rvol = AnomalyDetector.calculate_rvol(v)

@@ -101,42 +101,53 @@ class NewsIntelligenceEngine:
 
     def match_catalyst_for_stock(self, symbol_clean):
         """
-        Finds the most relevant catalyst headline for ANY stock dynamically.
-        1. Queries targeted stock news (cached every 5 min).
-        2. Falls back to general market news matching.
+        Finds validated relevant catalyst headline for the stock dynamically.
+        Requires verified ticker/company keyword match. Returns None if unverified.
         """
         sym = symbol_clean.replace(".NS", "").upper()
-        company_name = self.symbol_names.get(sym, sym).lower()
+        raw_company_name = self.symbol_names.get(sym, "")
         sym_lower = sym.lower()
+
+        # Stopwords to filter out generic corporate terms
+        STOPWORDS = {"ltd", "limited", "india", "corporation", "corp", "industries", "holdings", "company", "services"}
+        significant_words = [w.lower() for w in raw_company_name.split() if len(w) > 3 and w.lower() not in STOPWORDS]
 
         # 1. Check targeted stock feed
         targeted = self.fetch_news_for_stock(sym)
         if targeted:
             for art in targeted:
                 t_lower = art["title"].lower()
-                # Confirm relevance by checking either symbol or company name in title
-                if sym_lower in t_lower or any(word in t_lower for word in company_name.split() if len(word) > 3):
+                # Strict relevance check: symbol or distinct company keyword
+                if sym_lower in t_lower or any(word in t_lower for word in significant_words):
                     return art
-            # If no exact match, the top targeted article is the closest catalyst
-            return targeted[0]
 
-        # 2. Fallback to broad market news
+        # 2. Fallback to broad market news with strict relevance check
         market_news = self.fetch_market_news()
         for n in market_news:
             title_lower = n["title"].lower()
-            if sym_lower in title_lower or any(word in title_lower for word in company_name.split() if len(word) > 3):
+            if sym_lower in title_lower or any(word in title_lower for word in significant_words):
                 return n
 
+        # Never attach an arbitrary unrelated headline
         return None
 
     def _analyze_headline_sentiment(self, text):
         text_lower = text.lower()
+        
+        # Check for negative prefixes/negations
+        negations = ["no ", "not ", "n't ", "never ", "fails to "]
+        has_negation = any(neg in text_lower for neg in negations)
+
         bull_words = ["surges", "rallies", "jumps", "profit", "beats", "growth", "order", "contracts", "dividend", "bullish", "record high", "upgrade", "gains", "partnership", "expansion"]
         bear_words = ["slumps", "falls", "tumbles", "loss", "misses", "probe", "fraud", "penalty", "bearish", "record low", "downgrade", "crisis", "decline", "warning", "investigation"]
         
         bull_score = sum(1 for w in bull_words if w in text_lower)
         bear_score = sum(1 for w in bear_words if w in text_lower)
         
+        if has_negation:
+            # Invert sentiment if negated
+            bull_score, bear_score = bear_score, bull_score
+
         if bull_score > bear_score:
             return "BULLISH"
         elif bear_score > bull_score:

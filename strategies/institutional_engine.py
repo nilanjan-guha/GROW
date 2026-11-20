@@ -21,7 +21,7 @@ class InstitutionalStrategyEngine:
     O: Corporate & News Catalyst Momentum
     """
     @staticmethod
-    def evaluate_strategies(df, prev_close=None, sector_bias="NEUTRAL", catalyst_info=None):
+    def evaluate_strategies(df, prev_close=None, sector_bias="NEUTRAL", catalyst_info=None, anomaly_info=None):
         if df is None or df.empty or len(df) < 5:
             return None
 
@@ -90,32 +90,47 @@ class InstitutionalStrategyEngine:
         # SMC: Order Blocks & Liquidity Sweeps
         bull_obs, bear_obs = [], []
         swing_highs, swing_lows = [], []
-        for i in range(2, len(df)-2):
+        # Calculate pivot swing points on historical completed candles (excluding current active candle)
+        hist_df = df.iloc[:-1] if len(df) > 5 else df
+        for i in range(2, len(hist_df)-2):
             if float(h.iloc[i]) == max([float(x) for x in h.iloc[i-2:i+3]]):
                 swing_highs.append(float(h.iloc[i]))
             if float(l.iloc[i]) == min([float(x) for x in l.iloc[i-2:i+3]]):
                 swing_lows.append(float(l.iloc[i]))
 
-        for i in range(1, len(df)-2):
+        for i in range(1, len(hist_df)-1):
             if float(c.iloc[i]) < float(o.iloc[i]) and float(c.iloc[i+1]) > float(h.iloc[i]):
-                bull_obs.append({"top": float(h.iloc[i]), "bottom": float(l.iloc[i])})
+                # Order block created: check if mitigated by subsequent candles
+                ob_top = float(h.iloc[i])
+                ob_bottom = float(l.iloc[i])
+                is_mitigated = any(float(l.iloc[k]) <= ob_top for k in range(i+2, len(hist_df)))
+                bull_obs.append({"top": ob_top, "bottom": ob_bottom, "mitigated": is_mitigated})
             if float(c.iloc[i]) > float(o.iloc[i]) and float(c.iloc[i+1]) < float(l.iloc[i]):
-                bear_obs.append({"top": float(h.iloc[i]), "bottom": float(l.iloc[i])})
+                ob_top = float(h.iloc[i])
+                ob_bottom = float(l.iloc[i])
+                is_mitigated = any(float(h.iloc[k]) >= ob_bottom for k in range(i+2, len(hist_df)))
+                bear_obs.append({"top": ob_top, "bottom": ob_bottom, "mitigated": is_mitigated})
 
-        near_demand_ob = bull_obs[-1] if bull_obs else None
-        near_supply_ob = bear_obs[-1] if bear_obs else None
+        # Prefer fresh (unmitigated) order blocks nearest to current price
+        fresh_bull_obs = [ob for ob in bull_obs if not ob.get("mitigated")]
+        fresh_bear_obs = [ob for ob in bear_obs if not ob.get("mitigated")]
+        near_demand_ob = fresh_bull_obs[-1] if fresh_bull_obs else (bull_obs[-1] if bull_obs else None)
+        near_supply_ob = fresh_bear_obs[-1] if fresh_bear_obs else (bear_obs[-1] if bear_obs else None)
 
         # Fair Value Gaps (FVG)
         fvg_bull = len(df) >= 3 and float(l.iloc[-1]) > float(h.iloc[-3])
         fvg_bear = len(df) >= 3 and float(h.iloc[-1]) < float(l.iloc[-3])
 
-        # Break of Structure (BOS)
-        prev_swing_high = max(swing_highs[-3:]) if len(swing_highs) >= 3 else float(h.max())
-        prev_swing_low = min(swing_lows[-3:]) if len(swing_lows) >= 3 else float(l.min())
+        # Break of Structure (BOS) & Liquidity Sweeps using verified prior swing levels (excluding current candle)
+        prior_h = h.iloc[:-1]
+        prior_l = l.iloc[:-1]
+        prev_swing_high = float(swing_highs[-1]) if swing_highs else float(prior_h.max())
+        prev_swing_low = float(swing_lows[-1]) if swing_lows else float(prior_l.min())
+
         bos_bullish = curr_c > prev_swing_high and curr_c > vwap
         bos_bearish = curr_c < prev_swing_low and curr_c < vwap
 
-        # Liquidity Sweep & Stop Hunt Reversal
+        # Liquidity Sweep & Stop Hunt Reversal: Low/High pierces level but candle closes back within structure
         sweep_bullish = float(l.iloc[-1]) < prev_swing_low and curr_c > prev_swing_low and curr_c > curr_o
         sweep_bearish = float(h.iloc[-1]) > prev_swing_high and curr_c < prev_swing_high and curr_c < curr_o
 
@@ -154,8 +169,13 @@ class InstitutionalStrategyEngine:
         if rvol >= 2.0 and abs(curr_c - curr_o) / curr_c >= 0.008:
             evaluated_signals.append({"strategy": "RVOL Anomaly Breakout", "direction": "BUY" if curr_c > curr_o else "SELL", "weight": 25})
 
-        # Strategy I: Flat-Open Sudden Momentum
-        if abs(gap_pct) <= 0.65 and rvol >= 1.6:
+        # Strategy I: Flat-Open Sudden Momentum / Anomaly Engine
+        if anomaly_info and anomaly_info.get("is_flat_open") and anomaly_info.get("is_sudden_expansion"):
+            if anomaly_info.get("direction") == "BULLISH" and curr_c > vwap:
+                evaluated_signals.append({"strategy": "Flat-Open Sudden Momentum", "direction": "BUY", "weight": 26})
+            elif anomaly_info.get("direction") == "BEARISH" and curr_c < vwap:
+                evaluated_signals.append({"strategy": "Flat-Open Sudden Momentum", "direction": "SELL", "weight": 26})
+        elif abs(gap_pct) <= 0.65 and rvol >= 1.6:
             if curr_c > curr_o and curr_c > vwap:
                 evaluated_signals.append({"strategy": "Flat-Open Surge", "direction": "BUY", "weight": 25})
             elif curr_c < curr_o and curr_c < vwap:

@@ -239,10 +239,19 @@ def evaluate_explosive_momentum(df, symbol):
     # 3. Volume SMA 20
     vol_sma20 = v.rolling(window=20).mean()
 
-    # 4. VWAP (Intraday cumulative)
-    typical_price = (h + l + c) / 3
-    cum_vol = v.cumsum()
-    vwap = (typical_price * v).cumsum() / cum_vol.replace(0, 1)
+    # 4. TRUE SESSION-RESET VWAP (Resets to 0 at 09:15 open of each day)
+    df_copy = df.copy()
+    if not pd.api.types.is_datetime64_any_dtype(df_copy.index):
+        df_copy.index = pd.to_datetime(df_copy.index)
+    df_copy['Date'] = df_copy.index.date
+    today_date = df_copy['Date'].iloc[-1]
+    today_slice = df_copy[df_copy['Date'] == today_date]
+    if today_slice.empty:
+        today_slice = df_copy
+    today_tp = (today_slice['High'] + today_slice['Low'] + today_slice['Close']) / 3
+    today_cum_vol = today_slice['Volume'].cumsum().replace(0, 1)
+    session_vwap_series = (today_tp * today_slice['Volume']).cumsum() / today_cum_vol
+    curr_vwap = float(session_vwap_series.iloc[-1].item() if hasattr(session_vwap_series.iloc[-1], 'item') else session_vwap_series.iloc[-1])
 
     curr_c = float(c.iloc[-1].item() if hasattr(c.iloc[-1], 'item') else c.iloc[-1])
     curr_price = curr_c
@@ -257,7 +266,6 @@ def evaluate_explosive_momentum(df, symbol):
     last_vol_sma = vol_sma20.iloc[-1]
     is_na_val = bool(pd.isna(last_vol_sma).any()) if hasattr(pd.isna(last_vol_sma), 'any') else bool(pd.isna(last_vol_sma))
     curr_vol_sma = float(last_vol_sma.item() if hasattr(last_vol_sma, 'item') else last_vol_sma) if not is_na_val else curr_v
-    curr_vwap = float(vwap.iloc[-1].item() if hasattr(vwap.iloc[-1], 'item') else vwap.iloc[-1])
 
     vol_multiplier = round(float(curr_v / (curr_vol_sma or 1)), 2)
 
@@ -502,9 +510,23 @@ def background_screener_worker():
                 sorted_sectors = calculate_dynamic_sectors()
                 screener_state["sectors"] = sorted_sectors
 
-                # Bullish & Bearish momentum watchlist from Top 3 Bullish and Bearish sectors
-                bull_sectors = [s for s in sorted_sectors.values() if s["is_bullish"]][:3]
-                bear_sectors = [s for s in sorted_sectors.values() if not s["is_bullish"]][:3]
+                # Bullish & Bearish momentum watchlist from Top 3 Bullish and True Top 3 Bearish sectors (sorted ascending for negative change)
+                bull_sectors = [s for s in sorted_sectors.values() if s["is_bullish"] and s.get("top_5")][:3]
+                bear_sectors = sorted([s for s in sorted_sectors.values() if not s["is_bullish"] and s.get("top_5")], key=lambda x: x["change"])[:3]
+
+                # If fewer than 3 bearish sectors exist (e.g. strong bull market), fill with lowest ranked sectors
+                if len(bear_sectors) < 3:
+                    remaining = sorted([s for s in sorted_sectors.values() if s not in bull_sectors and s.get("top_5")], key=lambda x: x["change"])
+                    for rem in remaining:
+                        if rem not in bear_sectors and len(bear_sectors) < 3:
+                            bear_sectors.append(rem)
+
+                # If fewer than 3 bullish sectors exist, fill with highest ranked sectors
+                if len(bull_sectors) < 3:
+                    remaining_bull = [s for s in sorted_sectors.values() if s not in bear_sectors and s.get("top_5")]
+                    for rem in remaining_bull:
+                        if rem not in bull_sectors and len(bull_sectors) < 3:
+                            bull_sectors.append(rem)
 
                 bull_watchlist = []
                 for b in bull_sectors:
@@ -629,24 +651,33 @@ def smc_scan():
         else:
             prev_close = float(df_copy['Close'].iloc[0].item() if hasattr(df_copy['Close'].iloc[0], 'item') else df_copy['Close'].iloc[0])
 
-        # 2. Evaluate Institutional 15-Strategy Multi-Layer Engine
-        inst_res = InstitutionalStrategyEngine.evaluate_strategies(df, prev_close)
+        # 2. Extract Stock Sector & Live Sector Bias
+        assigned_sector = classify_stock_sector(symbol)
+        sec_info = screener_state["sectors"].get(assigned_sector, {})
+        sector_bias = "BULLISH" if sec_info.get("is_bullish") else ("BEARISH" if sec_info else "NEUTRAL")
 
-        # 3. Check Anomaly Detector (Flat-Open Sudden Expansion & RVOL Acceleration)
+        # 3. Match Verified News Catalyst (Before Strategy Evaluation)
+        clean_sym = symbol.replace(".NS", "")
+        news_cat = news_engine.match_catalyst_for_stock(clean_sym)
+        news_headline = news_cat["title"] if news_cat else ""
+
+        # 4. Check Anomaly Detector (Flat-Open Sudden Expansion & RVOL Acceleration)
         today_date = dates[-1] if dates else None
         today_df = df_copy[df_copy['Date'] == today_date] if today_date else df_copy
         anomaly_info = AnomalyDetector.detect_flat_open_breakout(
             today_df['Open'], today_df['High'], today_df['Low'], today_df['Close'], today_df['Volume'], prev_close
         )
-        if anomaly_info["is_flat_open"] and anomaly_info["is_sudden_expansion"]:
-            if "Flat-Open Sudden Momentum" not in inst_res["triggered_strategies"]:
-                inst_res["triggered_strategies"].append("Flat-Open Sudden Momentum")
-                inst_res["composite_score"] = min(100, inst_res["composite_score"] + 15)
-        
-        # 4. Match News & AI Summary
-        clean_sym = symbol.replace(".NS", "")
-        news_cat = news_engine.match_catalyst_for_stock(clean_sym)
-        news_headline = news_cat["title"] if news_cat else ""
+
+        # 5. Evaluate Institutional 15-Strategy Multi-Layer Engine WITH Sector, News & Anomaly Evidence
+        inst_res = InstitutionalStrategyEngine.evaluate_strategies(
+            df=df,
+            prev_close=prev_close,
+            sector_bias=sector_bias,
+            catalyst_info=news_cat,
+            anomaly_info=anomaly_info
+        )
+
+        # 6. Groq AI Institutional Summary
         ai_intel = groq_ai.analyze_signal(
             symbol=clean_sym,
             direction=inst_res["direction"],
@@ -656,7 +687,8 @@ def smc_scan():
             news_headline=news_headline
         )
         
-        # Merge metrics into response
+        # Merge metrics into response (Using Session VWAP from Institutional Engine)
+        res["vwap"] = inst_res["vwap"]
         res["composite_score"] = inst_res["composite_score"]
         res["probability_pct"] = inst_res["probability_pct"]
         res["triggered_strategies"] = inst_res["triggered_strategies"]

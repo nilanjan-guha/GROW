@@ -50,6 +50,7 @@ def init_db():
         updated_at REAL
     )
     """)
+    
     # Automatic migration to guarantee columns exist if table was created in an earlier schema
     cursor.execute("PRAGMA table_info(historical_signals)")
     existing_cols = {r[1] for r in cursor.fetchall()}
@@ -73,6 +74,20 @@ def log_signal(signal_dict):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
+        now = time.time()
+        sym = signal_dict.get("symbol")
+        direction = signal_dict.get("direction")
+        strategy = signal_dict.get("strategy")
+
+        # Deduplication: skip if identical signal logged in last 15 minutes (900 seconds)
+        cursor.execute("""
+        SELECT id FROM historical_signals 
+        WHERE symbol = ? AND direction = ? AND strategy = ? AND timestamp > ?
+        """, (sym, direction, strategy, now - 900))
+        if cursor.fetchone():
+            conn.close()
+            return False
+
         cursor.execute("""
         INSERT INTO historical_signals (
             timestamp, datetime_str, symbol, direction, strategy, 
@@ -80,11 +95,11 @@ def log_signal(signal_dict):
             confidence, catalyst, features_json, market_regime, outcome
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            time.time(),
+            now,
             time.strftime("%Y-%m-%d %H:%M:%S"),
-            signal_dict.get("symbol"),
-            signal_dict.get("direction"),
-            signal_dict.get("strategy"),
+            sym,
+            direction,
+            strategy,
             signal_dict.get("entry_price"),
             signal_dict.get("stop_loss"),
             signal_dict.get("target_1"),
@@ -98,15 +113,12 @@ def log_signal(signal_dict):
         ))
         conn.commit()
         conn.close()
+        return True
     except Exception as e:
         print("[STORAGE] Error logging signal:", e)
+        return False
 
 def evaluate_open_outcomes(latest_prices):
-    """
-    Evaluates all ACTIVE signals against latest prices to update:
-    MFE (Max Favourable Excursion), MAE (Max Adverse Excursion),
-    and marks outcome as WIN (Target reached) or LOSS (Stop Loss hit).
-    """
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -116,9 +128,19 @@ def evaluate_open_outcomes(latest_prices):
 
         for sig in active_signals:
             sym = sig["symbol"]
-            curr_price = latest_prices.get(sym) or latest_prices.get(f"{sym}.NS")
-            if not curr_price:
+            clean_sym = sym.replace(".NS", "")
+            data = latest_prices.get(sym) or latest_prices.get(f"{clean_sym}.NS") or latest_prices.get(clean_sym)
+            if not data:
                 continue
+
+            if isinstance(data, dict):
+                curr_price = float(data.get("close", data.get("price", sig["entry_price"])))
+                candle_high = float(data.get("high", curr_price))
+                candle_low = float(data.get("low", curr_price))
+            else:
+                curr_price = float(data)
+                candle_high = curr_price
+                candle_low = curr_price
 
             entry = float(sig["entry_price"])
             sl = float(sig["stop_loss"])
@@ -132,25 +154,23 @@ def evaluate_open_outcomes(latest_prices):
             final_pnl = 0.0
 
             if direction == "BUY":
-                curr_diff = curr_price - entry
-                mfe = max(mfe, curr_diff)
-                mae = min(mae, curr_diff)
-                if curr_price >= tp1:
+                mfe = max(mfe, candle_high - entry)
+                mae = min(mae, candle_low - entry)
+                if candle_high >= tp1:
                     outcome = "WIN"
-                    final_pnl = round(curr_price - entry, 2)
-                elif curr_price <= sl:
+                    final_pnl = round(tp1 - entry, 2)
+                elif candle_low <= sl:
                     outcome = "LOSS"
-                    final_pnl = round(curr_price - entry, 2)
+                    final_pnl = round(sl - entry, 2)
             elif direction == "SELL":
-                curr_diff = entry - curr_price
-                mfe = max(mfe, curr_diff)
-                mae = min(mae, curr_diff)
-                if curr_price <= tp1:
+                mfe = max(mfe, entry - candle_low)
+                mae = min(mae, entry - candle_high)
+                if candle_low <= tp1:
                     outcome = "WIN"
-                    final_pnl = round(entry - curr_price, 2)
-                elif curr_price >= sl:
+                    final_pnl = round(entry - tp1, 2)
+                elif candle_high >= sl:
                     outcome = "LOSS"
-                    final_pnl = round(entry - curr_price, 2)
+                    final_pnl = round(entry - sl, 2)
 
             cursor.execute("""
             UPDATE historical_signals 
@@ -158,36 +178,56 @@ def evaluate_open_outcomes(latest_prices):
             WHERE id = ?
             """, (mfe, mae, outcome, final_pnl, now if outcome != "ACTIVE" else None, sig["id"]))
 
-            # If trade resolved, update strategy performance statistics
             if outcome in ("WIN", "LOSS"):
-                update_strategy_performance(cursor, strategy, outcome)
+                update_strategy_performance(cursor, strategy)
 
         conn.commit()
         conn.close()
     except Exception as e:
         print("[STORAGE] Error evaluating outcomes:", e)
 
-def update_strategy_performance(cursor, strategy, outcome):
-    cursor.execute("SELECT * FROM strategy_performance WHERE strategy = ?", (strategy,))
-    row = cursor.fetchone()
-    if row:
-        total = row["total_signals"] + 1
-        wins = row["wins"] + (1 if outcome == "WIN" else 0)
-        losses = row["losses"] + (1 if outcome == "LOSS" else 0)
-        win_rate = round((wins / total) * 100, 1)
-        profit_factor = round(wins / (losses or 1), 2)
-        cursor.execute("""
-        UPDATE strategy_performance 
-        SET total_signals = ?, wins = ?, losses = ?, win_rate = ?, profit_factor = ?, updated_at = ?
-        WHERE strategy = ?
-        """, (total, wins, losses, win_rate, profit_factor, time.time(), strategy))
+def update_strategy_performance(cursor, strategy):
+    cursor.execute("""
+    SELECT outcome, final_pnl, entry_price, stop_loss, target_1 
+    FROM historical_signals 
+    WHERE strategy = ? AND outcome IN ('WIN', 'LOSS')
+    """, (strategy,))
+    trades = cursor.fetchall()
+    if not trades:
+        return
+
+    total = len(trades)
+    wins = len([t for t in trades if t["outcome"] == "WIN"])
+    losses = len([t for t in trades if t["outcome"] == "LOSS"])
+    win_rate = round((wins / total) * 100, 1)
+
+    gross_profit = sum(float(t["final_pnl"]) for t in trades if float(t["final_pnl"]) > 0)
+    gross_loss = abs(sum(float(t["final_pnl"]) for t in trades if float(t["final_pnl"]) < 0))
+
+    if gross_loss > 0:
+        profit_factor = round(gross_profit / gross_loss, 2)
     else:
-        wins = 1 if outcome == "WIN" else 0
-        losses = 1 if outcome == "LOSS" else 0
-        cursor.execute("""
-        INSERT INTO strategy_performance (strategy, total_signals, wins, losses, win_rate, profit_factor, updated_at)
-        VALUES (?, 1, ?, ?, ?, ?, ?)
-        """, (strategy, wins, losses, 100.0 if wins else 0.0, 1.0, time.time()))
+        profit_factor = round(gross_profit, 2) if gross_profit > 0 else 1.0
+
+    rr_list = []
+    for t in trades:
+        risk = abs(float(t["entry_price"]) - float(t["stop_loss"])) or 1.0
+        reward = abs(float(t["final_pnl"]))
+        rr_list.append(reward / risk)
+    avg_rr = round(sum(rr_list) / len(rr_list), 2) if rr_list else 1.5
+
+    cursor.execute("""
+    INSERT INTO strategy_performance (strategy, total_signals, wins, losses, win_rate, avg_rr, profit_factor, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(strategy) DO UPDATE SET
+        total_signals = excluded.total_signals,
+        wins = excluded.wins,
+        losses = excluded.losses,
+        win_rate = excluded.win_rate,
+        avg_rr = excluded.avg_rr,
+        profit_factor = excluded.profit_factor,
+        updated_at = excluded.updated_at
+    """, (strategy, total, wins, losses, win_rate, avg_rr, profit_factor, time.time()))
 
 def get_strategy_performance_stats():
     try:
