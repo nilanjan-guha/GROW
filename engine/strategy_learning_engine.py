@@ -73,7 +73,7 @@ class StrategyLearningEngine:
             if strat not in strategy_stats:
                 strategy_stats[strat] = {"wins": 0, "losses": 0, "net_profit": 0.0, "net_loss": 0.0}
             
-            pnl = float(t["net_pnl"] or t["final_pnl"])
+            pnl = float(t["net_pnl"]) if t["net_pnl"] is not None else float(t["final_pnl"])
             is_win = t["outcome"] in ("WIN", "WIN_FULL", "WIN_PARTIAL")
             if is_win:
                 strategy_stats[strat]["wins"] += 1

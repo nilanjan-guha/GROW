@@ -30,10 +30,17 @@ class MissedMoveDetector:
             candle_start_time REAL,
             candle_end_time REAL,
             reason_missed TEXT,
-            recorded_at REAL,
-            UNIQUE(symbol, direction, candle_end_time)
+            recorded_at REAL
         )
         """)
+        # Migration: Ensure unique index exists on existing databases
+        try:
+            c.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_missed_moves_unique 
+            ON missed_moves (symbol, direction, candle_end_time)
+            """)
+        except Exception:
+            pass
         conn.commit()
         conn.close()
 
@@ -47,20 +54,23 @@ class MissedMoveDetector:
             return None
 
         try:
-            # Check if symbol has an active open trade directly from SQLite
-            if active_signal_id is None:
-                conn = get_db_connection()
-                cur = conn.cursor()
-                clean_s = symbol.replace(".NS", "")
-                cur.execute("""
-                    SELECT id FROM historical_signals 
-                    WHERE (symbol = ? OR symbol = ? OR symbol = ?) AND outcome = 'ACTIVE'
-                    LIMIT 1
-                """, (symbol, f"{clean_s}.NS", clean_s))
-                active_row = cur.fetchone()
-                conn.close()
-                if active_row:
-                    return None  # Stock already has an active trade, not a missed move
+            # 1. If an active signal id is explicitly present, immediately exclude (not a missed move)
+            if active_signal_id is not None:
+                return None
+
+            # 2. Otherwise verify directly against SQLite active signals
+            conn = get_db_connection()
+            cur = conn.cursor()
+            clean_s = symbol.replace(".NS", "")
+            cur.execute("""
+                SELECT id FROM historical_signals 
+                WHERE (symbol = ? OR symbol = ? OR symbol = ?) AND outcome = 'ACTIVE'
+                LIMIT 1
+            """, (symbol, f"{clean_s}.NS", clean_s))
+            active_row = cur.fetchone()
+            conn.close()
+            if active_row:
+                return None  # Stock already has an active trade, not a missed move
 
             c = df['Close']
             h = df['High']

@@ -2,10 +2,6 @@ import datetime
 import pytz
 import pandas as pd
 
-import datetime
-import pytz
-import pandas as pd
-
 # Multi-Year Indian NSE/BSE Market Holidays (2025 - 2027)
 # Supports special/extended calendar lookup with configurable overrides
 OFFICIAL_NSE_HOLIDAYS = {
@@ -84,7 +80,7 @@ class MarketValidator:
     def validate_feed_freshness(df, max_delay_seconds=900, max_allowed_missing_gaps=2):
         """
         Validates OHLCV DataFrame integrity and freshness as single source of truth:
-        - Rejects empty feeds or feeds with insufficient candle history (< 20 candles).
+        - Rejects empty feeds or feeds with insufficient candle history (< 5 candles).
         - Enforces candle completion (`now >= last_ts + 300`).
         - Rejects stale previous session feeds during active market hours.
         - Rejects stalled feeds (> max_delay_seconds delay).
@@ -96,17 +92,18 @@ class MarketValidator:
         if len(df) < 5:
             return {"is_valid": False, "status": "INSUFFICIENT_HISTORY", "reason": f"Only {len(df)} candles available (< 5 required)"}
 
+        df_eval = df.copy()
         now = MarketValidator.get_ist_now()
         now_ts = now.timestamp()
         
         # Check index type
-        if not pd.api.types.is_datetime64_any_dtype(df.index):
+        if not pd.api.types.is_datetime64_any_dtype(df_eval.index):
             try:
-                df.index = pd.to_datetime(df.index)
+                df_eval.index = pd.to_datetime(df_eval.index)
             except Exception as e:
                 return {"is_valid": False, "status": "INVALID_INDEX", "reason": f"Cannot parse datetime index: {e}"}
 
-        last_dt = df.index[-1]
+        last_dt = df_eval.index[-1]
         last_ts = last_dt.timestamp() if hasattr(last_dt, 'timestamp') else float(last_dt)
         candle_end = last_ts + 300  # 5-minute candle closes after 300 seconds
 
@@ -136,8 +133,8 @@ class MarketValidator:
 
         # Check for gap / missing candles in current session
         missing_count = 0
-        if len(df) >= 2:
-            df_today = df[df.index.date == last_dt.date()] if hasattr(last_dt, 'date') else df
+        if len(df_eval) >= 2:
+            df_today = df_eval[df_eval.index.date == last_dt.date()] if hasattr(last_dt, 'date') else df_eval
             if len(df_today) >= 2:
                 diffs = (df_today.index[1:] - df_today.index[:-1]).total_seconds()
                 gaps = [d for d in diffs if d > 360]  # Greater than 6 minutes interval

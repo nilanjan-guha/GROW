@@ -30,9 +30,16 @@ class MarketRegimeEngine:
             dates = sorted(df_copy['d_date'].unique())
             current_date = dates[-1] if dates else None
 
-            today_nifty = df_copy[df_copy['d_date'] == current_date] if current_date else df_copy
+            today_nifty = df_copy[df_copy['d_date'] == current_date] if current_date else pd.DataFrame()
             if today_nifty.empty or len(today_nifty) < 2:
-                today_nifty = df_copy
+                # Do NOT fall back to previous sessions - return neutral with explicit status
+                return {
+                    "regime": "NEUTRAL",
+                    "bias": "NEUTRAL",
+                    "nifty_momentum": 0.0,
+                    "reason": "INSUFFICIENT_CURRENT_SESSION_DATA",
+                    "alignment_score": 50
+                }
 
             c = today_nifty['Close']
             h = today_nifty['High']
@@ -44,13 +51,17 @@ class MarketRegimeEngine:
             # Validate volume: index feeds on yfinance often report zero/dummy volume
             tp = (h + l + c) / 3
             v = today_nifty['Volume'] if 'Volume' in today_nifty.columns else pd.Series(0, index=today_nifty.index)
-            has_genuine_volume = (v > 0).any()
-            if has_genuine_volume:
-                v_clean = v.replace(0, 1)
-                vwap = float(((tp * v_clean).cumsum() / v_clean.cumsum()).iloc[-1])
+            # Filter strictly positive volume candles for genuine VWAP
+            valid_vol_mask = v > 0
+            if valid_vol_mask.sum() >= 2:
+                v_valid = v[valid_vol_mask]
+                tp_valid = tp[valid_vol_mask]
+                vwap = float(((tp_valid * v_valid).cumsum() / v_valid.cumsum()).iloc[-1])
+                benchmark_type = "INDEX_VWAP"
             else:
-                # If index volume is zero/missing, use rolling Typical Price baseline
+                # If genuine volume is unavailable, explicitly use rolling Typical Price baseline
                 vwap = float(tp.rolling(min(14, len(tp))).mean().iloc[-1])
+                benchmark_type = "ROLLING_TYPICAL_PRICE"
 
             ema9 = float(c.ewm(span=9, adjust=False).mean().iloc[-1])
             ema21 = float(c.ewm(span=21, adjust=False).mean().iloc[-1])
@@ -91,7 +102,8 @@ class MarketRegimeEngine:
                 "bias": bias,
                 "change_pct": round(change_pct, 2),
                 "last_3_candles_return_pct": round(candle_3_return, 2),
-                "nifty_vwap": round(vwap, 2),
+                "nifty_benchmark": round(vwap, 2),
+                "benchmark_type": benchmark_type,
                 "alignment_score": score
             }
         except Exception as e:

@@ -244,6 +244,7 @@ def evaluate_open_outcomes(data_map):
 
             # Realistic Indian F&O equity cost model on turn (approx 0.08% = ₹80 per 1 lakh turnover for STT, stamp duty, exchange turnover fee, SEBI & GST)
             est_costs = round(entry * 0.0008, 2)
+            outcomes_changed = False
 
             # Case A: Full DataFrame provided
             import pandas as pd
@@ -472,15 +473,18 @@ def evaluate_open_outcomes(data_map):
 
             if outcome in ("WIN", "WIN_FULL", "WIN_PARTIAL", "LOSS"):
                 update_strategy_performance(cursor, strategy, sig["id"])
-                # Trigger strategy learning dynamic calibration upon closed trade
-                try:
-                    from engine.strategy_learning_engine import StrategyLearningEngine
-                    StrategyLearningEngine.calibrate_weights()
-                except Exception:
-                    pass
+                outcomes_changed = True
 
         conn.commit()
         conn.close()
+
+        # Trigger strategy learning dynamic calibration strictly after commit & connection close
+        if outcomes_changed:
+            try:
+                from engine.strategy_learning_engine import StrategyLearningEngine
+                StrategyLearningEngine.calibrate_weights()
+            except Exception as e:
+                print("[STORAGE] Error in post-outcome calibration:", e)
     except Exception as e:
         print("[STORAGE] Error evaluating outcomes:", e)
 
@@ -523,8 +527,16 @@ def update_strategy_performance(cursor, strategy, signal_id=None):
         gross_profit = sum(float(t["final_pnl"]) for t in trades if float(t["final_pnl"]) > 0)
         gross_loss = abs(sum(float(t["final_pnl"]) for t in trades if float(t["final_pnl"]) < 0))
 
-        net_profit = sum(float(t["net_pnl"] or t["final_pnl"]) for t in trades if float(t["net_pnl"] or t["final_pnl"]) > 0)
-        net_loss = abs(sum(float(t["net_pnl"] or t["final_pnl"]) for t in trades if float(t["net_pnl"] or t["final_pnl"]) < 0))
+        net_profit = sum(
+            float(t["net_pnl"]) if t["net_pnl"] is not None else float(t["final_pnl"])
+            for t in trades
+            if (float(t["net_pnl"]) if t["net_pnl"] is not None else float(t["final_pnl"])) > 0
+        )
+        net_loss = abs(sum(
+            float(t["net_pnl"]) if t["net_pnl"] is not None else float(t["final_pnl"])
+            for t in trades
+            if (float(t["net_pnl"]) if t["net_pnl"] is not None else float(t["final_pnl"])) < 0
+        ))
 
         if gross_loss > 0:
             profit_factor = round(gross_profit / gross_loss, 2)
@@ -537,12 +549,15 @@ def update_strategy_performance(cursor, strategy, signal_id=None):
             net_profit_factor = 99.0 if net_profit > 0 else 1.0
 
         total_gross_pnl = round(sum(float(t["final_pnl"]) for t in trades), 2)
-        total_net_pnl = round(sum(float(t["net_pnl"] or t["final_pnl"]) for t in trades), 2)
+        total_net_pnl = round(
+            sum(float(t["net_pnl"]) if t["net_pnl"] is not None else float(t["final_pnl"]) for t in trades),
+            2
+        )
 
         signed_r_list = []
         for t in trades:
             risk = abs(float(t["entry_price"]) - float(t["stop_loss"])) or 1.0
-            pnl = float(t["net_pnl"] or t["final_pnl"])
+            pnl = float(t["net_pnl"]) if t["net_pnl"] is not None else float(t["final_pnl"])
             r_multiple = pnl / risk
             signed_r_list.append(r_multiple)
         avg_rr = round(sum(signed_r_list) / len(signed_r_list), 2) if signed_r_list else 1.0
