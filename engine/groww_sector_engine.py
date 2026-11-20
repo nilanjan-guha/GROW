@@ -63,6 +63,8 @@ class GrowwSectorEngine:
         sorted_bearish = sorted([s for s in sectors_raw if s.get('dayChangePercent', 0) < 0], key=lambda x: x.get('dayChangePercent', 0))
 
         sector_results = {}
+        # Clear mapping before repopulating to guarantee no stale mappings survive refresh
+        self.stock_to_sector_map = {}
 
         # 1. Evaluate Bullish Sectors
         bull_count = 0

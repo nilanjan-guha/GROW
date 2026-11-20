@@ -68,7 +68,7 @@ class OpportunityPotentialEngine:
         return float(current_price * 0.018)  # Standard 1.8% daily volatility baseline
 
     @staticmethod
-    def evaluate_potential(df, current_price, direction, prev_close=None, vwap=None, supply_obs=None, demand_obs=None, stop_loss=None):
+    def evaluate_potential(df, current_price, direction, prev_close=None, vwap=None, supply_obs=None, demand_obs=None, stop_loss=None, daily_df=None):
         if df is None or df.empty or len(df) < 5 or direction == "NEUTRAL":
             return {
                 "is_viable": False,
@@ -108,15 +108,14 @@ class OpportunityPotentialEngine:
         orh = float(today_df['High'].iloc[0]) if not today_df.empty else float(h.iloc[0])
         orl = float(today_df['Low'].iloc[0]) if not today_df.empty else float(l.iloc[0])
 
-        # 2. SEPARATE INTRADAY ATR vs TRUE DAILY ATR
-        # 15m ATR for local candle volatility
-        tr_15m = pd.concat([h - l, (h - c.shift(1)).abs(), (l - c.shift(1)).abs()], axis=1).max(axis=1)
-        rolling_atr15 = tr_15m.rolling(14).mean().iloc[-1]
-        intraday_atr_15m = float(rolling_atr15) if (not pd.isna(rolling_atr15) and rolling_atr15 > 0) else float(curr_c * 0.005)
+        # 2. SEPARATE INTRADAY 5m ATR vs TRUE DAILY WILDER ATR14
+        tr_5m = pd.concat([h - l, (h - c.shift(1)).abs(), (l - c.shift(1)).abs()], axis=1).max(axis=1)
+        rolling_atr5m = tr_5m.rolling(14).mean().iloc[-1]
+        atr_5m_14 = float(rolling_atr5m) if (not pd.isna(rolling_atr5m) and rolling_atr5m > 0) else float(curr_c * 0.005)
 
-        # True Daily ATR across historical days
-        daily_atr = OpportunityPotentialEngine.calculate_daily_atr(df_copy, dates, curr_c)
-        today_range = float(today_df['High'].max() - today_df['Low'].min()) if not today_df.empty else intraday_atr_15m
+        # True Daily Wilder ATR14 using dedicated daily data when available
+        daily_atr = OpportunityPotentialEngine.calculate_daily_atr(df_copy, dates, curr_c, daily_df=daily_df)
+        today_range = float(today_df['High'].max() - today_df['Low'].min()) if not today_df.empty else atr_5m_14
         range_exhaustion_ratio = round(today_range / daily_atr, 2)
 
         # 3. Detect Fractal Swing Highs and Swing Lows across all completed candles in df
@@ -179,7 +178,7 @@ class OpportunityPotentialEngine:
                     tp2 = round(meaningful_obstacles[1][1], 2)
                     tp2_type = meaningful_obstacles[1][2]
                 else:
-                    tp2 = round(tp1 + (intraday_atr_15m * 1.5), 2)
+                    tp2 = round(tp1 + (atr_5m_14 * 1.5), 2)
                     tp2_type = "ESTIMATED_ATR_EXTENSION"
             else:
                 nearest_name = "Blue Sky Expansion (No major structural resistance)"
@@ -196,12 +195,19 @@ class OpportunityPotentialEngine:
             is_exhausted = range_exhaustion_ratio >= 1.8 and curr_c >= float(today_df['High'].max()) * 0.995
 
             # Calculate Reward-to-Risk ratio against stop-loss using exact unrounded precision
-            risk = (curr_c - float(stop_loss)) if (stop_loss and float(stop_loss) < curr_c) else (intraday_atr_15m * 1.2)
+            risk = (curr_c - float(stop_loss)) if (stop_loss and float(stop_loss) < curr_c) else (atr_5m_14 * 1.2)
             reward = tp1 - curr_c
             raw_rr_ratio = (reward / risk) if risk > 0 else 0.0
 
+            # Obstacle clearance check: If an immediate obstacle sits too close (<0.3%), downgrade entry
+            immediate_clearance_blocked = False
+            if obstacles:
+                imm_dist_pct = ((obstacles[0][1] - curr_c) / curr_c) * 100
+                if imm_dist_pct < 0.35:
+                    immediate_clearance_blocked = True
+
             # STRICT > 1.0% UNROUNDED POTENTIAL GATE + STRICT UNROUNDED RR >= 1.5 GATE
-            is_viable = (raw_room_to_tp1_pct > 1.0) and (raw_rr_ratio >= 1.5) and not is_exhausted and not reversal_detected
+            is_viable = (raw_room_to_tp1_pct > 1.0) and (raw_rr_ratio >= 1.5) and not is_exhausted and not reversal_detected and not immediate_clearance_blocked
             rr_ratio = round(raw_rr_ratio, 2)
 
             exhaustion_level = "HIGH" if is_exhausted else ("MODERATE" if range_exhaustion_ratio >= 1.2 else "LOW")
@@ -211,7 +217,9 @@ class OpportunityPotentialEngine:
                     reason = f"Trade Invalidated: {reversal_reason}."
                 elif is_exhausted:
                     reason = f"Intraday move exhausted: Daily range ({range_exhaustion_ratio}x Daily ATR) already consumed."
-                elif rr_ratio < 1.5:
+                elif immediate_clearance_blocked:
+                    reason = f"Entry blocked by immediate overhead ceiling: {obstacles[0][0]} @ ₹{obstacles[0][1]:.1f} ({imm_dist_pct:.2f}% away)."
+                elif raw_rr_ratio < 1.5:
                     reason = f"Insufficient Risk:Reward ratio (RR: 1:{rr_ratio:.2f} < 1:1.50 required)."
                 else:
                     reason = f"Insufficient upside clearance: Nearest resistance ({nearest_name} @ ₹{tp1:.1f}) is only +{room_to_tp1_pct}% away (Strictly > 1.0% required)."
@@ -226,7 +234,8 @@ class OpportunityPotentialEngine:
                 "tp2": tp2,
                 "tp1_type": tp1_type,
                 "tp2_type": tp2_type,
-                "nearest_obstacle": f"{nearest_name} @ ₹{tp1:.1f}",
+                "nearest_obstacle": immediate_obstacle_str if immediate_obstacle_str != "None" else f"{nearest_name} @ ₹{tp1:.1f}",
+                "structural_target": f"{nearest_name} @ ₹{tp1:.1f}",
                 "risk_reward_ratio": rr_ratio,
                 "range_exhaustion_ratio": range_exhaustion_ratio,
                 "exhaustion_risk": exhaustion_level,
@@ -271,7 +280,7 @@ class OpportunityPotentialEngine:
                     tp2 = round(meaningful_obstacles[1][1], 2)
                     tp2_type = meaningful_obstacles[1][2]
                 else:
-                    tp2 = round(tp1 - (intraday_atr_15m * 1.5), 2)
+                    tp2 = round(tp1 - (atr_5m_14 * 1.5), 2)
                     tp2_type = "ESTIMATED_ATR_EXTENSION"
             else:
                 nearest_name = "Blue Sky Breakdown (No major structural support)"
@@ -286,12 +295,19 @@ class OpportunityPotentialEngine:
 
             is_exhausted = range_exhaustion_ratio >= 1.8 and curr_c <= float(today_df['Low'].min()) * 1.005
 
-            risk = (float(stop_loss) - curr_c) if (stop_loss and float(stop_loss) > curr_c) else (intraday_atr_15m * 1.2)
+            risk = (float(stop_loss) - curr_c) if (stop_loss and float(stop_loss) > curr_c) else (atr_5m_14 * 1.2)
             reward = curr_c - tp1
             raw_rr_ratio = (reward / risk) if risk > 0 else 0.0
 
+            # Obstacle clearance check: If an immediate obstacle sits too close (<0.3%), downgrade entry
+            immediate_clearance_blocked = False
+            if obstacles:
+                imm_dist_pct = ((curr_c - obstacles[0][1]) / curr_c) * 100
+                if imm_dist_pct < 0.35:
+                    immediate_clearance_blocked = True
+
             # STRICT > 1.0% UNROUNDED POTENTIAL GATE + STRICT UNROUNDED RR >= 1.5 GATE
-            is_viable = (raw_room_to_tp1_pct > 1.0) and (raw_rr_ratio >= 1.5) and not is_exhausted and not reversal_detected
+            is_viable = (raw_room_to_tp1_pct > 1.0) and (raw_rr_ratio >= 1.5) and not is_exhausted and not reversal_detected and not immediate_clearance_blocked
             rr_ratio = round(raw_rr_ratio, 2)
 
             exhaustion_level = "HIGH" if is_exhausted else ("MODERATE" if range_exhaustion_ratio >= 1.2 else "LOW")
@@ -301,7 +317,9 @@ class OpportunityPotentialEngine:
                     reason = f"Trade Invalidated: {reversal_reason}."
                 elif is_exhausted:
                     reason = f"Downside move exhausted: Daily range ({range_exhaustion_ratio}x Daily ATR) already consumed."
-                elif rr_ratio < 1.5:
+                elif immediate_clearance_blocked:
+                    reason = f"Entry blocked by immediate floor support: {obstacles[0][0]} @ ₹{obstacles[0][1]:.1f} ({imm_dist_pct:.2f}% away)."
+                elif raw_rr_ratio < 1.5:
                     reason = f"Insufficient Risk:Reward ratio (RR: 1:{rr_ratio:.2f} < 1:1.50 required)."
                 else:
                     reason = f"Insufficient downside clearance: Nearest support ({nearest_name} @ ₹{tp1:.1f}) is only -{room_to_tp1_pct}% away (Strictly > 1.0% required)."
@@ -316,7 +334,8 @@ class OpportunityPotentialEngine:
                 "tp2": tp2,
                 "tp1_type": tp1_type,
                 "tp2_type": tp2_type,
-                "nearest_obstacle": f"{nearest_name} @ ₹{tp1:.1f}",
+                "nearest_obstacle": immediate_obstacle_str if immediate_obstacle_str != "None" else f"{nearest_name} @ ₹{tp1:.1f}",
+                "structural_target": f"{nearest_name} @ ₹{tp1:.1f}",
                 "risk_reward_ratio": rr_ratio,
                 "range_exhaustion_ratio": range_exhaustion_ratio,
                 "exhaustion_risk": exhaustion_level,

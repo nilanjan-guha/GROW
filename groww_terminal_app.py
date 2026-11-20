@@ -44,7 +44,8 @@ screener_state = {
     "bullish_momentum_watchlist": [],
     "bearish_momentum_watchlist": [],
     "last_screener_update": 0,
-    "raw_market_cache": {},        # 15m OHLCV and raw technicals
+    "raw_market_cache": {},        # 5m OHLCV and raw technicals
+    "daily_market_cache": {},      # 1mo 1d OHLC for true Wilder Daily ATR14 calculation
     "enriched_signals_cache": {},  # Full 15-strategy + AI enriched results with timestamps
     "symbol_names": {},            # Dynamic symbol to company name map from Groww API
     "stock_sector_cache": {}       # Dynamic sector mapping cache for all discovered stocks
@@ -647,13 +648,31 @@ def smc_scan():
         # 4. Check Anomaly Detector strictly on completed-candle history
         anomaly_info = AnomalyDetector.detect_flat_open_breakout(df=eval_df, prev_close=prev_close)
 
-        # 6. Evaluate Institutional 15-Strategy Multi-Layer Engine WITH Sector, News & Anomaly Evidence
+        # 4b. Fetch or retrieve cached 1mo Daily OHLC for true Wilder Daily ATR14 calculation
+        daily_df = None
+        try:
+            cached_daily = screener_state.get("daily_market_cache", {}).get(symbol)
+            if cached_daily and (now - cached_daily.get("timestamp", 0) < 1800) and cached_daily.get("df") is not None:
+                daily_df = cached_daily["df"]
+            else:
+                raw_daily = yf.download(symbol, period="1mo", interval="1d", progress=False)
+                if raw_daily is not None and not raw_daily.empty:
+                    daily_df = clean_dataframe(raw_daily, symbol)
+                    screener_state.setdefault("daily_market_cache", {})[symbol] = {
+                        "timestamp": now,
+                        "df": daily_df
+                    }
+        except Exception as e:
+            daily_df = None
+
+        # 6. Evaluate Institutional 15-Strategy Multi-Layer Engine WITH Sector, News, Anomaly & Dedicated Daily DF
         inst_res = InstitutionalStrategyEngine.evaluate_strategies(
             df=eval_df,
             prev_close=prev_close,
             sector_bias=sector_bias,
             catalyst_info=news_cat,
-            anomaly_info=anomaly_info
+            anomaly_info=anomaly_info,
+            daily_df=daily_df
         )
 
         # 7. Groq AI Institutional Summary

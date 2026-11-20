@@ -21,7 +21,7 @@ class InstitutionalStrategyEngine:
     O: Corporate & News Catalyst Momentum
     """
     @staticmethod
-    def evaluate_strategies(df, prev_close=None, sector_bias="NEUTRAL", catalyst_info=None, anomaly_info=None):
+    def evaluate_strategies(df, prev_close=None, sector_bias="NEUTRAL", catalyst_info=None, anomaly_info=None, daily_df=None):
         if df is None or df.empty or len(df) < 5:
             return None
 
@@ -252,7 +252,7 @@ class InstitutionalStrategyEngine:
             if candidate_sl <= curr_c:
                 candidate_sl = round(curr_c + (atr14 * 1.5), 2)
 
-        # DEDICATED OPPORTUNITY POTENTIAL & OBSTACLE CLEARANCE EVALUATION WITH ACTUAL STOP LOSS
+        # DEDICATED OPPORTUNITY POTENTIAL & OBSTACLE CLEARANCE EVALUATION WITH ACTUAL STOP LOSS AND DEDICATED DAILY DF
         from engine.opportunity_potential_engine import OpportunityPotentialEngine
         opp_eval = OpportunityPotentialEngine.evaluate_potential(
             df=df,
@@ -262,7 +262,8 @@ class InstitutionalStrategyEngine:
             vwap=vwap,
             supply_obs=bear_obs,
             demand_obs=bull_obs,
-            stop_loss=candidate_sl
+            stop_loss=candidate_sl,
+            daily_df=daily_df
         )
 
         if buy_score >= 50 and buy_score > sell_score and opp_eval["is_viable"]:
