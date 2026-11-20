@@ -21,7 +21,7 @@ class InstitutionalStrategyEngine:
     O: Corporate & News Catalyst Momentum
     """
     @staticmethod
-    def evaluate_strategies(df, prev_close=None, sector_bias="NEUTRAL", catalyst_info=None, anomaly_info=None, daily_df=None):
+    def evaluate_strategies(df, prev_close=None, sector_bias="NEUTRAL", catalyst_info=None, anomaly_info=None, daily_df=None, market_regime_info=None):
         if df is None or df.empty or len(df) < 5:
             return None
 
@@ -246,6 +246,39 @@ class InstitutionalStrategyEngine:
             evaluated_signals.append({"strategy": "News Catalyst Momentum", "direction": "BUY", "weight": 20})
         elif catalyst_info and catalyst_info.get("sentiment") == "BEARISH" and curr_c < vwap:
             evaluated_signals.append({"strategy": "News Catalyst Breakdown", "direction": "SELL", "weight": 20})
+
+        # Strategy P: Dedicated Momentum Ignition Engine
+        from engine.momentum_ignition_engine import MomentumIgnitionEngine
+        ignition_info = MomentumIgnitionEngine.detect_ignition(df, vwap=vwap)
+        if ignition_info.get("is_ignited"):
+            ign_dir = ignition_info.get("direction")
+            ign_score = ignition_info.get("ignition_score", 65)
+            # Assign proportionate weight based on ignition intensity
+            ign_weight = min(28, max(20, int(ign_score * 0.3)))
+            evaluated_signals.append({"strategy": "Momentum Ignition Surge", "direction": ign_dir, "weight": ign_weight})
+
+        # Apply Persistent Strategy Learning Multipliers (Calibrated strictly when N >= 15 observations)
+        from engine.strategy_learning_engine import StrategyLearningEngine
+        for sig in evaluated_signals:
+            strat_name = sig["strategy"]
+            mult = StrategyLearningEngine.get_strategy_multiplier(strat_name)
+            sig["weight"] = int(sig["weight"] * mult)
+
+        # Macro Market Regime Alignment Boost / Penalty
+        if market_regime_info:
+            from engine.market_regime_engine import MarketRegimeEngine
+            stock_change_pct = ((curr_c - today_open) / today_open) * 100 if today_open else 0.0
+            stock_vwap_diff = curr_c - vwap
+            mkt_resp = MarketRegimeEngine.calculate_stock_response_to_market(
+                stock_change=stock_change_pct,
+                stock_vwap_diff=stock_vwap_diff,
+                market_regime_info=market_regime_info,
+                sector_bias=sector_bias
+            )
+            boost = mkt_resp.get("confluence_boost", 0)
+            if boost > 0:
+                target_dir = "BUY" if stock_change_pct > 0 else "SELL"
+                evaluated_signals.append({"strategy": "Market-Wide Macro Confluence", "direction": target_dir, "weight": boost})
 
         # Rank strategies by weight/evidence
         buy_signals = [s for s in evaluated_signals if s["direction"] == "BUY"]

@@ -228,5 +228,69 @@ class TestIntradayScreenerCore(unittest.TestCase):
         self.assertEqual(row["final_pnl"], 5.0)
         conn.close()
 
+    def test_duplicate_candle_evaluation_is_idempotent(self):
+        sym = "TEST_DUP.NS"
+        entry, sl, tp1, tp2 = 500.0, 490.0, 510.0, 520.0
+
+        sig_id = storage.log_signal({
+            "symbol": sym, "direction": "BUY", "strategy": "Gap-and-Go",
+            "entry_price": entry, "stop_loss": sl, "target_1": tp1, "target_2": tp2,
+            "score": 85, "confidence": "HIGH"
+        })
+
+        conn = storage.get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT timestamp FROM historical_signals WHERE id = ?", (sig_id,))
+        now_ts = float(c.fetchone()["timestamp"])
+
+        c1 = {"high": 505.0, "low": 498.0, "timestamp": now_ts + 300, "is_completed": True}
+        storage.evaluate_open_outcomes({sym: c1})
+        # Feed the exact same candle again
+        storage.evaluate_open_outcomes({sym: c1})
+
+        c.execute("SELECT outcome, last_candle_time FROM historical_signals WHERE id = ?", (sig_id,))
+        row = c.fetchone()
+        self.assertEqual(row["outcome"], "ACTIVE")
+        self.assertEqual(row["last_candle_time"], now_ts + 300)
+        conn.close()
+
+    def test_market_validator_holidays_and_staleness(self):
+        from engine.market_validator import MarketValidator, NSE_HOLIDAYS_2026
+        # Republic Day 2026 is a holiday
+        rep_day = datetime.date(2026, 1, 26)
+        self.assertFalse(MarketValidator.is_trading_day(rep_day))
+        # Normal working Tuesday
+        work_day = datetime.date(2026, 1, 27)
+        self.assertTrue(MarketValidator.is_trading_day(work_day))
+
+    def test_momentum_ignition_engine(self):
+        from engine.momentum_ignition_engine import MomentumIgnitionEngine
+        # Inject explosive candle into DataFrame
+        df_copy = self.df_5m.copy()
+        last_idx = df_copy.index[-1]
+        df_copy.loc[last_idx, 'Open'] = 1000.0
+        df_copy.loc[last_idx, 'Close'] = 1030.0  # +3% surge
+        df_copy.loc[last_idx, 'High'] = 1032.0
+        df_copy.loc[last_idx, 'Low'] = 999.0
+        df_copy.loc[last_idx, 'Volume'] = 250000 # 5x volume surge
+
+        ignition = MomentumIgnitionEngine.detect_ignition(df_copy, vwap=1005.0)
+        self.assertTrue(ignition["is_ignited"])
+        self.assertEqual(ignition["direction"], "BUY")
+        self.assertGreaterEqual(ignition["ignition_score"], 70)
+
+    def test_market_regime_engine(self):
+        from engine.market_regime_engine import MarketRegimeEngine
+        regime = MarketRegimeEngine.evaluate_benchmark_regime(self.df_5m)
+        self.assertIn("regime", regime)
+        self.assertIn("bias", regime)
+        self.assertIn("alignment_score", regime)
+
+    def test_strategy_learning_calibration_gate(self):
+        from engine.strategy_learning_engine import StrategyLearningEngine
+        # Without 15 trades, multiplier must remain 1.0
+        mult = StrategyLearningEngine.get_strategy_multiplier("Gap-and-Go")
+        self.assertEqual(mult, 1.0)
+
 if __name__ == '__main__':
     unittest.main()

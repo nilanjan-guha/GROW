@@ -18,19 +18,15 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
 load_dotenv(ENV_PATH)
 
+from engine.market_validator import MarketValidator
+from engine.market_regime_engine import MarketRegimeEngine
+from engine.momentum_ignition_engine import MomentumIgnitionEngine
+from engine.missed_move_detector import MissedMoveDetector
+from engine.strategy_learning_engine import StrategyLearningEngine
+
 def is_market_open():
-    """Returns True if the Indian market (NSE/BSE) is open right now (Mon-Fri 09:15 to 15:30 IST)"""
-    try:
-        ist = pytz.timezone('Asia/Kolkata')
-        now = datetime.datetime.now(ist)
-        # Weekdays: Monday is 0, Sunday is 6
-        if now.weekday() >= 5:
-            return False
-        minute = now.hour * 60 + now.minute
-        # 09:15 is 555 min, 15:30 is 930 min
-        return 555 <= minute <= 930
-    except Exception:
-        return True
+    """Returns True if the Indian market (NSE/BSE) is open right now, strictly respecting weekends and holidays"""
+    return MarketValidator.is_market_open()
 
 app = Flask(__name__, template_folder=os.path.join(BASE_DIR, "templates"), static_folder=os.path.join(BASE_DIR, "static"))
 
@@ -691,14 +687,41 @@ def smc_scan():
         except Exception as e:
             daily_df = None
 
-        # 6. Evaluate Institutional 15-Strategy Multi-Layer Engine WITH Sector, News, Anomaly & Dedicated Daily DF
+        # 4c. Fetch NIFTY 50 Macro Regime Context
+        nifty_regime = {"regime": "NEUTRAL", "bias": "NEUTRAL", "alignment_score": 50}
+        try:
+            nifty_cached = screener_state.get("raw_market_cache", {}).get("^NSEI")
+            if nifty_cached and (now - nifty_cached.get("timestamp", 0) < 300):
+                nifty_df = nifty_cached.get("df")
+            else:
+                nifty_df = yf.download("^NSEI", period="2d", interval="5m", progress=False)
+                if nifty_df is not None and not nifty_df.empty:
+                    nifty_df = clean_dataframe(nifty_df, "^NSEI")
+                    screener_state.setdefault("raw_market_cache", {})["^NSEI"] = {
+                        "timestamp": now,
+                        "df": nifty_df
+                    }
+            nifty_regime = MarketRegimeEngine.evaluate_benchmark_regime(nifty_df)
+        except Exception:
+            pass
+
+        # 6. Evaluate Institutional 15-Strategy Multi-Layer Engine WITH Sector, News, Anomaly, Daily DF & Macro Market Regime
         inst_res = InstitutionalStrategyEngine.evaluate_strategies(
             df=eval_df,
             prev_close=prev_close,
             sector_bias=sector_bias,
             catalyst_info=news_cat,
             anomaly_info=anomaly_info,
-            daily_df=daily_df
+            daily_df=daily_df,
+            market_regime_info=nifty_regime
+        )
+
+        # 6b. Audit for Unsignaled Explosive Moves (Missed Move Detection)
+        MissedMoveDetector.audit_stock_move(
+            symbol=symbol,
+            df=eval_df,
+            active_signal_id=screener_state.get("active_signals_map", {}).get(symbol),
+            opp_eval=inst_res
         )
 
         # 7. Groq AI Institutional Summary
@@ -782,6 +805,26 @@ def smc_scan():
 def get_performance_stats():
     """Returns actual win rate, profit factor, and outcome stats per strategy"""
     return jsonify({"success": True, "stats": get_strategy_performance_stats()})
+
+@app.route("/api/signals/missed")
+def get_missed_moves_endpoint():
+    """Returns missed opportunities detected during market hours for audit and strategy retraining"""
+    try:
+        from core.storage import get_db_connection
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT * FROM missed_moves ORDER BY id DESC LIMIT 50")
+        rows = [dict(r) for r in c.fetchall()]
+        conn.close()
+        return jsonify({"success": True, "missed_moves": rows})
+    except Exception as e:
+        return jsonify({"success": False, "missed_moves": [], "error": str(e)})
+
+@app.route("/api/signals/calibrations")
+def get_strategy_calibrations_endpoint():
+    """Calibrates strategy weights based on verified closed outcomes (N >= 15) and returns current multipliers"""
+    calibs = StrategyLearningEngine.calibrate_weights()
+    return jsonify({"success": True, "calibrations": calibs})
 
 @app.route("/api/signals/active")
 def get_active_signals_endpoint():
