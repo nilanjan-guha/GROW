@@ -12,6 +12,7 @@ class AnomalyDetector:
         """
         Computes true Time-of-Day RVOL: compares current 15m candle volume
         with the average volume of the exact same time slot across prior sessions.
+        Requires at least 2 distinct historical sessions to prevent single-candle distortions.
         """
         if df is None or df.empty or len(df) < 10:
             return 1.0
@@ -29,11 +30,11 @@ class AnomalyDetector:
 
         # Historical candles matching the same time of day from previous sessions
         same_time_bars = df_copy[(df_copy['Time'] == target_time) & (df_copy['Date'] < current_date)]
-        if not same_time_bars.empty:
+        if len(same_time_bars) >= 2:
             avg_hist_vol = float(same_time_bars['Volume'].mean()) or 1.0
             return round(curr_vol / avg_hist_vol, 2)
 
-        # Fallback to 20-candle rolling volume if insufficient historical same-time bars
+        # Fallback to 20-candle rolling volume across prior completed bars
         v = df_copy['Volume']
         prior_v = v.iloc[:-1] if len(v) > 1 else v
         avg_vol = float(prior_v.tail(20).mean()) or 1.0

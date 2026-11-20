@@ -68,7 +68,8 @@ def init_db():
         ("mae", "REAL DEFAULT 0.0"),
         ("outcome", "TEXT DEFAULT 'ACTIVE'"),
         ("final_pnl", "REAL DEFAULT 0.0"),
-        ("closed_at", "REAL")
+        ("closed_at", "REAL"),
+        ("last_candle_time", "REAL")
     ]:
         if col_name not in existing_cols:
             try:
@@ -149,12 +150,17 @@ def get_active_signal_symbols():
     except Exception:
         return set()
 
-def evaluate_open_outcomes(latest_prices):
+def evaluate_open_outcomes(data_map):
     """
-    Evaluates all ACTIVE signals against latest OHLC candles.
-    Conservative handling for simultaneous SL/TP hits:
-    If a candle touches both target and stop loss in the same bar, conservatively mark as LOSS/STOPPED OUT.
-    Only evaluates after signal creation timestamp.
+    Evaluates all ACTIVE signals against chronological OHLC candles formed AFTER signal entry.
+    Supports either:
+    1. Full DataFrame per symbol (chronologically iterates each subsequent 15m candle)
+    2. Dict with candle timestamps
+    
+    Guarantees:
+    - Never evaluates candles timestamped before or equal to signal generation.
+    - Tracks last_candle_time per signal to process all intermediate candles in chronological order.
+    - If a single candle touches both Target and SL, conservatively marks as LOSS/STOPPED OUT.
     """
     try:
         conn = get_db_connection()
@@ -166,130 +172,198 @@ def evaluate_open_outcomes(latest_prices):
         for sig in active_signals:
             sym = sig["symbol"]
             clean_sym = sym.replace(".NS", "")
-            data = latest_prices.get(sym) or latest_prices.get(f"{clean_sym}.NS") or latest_prices.get(clean_sym)
-            if not data:
+            data = None
+            for k in (sym, f"{clean_sym}.NS", clean_sym):
+                if k in data_map:
+                    data = data_map[k]
+                    break
+            if data is None:
                 continue
-
-            if isinstance(data, dict):
-                curr_price = float(data.get("close", data.get("price", sig["entry_price"])))
-                candle_high = float(data.get("high", curr_price))
-                candle_low = float(data.get("low", curr_price))
-            else:
-                curr_price = float(data)
-                candle_high = curr_price
-                candle_low = curr_price
 
             entry = float(sig["entry_price"])
             sl = float(sig["stop_loss"])
             tp1 = float(sig["target_1"])
             direction = sig["direction"]
             strategy = sig["strategy"]
+            sig_time = float(sig["timestamp"])
+            last_candle_time = float(sig["last_candle_time"] or sig_time)
             mfe = float(sig["mfe"] or 0.0)
             mae = float(sig["mae"] or 0.0)
 
             outcome = "ACTIVE"
             final_pnl = 0.0
+            newest_candle_time = last_candle_time
 
-            if direction == "BUY":
-                mfe = max(mfe, candle_high - entry)
-                mae = min(mae, candle_low - entry)
+            # Case A: Full DataFrame provided
+            import pandas as pd
+            if isinstance(data, pd.DataFrame) and not data.empty:
+                df = data.copy()
+                if not pd.api.types.is_datetime64_any_dtype(df.index):
+                    df.index = pd.to_datetime(df.index)
                 
-                # Check for simultaneous hit in single candle
-                hit_tp = candle_high >= tp1
-                hit_sl = candle_low <= sl
-                
-                if hit_tp and hit_sl:
-                    # Conservative handling: touch of both is classified as LOSS (stopped out)
-                    outcome = "LOSS"
-                    final_pnl = round(sl - entry, 2)
-                elif hit_tp:
-                    outcome = "WIN"
-                    final_pnl = round(tp1 - entry, 2)
-                elif hit_sl:
-                    outcome = "LOSS"
-                    final_pnl = round(sl - entry, 2)
+                # Iterate each completed candle formed strictly after the signal timestamp
+                for c_dt, row in df.iterrows():
+                    c_ts = c_dt.timestamp() if hasattr(c_dt, 'timestamp') else float(c_dt)
+                    # Ignore candles at or before signal creation, or already processed
+                    if c_ts <= last_candle_time or c_ts <= sig_time:
+                        continue
 
-            elif direction == "SELL":
-                mfe = max(mfe, entry - candle_low)
-                mae = min(mae, entry - candle_high)
-                
-                hit_tp = candle_low <= tp1
-                hit_sl = candle_high >= sl
-                
-                if hit_tp and hit_sl:
-                    outcome = "LOSS"
-                    final_pnl = round(entry - sl, 2)
-                elif hit_tp:
-                    outcome = "WIN"
-                    final_pnl = round(entry - tp1, 2)
-                elif hit_sl:
-                    outcome = "LOSS"
-                    final_pnl = round(entry - sl, 2)
+                    newest_candle_time = max(newest_candle_time, c_ts)
+                    c_high = float(row.get('High', entry))
+                    c_low = float(row.get('Low', entry))
+
+                    if direction == "BUY":
+                        mfe = max(mfe, c_high - entry)
+                        mae = min(mae, c_low - entry)
+                        hit_tp = c_high >= tp1
+                        hit_sl = c_low <= sl
+                        if hit_tp and hit_sl:
+                            outcome = "LOSS"
+                            final_pnl = round(sl - entry, 2)
+                            break
+                        elif hit_tp:
+                            outcome = "WIN"
+                            final_pnl = round(tp1 - entry, 2)
+                            break
+                        elif hit_sl:
+                            outcome = "LOSS"
+                            final_pnl = round(sl - entry, 2)
+                            break
+
+                    elif direction == "SELL":
+                        mfe = max(mfe, entry - c_low)
+                        mae = min(mae, entry - c_high)
+                        hit_tp = c_low <= tp1
+                        hit_sl = c_high >= sl
+                        if hit_tp and hit_sl:
+                            outcome = "LOSS"
+                            final_pnl = round(entry - sl, 2)
+                            break
+                        elif hit_tp:
+                            outcome = "WIN"
+                            final_pnl = round(entry - tp1, 2)
+                            break
+                        elif hit_sl:
+                            outcome = "LOSS"
+                            final_pnl = round(entry - sl, 2)
+                            break
+
+            # Case B: Single candle dictionary
+            elif isinstance(data, dict):
+                c_ts = float(data.get("timestamp", now))
+                # Only evaluate if candle is strictly after signal entry
+                if c_ts > last_candle_time and c_ts > sig_time:
+                    newest_candle_time = c_ts
+                    c_high = float(data.get("high", entry))
+                    c_low = float(data.get("low", entry))
+
+                    if direction == "BUY":
+                        mfe = max(mfe, c_high - entry)
+                        mae = min(mae, c_low - entry)
+                        hit_tp = c_high >= tp1
+                        hit_sl = c_low <= sl
+                        if hit_tp and hit_sl:
+                            outcome = "LOSS"
+                            final_pnl = round(sl - entry, 2)
+                        elif hit_tp:
+                            outcome = "WIN"
+                            final_pnl = round(tp1 - entry, 2)
+                        elif hit_sl:
+                            outcome = "LOSS"
+                            final_pnl = round(sl - entry, 2)
+                    elif direction == "SELL":
+                        mfe = max(mfe, entry - c_low)
+                        mae = min(mae, entry - c_high)
+                        hit_tp = c_low <= tp1
+                        hit_sl = c_high >= sl
+                        if hit_tp and hit_sl:
+                            outcome = "LOSS"
+                            final_pnl = round(entry - sl, 2)
+                        elif hit_tp:
+                            outcome = "WIN"
+                            final_pnl = round(entry - tp1, 2)
+                        elif hit_sl:
+                            outcome = "LOSS"
+                            final_pnl = round(entry - sl, 2)
 
             cursor.execute("""
             UPDATE historical_signals 
-            SET mfe = ?, mae = ?, outcome = ?, final_pnl = ?, closed_at = ?
+            SET mfe = ?, mae = ?, outcome = ?, final_pnl = ?, closed_at = ?, last_candle_time = ?
             WHERE id = ?
-            """, (mfe, mae, outcome, final_pnl, now if outcome != "ACTIVE" else None, sig["id"]))
+            """, (mfe, mae, outcome, final_pnl, now if outcome != "ACTIVE" else None, newest_candle_time, sig["id"]))
 
             if outcome in ("WIN", "LOSS"):
-                update_strategy_performance(cursor, strategy)
+                update_strategy_performance(cursor, strategy, sig["id"])
 
         conn.commit()
         conn.close()
     except Exception as e:
         print("[STORAGE] Error evaluating outcomes:", e)
 
-def update_strategy_performance(cursor, strategy):
+def update_strategy_performance(cursor, strategy, signal_id=None):
     """
-    Computes institutional performance metrics:
+    Computes institutional performance metrics across:
+    1. Primary strategy
+    2. All confluence strategies associated with the signal via signal_strategies
     - Signed Average R-Multiple: (+1.5R on wins, -1.0R on losses)
     - Valid Profit Factor: gross_profit / gross_loss (or None/Inf formatted if zero losses)
     """
-    cursor.execute("""
-    SELECT outcome, final_pnl, entry_price, stop_loss, target_1 
-    FROM historical_signals 
-    WHERE strategy = ? AND outcome IN ('WIN', 'LOSS')
-    """, (strategy,))
-    trades = cursor.fetchall()
-    if not trades:
-        return
+    # Fetch all strategies to update (primary strategy + any co-triggered strategies)
+    strategies_to_update = {strategy}
+    if signal_id:
+        try:
+            cursor.execute("SELECT strategy_name FROM signal_strategies WHERE signal_id = ?", (signal_id,))
+            for r in cursor.fetchall():
+                strategies_to_update.add(r["strategy_name"])
+        except Exception:
+            pass
 
-    total = len(trades)
-    wins = len([t for t in trades if t["outcome"] == "WIN"])
-    losses = len([t for t in trades if t["outcome"] == "LOSS"])
-    win_rate = round((wins / total) * 100, 1)
+    for strat in strategies_to_update:
+        # Check trades matching either primary strategy OR co-triggered in signal_strategies
+        cursor.execute("""
+        SELECT hs.outcome, hs.final_pnl, hs.entry_price, hs.stop_loss, hs.target_1 
+        FROM historical_signals hs
+        LEFT JOIN signal_strategies ss ON hs.id = ss.signal_id
+        WHERE (hs.strategy = ? OR ss.strategy_name = ?) AND hs.outcome IN ('WIN', 'LOSS')
+        GROUP BY hs.id
+        """, (strat, strat))
+        trades = cursor.fetchall()
+        if not trades:
+            continue
 
-    gross_profit = sum(float(t["final_pnl"]) for t in trades if float(t["final_pnl"]) > 0)
-    gross_loss = abs(sum(float(t["final_pnl"]) for t in trades if float(t["final_pnl"]) < 0))
+        total = len(trades)
+        wins = len([t for t in trades if t["outcome"] == "WIN"])
+        losses = len([t for t in trades if t["outcome"] == "LOSS"])
+        win_rate = round((wins / total) * 100, 1)
 
-    if gross_loss > 0:
-        profit_factor = round(gross_profit / gross_loss, 2)
-    else:
-        # If no losses, profit factor is undefined/infinite, cap at 99.0
-        profit_factor = 99.0 if gross_profit > 0 else 1.0
+        gross_profit = sum(float(t["final_pnl"]) for t in trades if float(t["final_pnl"]) > 0)
+        gross_loss = abs(sum(float(t["final_pnl"]) for t in trades if float(t["final_pnl"]) < 0))
 
-    # Calculate SIGNED R-multiples: positive for WIN, negative for LOSS
-    signed_r_list = []
-    for t in trades:
-        risk = abs(float(t["entry_price"]) - float(t["stop_loss"])) or 1.0
-        pnl = float(t["final_pnl"])
-        r_multiple = pnl / risk
-        signed_r_list.append(r_multiple)
-    avg_rr = round(sum(signed_r_list) / len(signed_r_list), 2) if signed_r_list else 1.0
+        if gross_loss > 0:
+            profit_factor = round(gross_profit / gross_loss, 2)
+        else:
+            profit_factor = 99.0 if gross_profit > 0 else 1.0
 
-    cursor.execute("""
-    INSERT INTO strategy_performance (strategy, total_signals, wins, losses, win_rate, avg_rr, profit_factor, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(strategy) DO UPDATE SET
-        total_signals = excluded.total_signals,
-        wins = excluded.wins,
-        losses = excluded.losses,
-        win_rate = excluded.win_rate,
-        avg_rr = excluded.avg_rr,
-        profit_factor = excluded.profit_factor,
-        updated_at = excluded.updated_at
-    """, (strategy, total, wins, losses, win_rate, avg_rr, profit_factor, time.time()))
+        signed_r_list = []
+        for t in trades:
+            risk = abs(float(t["entry_price"]) - float(t["stop_loss"])) or 1.0
+            pnl = float(t["final_pnl"])
+            r_multiple = pnl / risk
+            signed_r_list.append(r_multiple)
+        avg_rr = round(sum(signed_r_list) / len(signed_r_list), 2) if signed_r_list else 1.0
+
+        cursor.execute("""
+        INSERT INTO strategy_performance (strategy, total_signals, wins, losses, win_rate, avg_rr, profit_factor, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(strategy) DO UPDATE SET
+            total_signals = excluded.total_signals,
+            wins = excluded.wins,
+            losses = excluded.losses,
+            win_rate = excluded.win_rate,
+            avg_rr = excluded.avg_rr,
+            profit_factor = excluded.profit_factor,
+            updated_at = excluded.updated_at
+        """, (strat, total, wins, losses, win_rate, avg_rr, profit_factor, time.time()))
 
 def get_strategy_performance_stats():
     try:

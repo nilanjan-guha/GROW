@@ -364,7 +364,10 @@
                 ? 'linear-gradient(90deg, rgba(0,208,156,0.18), rgba(15,23,42,0.95))' 
                 : 'linear-gradient(90deg, rgba(235,90,90,0.18), rgba(15,23,42,0.95))';
             
-            const confBadge = `<span style="background:${isBuy ? 'rgba(0,208,156,0.2)' : 'rgba(235,90,90,0.2)'}; border:1px solid ${isBuy ? 'var(--accent-green)' : 'var(--accent-red)'}; padding:1px 6px; border-radius:3px; font-size:0.62rem; margin-right:6px;">CONFIRMED (Completed Candle)</span>`;
+            const statusText = smc.signal_status || 'CONFIRMED (Completed Candle)';
+            const isProv = statusText.includes('PROVISIONAL');
+            const badgeColor = isProv ? '#f59e0b' : (isBuy ? 'var(--accent-green)' : 'var(--accent-red)');
+            const confBadge = `<span style="background:rgba(255,255,255,0.06); border:1px solid ${badgeColor}; color:${badgeColor}; padding:1px 6px; border-radius:3px; font-size:0.62rem; margin-right:6px;">${statusText}</span>`;
             if (alertTime) alertTime.innerHTML = `${confBadge} READY TO EXECUTE`;
 
             alertDetails.innerHTML = `<span style="color:${isBuy ? 'var(--accent-green)' : 'var(--accent-red)'}">🔥 BEST CONFIRMED TRADE: ${isBuy ? 'BUY / CALL (CE)' : 'SELL / PUT (PE)'}</span> <strong>${symbol.replace('.NS', '')}</strong> @ ₹${smc.current_price.toFixed(1)} &nbsp;|&nbsp; SL: <span style="color:#f59e0b;">₹${smc.suggested_sl}</span> &nbsp;|&nbsp; Target 1: <span style="color:#38bdf8;">₹${smc.suggested_tp1}</span> ${smc.suggested_tp2 ? '&nbsp;|&nbsp; Target 2: ₹' + smc.suggested_tp2 : ''}`;
@@ -376,13 +379,44 @@
                 const data = await res.json();
                 if (data.success && data.active_signals) {
                     const activeList = data.active_signals;
+                    
+                    // Hydrate banner on initial load if bestActiveSignal is null
+                    if (!bestActiveSignal && activeList.length > 0) {
+                        // Pick the active signal with highest composite score
+                        const sortedActive = [...activeList].sort((a, b) => (b.score || 0) - (a.score || 0));
+                        const top = sortedActive[0];
+                        bestActiveSignal = {
+                            signal_id: top.id,
+                            symbol: top.symbol,
+                            smc: {
+                                action: top.direction,
+                                current_price: top.entry_price,
+                                suggested_sl: top.stop_loss,
+                                suggested_tp1: top.target_1,
+                                suggested_tp2: top.target_2,
+                                composite_score: top.score,
+                                signal_status: 'CONFIRMED (Completed Candle)'
+                            },
+                            time: Date.now()
+                        };
+                        updateConfirmedBanner(top.symbol, bestActiveSignal.smc);
+                        return;
+                    }
+
+                    // Synchronize existing banner by exact signal_id
                     if (bestActiveSignal) {
-                        const stillActive = activeList.some(s => s.symbol === bestActiveSignal.symbol && s.outcome === 'ACTIVE');
+                        const targetId = bestActiveSignal.signal_id;
+                        const stillActive = targetId 
+                            ? activeList.some(s => s.id === targetId && s.outcome === 'ACTIVE')
+                            : activeList.some(s => s.symbol === bestActiveSignal.symbol && s.outcome === 'ACTIVE');
+
                         if (!stillActive) {
-                            // If the active signal hit SL/TP or closed, clear or advance to next best active candidate
+                            // Current trade resolved (hit TP/SL or closed) - advance to next highest score active trade
                             if (activeList.length > 0) {
-                                const nextBest = activeList[0];
+                                const sortedActive = [...activeList].sort((a, b) => (b.score || 0) - (a.score || 0));
+                                const nextBest = sortedActive[0];
                                 bestActiveSignal = {
+                                    signal_id: nextBest.id,
                                     symbol: nextBest.symbol,
                                     smc: {
                                         action: nextBest.direction,
@@ -390,7 +424,8 @@
                                         suggested_sl: nextBest.stop_loss,
                                         suggested_tp1: nextBest.target_1,
                                         suggested_tp2: nextBest.target_2,
-                                        composite_score: nextBest.score
+                                        composite_score: nextBest.score,
+                                        signal_status: 'CONFIRMED (Completed Candle)'
                                     },
                                     time: Date.now()
                                 };

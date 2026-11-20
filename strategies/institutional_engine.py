@@ -83,9 +83,9 @@ class InstitutionalStrategyEngine:
         tr = pd.concat([h - l, (h - c.shift(1)).abs(), (l - c.shift(1)).abs()], axis=1).max(axis=1)
         atr14 = float(tr.rolling(14).mean().iloc[-1]) or (curr_c * 0.01)
 
-        # RVOL (Time-of-day comparable or 20-candle rolling volume)
-        avg_vol20 = float(v.rolling(20).mean().iloc[-1]) or 1.0
-        rvol = round(curr_v / avg_vol20, 2)
+        # UNIFIED TIME-OF-DAY RVOL (Across Anomaly and Institutional Engine)
+        from engine.anomaly_engine import AnomalyDetector
+        rvol = AnomalyDetector.calculate_time_of_day_rvol(df)
 
         # SMC: Order Blocks & Liquidity Sweeps
         bull_obs, bear_obs = [], []
@@ -111,11 +111,11 @@ class InstitutionalStrategyEngine:
                 is_mitigated = any(float(h.iloc[k]) >= ob_bottom for k in range(i+2, len(hist_df)))
                 bear_obs.append({"top": ob_top, "bottom": ob_bottom, "mitigated": is_mitigated})
 
-        # Prefer fresh (unmitigated) order blocks nearest to current price
+        # STRICT RULE: Only allow FRESH (UNMITIGATED) Order Blocks to trigger trades
         fresh_bull_obs = [ob for ob in bull_obs if not ob.get("mitigated")]
         fresh_bear_obs = [ob for ob in bear_obs if not ob.get("mitigated")]
-        near_demand_ob = fresh_bull_obs[-1] if fresh_bull_obs else (bull_obs[-1] if bull_obs else None)
-        near_supply_ob = fresh_bear_obs[-1] if fresh_bear_obs else (bear_obs[-1] if bear_obs else None)
+        near_demand_ob = fresh_bull_obs[-1] if fresh_bull_obs else None
+        near_supply_ob = fresh_bear_obs[-1] if fresh_bear_obs else None
 
         # Fair Value Gaps (FVG)
         fvg_bull = len(df) >= 3 and float(l.iloc[-1]) > float(h.iloc[-3])
@@ -242,8 +242,9 @@ class InstitutionalStrategyEngine:
             if sl >= curr_c:
                 sl = round(curr_c - (atr14 * 1.5), 2)
             risk = max(curr_c - sl, curr_c * 0.005)
-            tp1 = round(curr_c + (risk * 1.5), 2)
-            tp2 = round(curr_c + (risk * 2.5), 2)
+            # Guarantee at least 1.0% to 1.5% target potential so signals have genuine expansion room
+            tp1 = round(max(curr_c * 1.012, curr_c + (risk * 1.5)), 2)
+            tp2 = round(max(curr_c * 1.025, curr_c + (risk * 2.5)), 2)
         elif sell_score >= 50 and sell_score > buy_score:
             direction = "SELL"
             composite_score = sell_score
@@ -256,8 +257,9 @@ class InstitutionalStrategyEngine:
             if sl <= curr_c:
                 sl = round(curr_c + (atr14 * 1.5), 2)
             risk = max(sl - curr_c, curr_c * 0.005)
-            tp1 = round(curr_c - (risk * 1.5), 2)
-            tp2 = round(curr_c - (risk * 2.5), 2)
+            # Guarantee at least 1.0% to 1.5% target potential on downside
+            tp1 = round(min(curr_c * 0.988, curr_c - (risk * 1.5)), 2)
+            tp2 = round(min(curr_c * 0.975, curr_c - (risk * 2.5)), 2)
         else:
             direction = "NEUTRAL"
             composite_score = max(buy_score, sell_score)

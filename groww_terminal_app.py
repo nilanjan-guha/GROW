@@ -548,7 +548,7 @@ def background_screener_worker():
             # Union of both sets to ensure active open trades are ALWAYS tracked even if stock dropped out of top sectors
             all_stk_symbols = list(dict.fromkeys(watchlist_stks + active_db_symbols))
             
-            latest_prices = {}
+            latest_dfs = {}
             for sym in all_stk_symbols:
                 try:
                     cdf = yf.download(sym, period="5d", interval="15m", progress=False)
@@ -561,21 +561,16 @@ def background_screener_worker():
                             "data": res,
                             "df": cdf
                         }
-                        # Pass rich OHLC dict to outcome tracker for accurate intrabar excursion tracking
-                        latest_prices[sym] = {
-                            "price": res["current_price"],
-                            "close": res["current_price"],
-                            "high": float(cdf['High'].iloc[-1].item() if hasattr(cdf['High'].iloc[-1], 'item') else cdf['High'].iloc[-1]),
-                            "low": float(cdf['Low'].iloc[-1].item() if hasattr(cdf['Low'].iloc[-1], 'item') else cdf['Low'].iloc[-1])
-                        }
+                        # Pass full chronological OHLC DataFrame to outcome tracker
+                        latest_dfs[sym] = cdf
                 except Exception:
                     pass
                 time.sleep(0.4)
 
-            # Evaluate open signal outcomes every 60 seconds
-            if now - last_outcome_check > 60 and latest_prices:
+            # Evaluate open signal outcomes every 60 seconds with full historical/subsequent candles
+            if now - last_outcome_check > 60 and latest_dfs:
                 try:
-                    evaluate_open_outcomes(latest_prices)
+                    evaluate_open_outcomes(latest_dfs)
                     last_outcome_check = now
                 except Exception as oe:
                     print("[OUTCOME TRACKER] Evaluation error:", oe)
@@ -713,8 +708,8 @@ def smc_scan():
             res["suggested_tp2"] = inst_res["suggested_tp2"]
             res["reasoning"] = f"{inst_res['primary_strategy']} active. {ai_intel.get('ai_summary', '')}"
             
-            # Persist to historical signals database
-            log_signal({
+            # Persist to historical signals database and capture logged signal ID
+            logged = log_signal({
                 "symbol": symbol,
                 "direction": inst_res["direction"],
                 "strategy": inst_res["primary_strategy"],
@@ -728,6 +723,15 @@ def smc_scan():
                 "features": {"rvol": inst_res["rvol"], "rsi": inst_res["rsi"], "vwap": inst_res["vwap"]},
                 "all_triggered": inst_res["triggered_strategies"]
             })
+            # Attach confirmed status and signal ID if active in DB
+            from core.storage import get_db_connection
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM historical_signals WHERE symbol = ? AND outcome = 'ACTIVE' ORDER BY id DESC LIMIT 1", (symbol,))
+            row = cur.fetchone()
+            conn.close()
+            res["signal_id"] = row["id"] if row else None
+            res["signal_status"] = "CONFIRMED (Completed Candle)" if not is_market_open() or len(df) >= 20 else "PROVISIONAL (Live Candle)"
         else:
             # Institutional engine is NEUTRAL: clear any momentum-only buy/sell action
             res["action"] = "WAIT FOR ENTRY (NO TRADE)"
@@ -736,6 +740,8 @@ def smc_scan():
             res["suggested_tp1"] = None
             res["suggested_tp2"] = None
             res["reasoning"] = f"Institutional confluence is neutral. Score {inst_res['composite_score']}/100. Bot waiting for confirmed setup."
+            res["signal_id"] = None
+            res["signal_status"] = "NEUTRAL"
 
         # Save to enriched signals cache with TTL
         screener_state["enriched_signals_cache"][symbol] = {
