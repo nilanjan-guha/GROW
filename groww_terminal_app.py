@@ -700,6 +700,10 @@ def smc_scan():
         res["catalyst_impact"] = ai_intel.get("catalyst_impact", "")
         res["risk_rating"] = ai_intel.get("risk_rating", "MODERATE")
         res["anomaly_info"] = anomaly_info
+        res["potential_pct"] = inst_res.get("potential_pct", 0.0)
+        res["potential_tp2_pct"] = inst_res.get("potential_tp2_pct", 0.0)
+        res["nearest_obstacle"] = inst_res.get("nearest_obstacle", "None")
+        res["exhaustion_risk"] = inst_res.get("exhaustion_risk", "LOW")
         
         # Enforce strict institutional action: if institutional engine is NEUTRAL, action MUST be NO TRADE
         if inst_res["direction"] != "NEUTRAL":

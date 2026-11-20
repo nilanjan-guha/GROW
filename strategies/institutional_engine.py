@@ -230,7 +230,19 @@ class InstitutionalStrategyEngine:
         buy_signals.sort(key=lambda x: x["weight"], reverse=True)
         sell_signals.sort(key=lambda x: x["weight"], reverse=True)
 
-        if buy_score >= 50 and buy_score > sell_score:
+        # DEDICATED OPPORTUNITY POTENTIAL & OBSTACLE CLEARANCE EVALUATION
+        from engine.opportunity_potential_engine import OpportunityPotentialEngine
+        opp_eval = OpportunityPotentialEngine.evaluate_potential(
+            df=df,
+            current_price=curr_c,
+            direction="BUY" if (buy_score >= 50 and buy_score > sell_score) else ("SELL" if (sell_score >= 50 and sell_score > buy_score) else "NEUTRAL"),
+            prev_close=prev_close,
+            vwap=vwap,
+            supply_obs=bear_obs,
+            demand_obs=bull_obs
+        )
+
+        if buy_score >= 50 and buy_score > sell_score and opp_eval["is_viable"]:
             direction = "BUY"
             composite_score = buy_score
             primary_strategy = buy_signals[0]["strategy"]
@@ -241,38 +253,10 @@ class InstitutionalStrategyEngine:
             sl = round(min(raw_sl, curr_c - (atr14 * 1.2)), 2)
             if sl >= curr_c:
                 sl = round(curr_c - (atr14 * 1.5), 2)
-            risk = max(curr_c - sl, curr_c * 0.005)
+            tp1 = opp_eval["tp1"]
+            tp2 = opp_eval["tp2"]
 
-            # REALISTIC MARKET STRUCTURE TARGETS (Resistance & Liquidity levels)
-            potential_resistances = []
-            if prev_swing_high > curr_c:
-                potential_resistances.append(prev_swing_high)
-            if or_high > curr_c:
-                potential_resistances.append(or_high)
-            if near_supply_ob and near_supply_ob['bottom'] > curr_c:
-                potential_resistances.append(near_supply_ob['bottom'])
-            potential_resistances.append(curr_c + (risk * 2.0))
-            potential_resistances.sort()
-
-            # TP1: Next realistic structural resistance
-            tp1_candidate = min(potential_resistances)
-            # TP2: Next major liquidity pool beyond TP1
-            tp2_candidates = [r for r in potential_resistances if r > tp1_candidate]
-            tp2_candidate = tp2_candidates[0] if tp2_candidates else (tp1_candidate + (risk * 1.5))
-
-            upside_pct = round(((tp1_candidate - curr_c) / curr_c) * 100, 2)
-            upside_tp2_pct = round(((tp2_candidate - curr_c) / curr_c) * 100, 2)
-
-            # STRICT FILTER: Only generate trade if achievable upside to next obstacle is GREATER THAN 1.0%
-            if upside_pct < 1.0:
-                direction = "NEUTRAL"
-                primary_strategy = f"WAIT FOR ENTRY (Next Resistance too close: +{upside_pct}%)"
-                sl, tp1, tp2 = None, None, None
-            else:
-                tp1 = round(tp1_candidate, 2)
-                tp2 = round(tp2_candidate, 2)
-
-        elif sell_score >= 50 and sell_score > buy_score:
+        elif sell_score >= 50 and sell_score > buy_score and opp_eval["is_viable"]:
             direction = "SELL"
             composite_score = sell_score
             primary_strategy = sell_signals[0]["strategy"]
@@ -283,41 +267,16 @@ class InstitutionalStrategyEngine:
             sl = round(max(raw_sl, curr_c + (atr14 * 1.2)), 2)
             if sl <= curr_c:
                 sl = round(curr_c + (atr14 * 1.5), 2)
-            risk = max(sl - curr_c, curr_c * 0.005)
-
-            # REALISTIC MARKET STRUCTURE TARGETS (Support & Demand levels)
-            potential_supports = []
-            if prev_swing_low < curr_c:
-                potential_supports.append(prev_swing_low)
-            if or_low < curr_c:
-                potential_supports.append(or_low)
-            if near_demand_ob and near_demand_ob['top'] < curr_c:
-                potential_supports.append(near_demand_ob['top'])
-            potential_supports.append(curr_c - (risk * 2.0))
-            potential_supports.sort(reverse=True)
-
-            # TP1: Next realistic structural support
-            tp1_candidate = max(potential_supports)
-            # TP2: Next major liquidity pool below TP1
-            tp2_candidates = [s for s in potential_supports if s < tp1_candidate]
-            tp2_candidate = tp2_candidates[0] if tp2_candidates else (tp1_candidate - (risk * 1.5))
-
-            downside_pct = round(((curr_c - tp1_candidate) / curr_c) * 100, 2)
-            downside_tp2_pct = round(((curr_c - tp2_candidate) / curr_c) * 100, 2)
-
-            # STRICT FILTER: Only generate trade if achievable downside to next obstacle is GREATER THAN 1.0%
-            if downside_pct < 1.0:
-                direction = "NEUTRAL"
-                primary_strategy = f"WAIT FOR ENTRY (Next Support too close: -{downside_pct}%)"
-                sl, tp1, tp2 = None, None, None
-            else:
-                tp1 = round(tp1_candidate, 2)
-                tp2 = round(tp2_candidate, 2)
+            tp1 = opp_eval["tp1"]
+            tp2 = opp_eval["tp2"]
 
         else:
             direction = "NEUTRAL"
             composite_score = max(buy_score, sell_score)
-            primary_strategy = "WAIT FOR ENTRY (NO TRADE)"
+            if not opp_eval["is_viable"] and (buy_score >= 50 or sell_score >= 50):
+                primary_strategy = f"WAIT FOR ENTRY ({opp_eval['reason']})"
+            else:
+                primary_strategy = "WAIT FOR ENTRY (NO TRADE)"
             triggered = [s["strategy"] for s in (buy_signals + sell_signals)]
             sl = None
             tp1 = None
@@ -350,6 +309,11 @@ class InstitutionalStrategyEngine:
             "suggested_sl": sl,
             "suggested_tp1": tp1,
             "suggested_tp2": tp2,
+            "potential_pct": opp_eval.get("potential_pct", 0.0),
+            "potential_tp2_pct": opp_eval.get("potential_tp2_pct", 0.0),
+            "nearest_obstacle": opp_eval.get("nearest_obstacle", "None"),
+            "exhaustion_risk": opp_eval.get("exhaustion_risk", "LOW"),
+            "opportunity_reason": opp_eval.get("reason", ""),
             "nearest_demand_ob": near_demand_ob,
             "nearest_supply_ob": near_supply_ob,
             "or_high": or_high,

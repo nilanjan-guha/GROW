@@ -360,7 +360,9 @@
             const confBadge = `<span style="background:rgba(255,255,255,0.06); border:1px solid ${badgeColor}; color:${badgeColor}; padding:1px 6px; border-radius:3px; font-size:0.62rem; margin-right:6px;">${statusText}</span>`;
             if (alertTime) alertTime.innerHTML = `${confBadge} READY TO EXECUTE`;
 
-            alertDetails.innerHTML = `<span style="color:${isBuy ? 'var(--accent-green)' : 'var(--accent-red)'}">🔥 BEST CONFIRMED TRADE: ${isBuy ? 'BUY / CALL (CE)' : 'SELL / PUT (PE)'}</span> <strong>${symbol.replace('.NS', '')}</strong> @ ₹${smc.current_price.toFixed(1)} &nbsp;|&nbsp; SL: <span style="color:#f59e0b;">₹${smc.suggested_sl}</span> &nbsp;|&nbsp; Target 1: <span style="color:#38bdf8;">₹${smc.suggested_tp1}</span> ${smc.suggested_tp2 ? '&nbsp;|&nbsp; Target 2: ₹' + smc.suggested_tp2 : ''}`;
+            const pot1 = smc.potential_pct ? `(+${smc.potential_pct}% room)` : '';
+            const pot2 = smc.potential_tp2_pct ? `(+${smc.potential_tp2_pct}%)` : '';
+            alertDetails.innerHTML = `<span style="color:${isBuy ? 'var(--accent-green)' : 'var(--accent-red)'}">🔥 BEST CONFIRMED TRADE: ${isBuy ? 'BUY / CALL (CE)' : 'SELL / PUT (PE)'}</span> <strong>${symbol.replace('.NS', '')}</strong> @ ₹${smc.current_price.toFixed(1)} &nbsp;|&nbsp; SL: <span style="color:#f59e0b;">₹${smc.suggested_sl}</span> &nbsp;|&nbsp; Target 1: <span style="color:#38bdf8;">₹${smc.suggested_tp1} ${pot1}</span> ${smc.suggested_tp2 ? '&nbsp;|&nbsp; Target 2: ₹' + smc.suggested_tp2 + ' ' + pot2 : ''}`;
         }
 
         async function syncActiveTradeBanner() {
