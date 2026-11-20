@@ -31,6 +31,7 @@ wheels/
 # Databases & local state
 *.db
 *.sqlite3
+data/*.db
 trading_signals.db
 
 # IDE & OS files

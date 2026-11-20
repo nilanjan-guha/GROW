@@ -3,7 +3,9 @@ import sqlite3
 import json
 import time
 
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "trading_signals.db")
+DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+os.makedirs(DATA_DIR, exist_ok=True)
+DB_PATH = os.path.join(DATA_DIR, "trading_signals.db")
 
 def get_db_connection():
     conn = sqlite3.connect(DB_PATH)
