@@ -224,18 +224,20 @@
             bullEl.innerHTML = '';
             bearEl.innerHTML = '';
 
-            const allSectors = Object.entries(sectors);
-            const bullishList = allSectors.filter(([_, sec]) => sec.is_bullish && (sec.top_5 || []).length > 0).slice(0, 3);
+            // Only consider sectors that have genuine tradeable F&O constituents (at least 3 stocks)
+            const allSectors = Object.entries(sectors).filter(([_, sec]) => (sec.top_5 || []).length >= 3);
+            
+            const bullishList = allSectors.filter(([_, sec]) => sec.is_bullish).slice(0, 3);
             // Sort bearish sectors ascending by change (most negative change first)
             const bearishList = allSectors
-                .filter(([_, sec]) => !sec.is_bullish && (sec.top_5 || []).length > 0)
+                .filter(([_, sec]) => !sec.is_bullish)
                 .sort((a, b) => a[1].change - b[1].change)
                 .slice(0, 3);
 
             // If fewer than 3 bearish sectors exist (strong bull market), pick lowest ranked remaining sectors
             if (bearishList.length < 3) {
                 const remaining = allSectors
-                    .filter(([name, sec]) => !bullishList.some(([bName]) => bName === name) && !bearishList.some(([rName]) => rName === name) && (sec.top_5 || []).length > 0)
+                    .filter(([name, _]) => !bullishList.some(([bName]) => bName === name) && !bearishList.some(([rName]) => rName === name))
                     .sort((a, b) => a[1].change - b[1].change);
                 for (const rem of remaining) {
                     if (bearishList.length < 3) bearishList.push(rem);

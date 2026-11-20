@@ -50,42 +50,36 @@ screener_state = {
     "stock_sector_cache": {}       # Dynamic sector mapping cache for all discovered stocks
 }
 
-# Comprehensive Groww & NSE Sector Indices (18 Tracked Sectors)
+# Comprehensive Groww & NSE Sector Indices with verified liquid Index Tickers
 GROWW_SECTOR_INDICES = {
-    "NIFTY BANK": "NIFTYBANK",
-    "NIFTY REALTY": "NIFTYREALTY",
-    "NIFTY IT": "NIFTYIT",
     "NIFTY AUTO": "NIFTYAUTO",
-    "NIFTY INFRA": "NIFTYINFRA",
-    "NIFTY PHARMA": "NIFTYPHARMA",
-    "NIFTY FMCG": "NIFTYFMCG",
-    "NIFTY METAL": "NIFTYMETAL",
-    "NIFTY ENERGY": "NIFTYENERGY",
     "NIFTY PSU BANK": "NIFTYPSUBANK",
-    "NIFTY FINANCIAL SERVICES": "NIFTYFIN",
-    "NIFTY PRIVATE BANK": "NIFTYPVTBANK",
-    "NIFTY MEDIA": "NIFTYMEDIA",
-    "NIFTY HEALTHCARE": "NIFTYHEALTHCARE",
+    "NIFTY FMCG": "NIFTYFMCG",
     "NIFTY CONSUMER DURABLES": "NIFTYCONSUMERDURABLES",
-    "NIFTY OIL AND GAS": "NIFTYOILANDGAS",
-    "NIFTY INDIA DEFENCE": "NIFTYINDIADEFENCE",
-    "NIFTY INDIA RAILWAYS PSU": "NIFTYINDIARAILWAYSPSU"
+    "NIFTY BANK": "NIFTYBANK",
+    "NIFTY ENERGY": "NIFTYENERGY",
+    "NIFTY INFRA": "NIFTYINFRA",
+    "NIFTY FINANCIAL SERVICES": "NIFTYFIN",
+    "NIFTY METAL": "NIFTYMETAL",
+    "NIFTY PHARMA": "NIFTYPHARMA",
+    "NIFTY REALTY": "NIFTYREALTY",
+    "NIFTY IT": "NIFTYIT"
 }
 
-# Mapping to live market index tickers (for direct index download fallback)
+# Mapping to live market index tickers for exact official index returns
 INDEX_TICKER_MAP = {
-    "NIFTY BANK": "^NSEBANK",
-    "NIFTY REALTY": "^CNXREALTY",
-    "NIFTY IT": "^CNXIT",
     "NIFTY AUTO": "^CNXAUTO",
-    "NIFTY INFRA": "^CNXINFRA",
-    "NIFTY PHARMA": "^CNXPHARMA",
-    "NIFTY FMCG": "^CNXFMCG",
-    "NIFTY METAL": "^CNXMETAL",
-    "NIFTY ENERGY": "^CNXENERGY",
     "NIFTY PSU BANK": "^CNXPSUBANK",
+    "NIFTY FMCG": "^CNXFMCG",
+    "NIFTY CONSUMER DURABLES": "^CNXCONSUM",
+    "NIFTY BANK": "^NSEBANK",
+    "NIFTY ENERGY": "^CNXENERGY",
+    "NIFTY INFRA": "^CNXINFRA",
     "NIFTY FINANCIAL SERVICES": "NIFTY_FIN_SERVICE.NS",
-    "NIFTY MEDIA": "^CNXMEDIA"
+    "NIFTY METAL": "^CNXMETAL",
+    "NIFTY PHARMA": "^CNXPHARMA",
+    "NIFTY REALTY": "^CNXREALTY",
+    "NIFTY IT": "^CNXIT"
 }
 
 def auto_connect_groww():
@@ -421,7 +415,7 @@ def calculate_dynamic_sectors():
     # 2. Get live FNO stocks discovered dynamically from Groww API
     fno_list = screener_state.get("fno_universe", [])
     INDEX_SYMBOLS = {'NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'BANKEX', 'SENSEX', 'NIFTYNXT50', 'NIFTYFPI'}
-    clean_fno = [s for s in fno_list if s not in INDEX_SYMBOLS and 'TEST' not in s]
+    clean_fno = [s for s in fno_list if s not in INDEX_SYMBOLS and 'TEST' not in s and s != 'TATAMOTORS']
 
     # 3. Download price data for all active Groww FNO candidates in one batch (5d period)
     fno_tickers = [f"{s}.NS" for s in clean_fno]
@@ -448,7 +442,7 @@ def calculate_dynamic_sectors():
     fno_gainers = [x for x in all_fno_ranked if x["change"] >= 0]
     fno_losers = sorted([x for x in all_fno_ranked if x["change"] < 0], key=lambda x: x["change"])
 
-    # 4. Group all F&O stocks into their actual Sector Buckets dynamically across all 18 sectors
+    # 4. Group all F&O stocks into their actual Sector Buckets dynamically across all tracked sectors
     sector_buckets = {sec: [] for sec in GROWW_SECTOR_INDICES}
     for item in stock_changes.values():
         assigned_sec = classify_stock_sector(item["symbol"])
@@ -458,32 +452,36 @@ def calculate_dynamic_sectors():
             sector_buckets["NIFTY INFRA"].append(item)
 
     # 5. Compute each Sector's live status & rank its true F&O constituents
+    # STRICT RULE: A sector is only included if it has genuine tradeable F&O constituents (at least 3 stocks)
     sector_results = {}
     for sec_name, groww_code in GROWW_SECTOR_INDICES.items():
+        constituents = sector_buckets.get(sec_name, [])
+        # If sector has fewer than 3 tradeable F&O stocks, skip it so only sectors with real F&O trades are ranked
+        if len(constituents) < 3:
+            continue
+
         sec_pct = 0.0
         direct_ticker = INDEX_TICKER_MAP.get(sec_name)
-        constituents = sector_buckets.get(sec_name, [])
         constituents.sort(key=lambda x: x["change"], reverse=True)
 
-        # Primary: Direct index price change if available
+        # Primary: Direct index price change from official NSE index ticker
         if direct_ticker and direct_ticker in sec_data.columns:
             s = sec_data[direct_ticker].dropna()
             if len(s) >= 2:
                 p = float(s.iloc[-2])
                 c = float(s.iloc[-1])
                 sec_pct = ((c - p) / p) * 100 if p else 0.0
+            else:
+                sec_pct = sum(stk["change"] for stk in constituents) / len(constituents)
         elif constituents:
-            # Secondary: Equal-weighted average performance of all constituent F&O stocks in this sector
+            # Secondary: Equal-weighted average of constituent F&O stocks
             sec_pct = sum(stk["change"] for stk in constituents) / len(constituents)
 
         is_bull = sec_pct >= 0
         gainers_count = len([x for x in constituents if x["change"] >= 0])
         losers_count = len([x for x in constituents if x["change"] < 0])
 
-        top_stocks = constituents[:5] if is_bull else sorted(constituents[-5:], key=lambda x: x["change"])
-        if not top_stocks:
-            # Fallback only if sector bucket empty
-            top_stocks = fno_gainers[:5] if is_bull else fno_losers[:5]
+        top_stocks = constituents[:5] if is_bull else sorted(constituents, key=lambda x: x["change"])[:5]
 
         sector_results[sec_name] = {
             "ticker": direct_ticker or groww_code,
@@ -511,21 +509,23 @@ def background_screener_worker():
                 screener_state["sectors"] = sorted_sectors
 
                 # Bullish & Bearish momentum watchlist from Top 3 Bullish and True Top 3 Bearish sectors (sorted ascending for negative change)
-                bull_sectors = [s for s in sorted_sectors.values() if s["is_bullish"] and s.get("top_5")][:3]
-                bear_sectors = sorted([s for s in sorted_sectors.values() if not s["is_bullish"] and s.get("top_5")], key=lambda x: x["change"])[:3]
+                # Only select sectors that have real, tradeable F&O stocks (at least 3 stocks)
+                valid_sectors = [s for s in sorted_sectors.values() if (s.get("top_5") and len(s.get("top_5")) >= 3)]
+                bull_sectors = [s for s in valid_sectors if s["is_bullish"]][:3]
+                bear_sectors = sorted([s for s in valid_sectors if not s["is_bullish"]], key=lambda x: x["change"])[:3]
 
-                # If fewer than 3 bearish sectors exist (e.g. strong bull market), fill with lowest ranked sectors
+                # If fewer than 3 bearish sectors exist (e.g. strong bull market), fill with lowest ranked remaining sectors
                 if len(bear_sectors) < 3:
-                    remaining = sorted([s for s in sorted_sectors.values() if s not in bull_sectors and s.get("top_5")], key=lambda x: x["change"])
+                    remaining = sorted([s for s in valid_sectors if s not in bull_sectors and s not in bear_sectors], key=lambda x: x["change"])
                     for rem in remaining:
-                        if rem not in bear_sectors and len(bear_sectors) < 3:
+                        if len(bear_sectors) < 3:
                             bear_sectors.append(rem)
 
                 # If fewer than 3 bullish sectors exist, fill with highest ranked sectors
                 if len(bull_sectors) < 3:
-                    remaining_bull = [s for s in sorted_sectors.values() if s not in bear_sectors and s.get("top_5")]
+                    remaining_bull = [s for s in valid_sectors if s not in bear_sectors and s not in bull_sectors]
                     for rem in remaining_bull:
-                        if rem not in bull_sectors and len(bull_sectors) < 3:
+                        if len(bull_sectors) < 3:
                             bull_sectors.append(rem)
 
                 bull_watchlist = []
@@ -786,8 +786,21 @@ if __name__ == "__main__":
         sorted_sectors = calculate_dynamic_sectors()
         screener_state["sectors"] = sorted_sectors
 
-        bull_sectors = [s for s in sorted_sectors.values() if s["is_bullish"]][:3]
-        bear_sectors = [s for s in sorted_sectors.values() if not s["is_bullish"]][:3]
+        valid_sectors = [s for s in sorted_sectors.values() if (s.get("top_5") and len(s.get("top_5")) >= 3)]
+        bull_sectors = [s for s in valid_sectors if s["is_bullish"]][:3]
+        bear_sectors = sorted([s for s in valid_sectors if not s["is_bullish"]], key=lambda x: x["change"])[:3]
+
+        if len(bear_sectors) < 3:
+            remaining = sorted([s for s in valid_sectors if s not in bull_sectors and s not in bear_sectors], key=lambda x: x["change"])
+            for rem in remaining:
+                if len(bear_sectors) < 3:
+                    bear_sectors.append(rem)
+
+        if len(bull_sectors) < 3:
+            remaining_bull = [s for s in valid_sectors if s not in bear_sectors and s not in bull_sectors]
+            for rem in remaining_bull:
+                if len(bull_sectors) < 3:
+                    bull_sectors.append(rem)
 
         bull_watchlist = []
         for b in bull_sectors:
@@ -800,7 +813,7 @@ if __name__ == "__main__":
         screener_state["bullish_momentum_watchlist"] = bull_watchlist
         screener_state["bearish_momentum_watchlist"] = bear_watchlist
         screener_state["last_screener_update"] = time.time()
-        print(f"[INIT] Dynamic scan ready! Top Bullish: {list(sorted_sectors.keys())[:3]}, Top Bearish: {list(sorted_sectors.keys())[-3:]}")
+        print(f"[INIT] Dynamic scan ready! Top Bullish: {[s['groww_code'] for s in bull_sectors]}, Top Bearish: {[s['groww_code'] for s in bear_sectors]}")
     except Exception as e:
         print("[INIT] Error during initial scan:", e)
 
