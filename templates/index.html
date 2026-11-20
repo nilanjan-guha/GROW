@@ -134,10 +134,12 @@
     <script>
         let currentSectorName = "";
         let currentStockSymbol = "";
+        let userSelectedStock = null; // Locks user's clicked stock so background scans never switch the radar away
         let sectorsDict = {};
         let activeWatchlist = [];
         let watchlistIndex = 0;
         let sectorCountdown = 300; // 5 minutes
+        let bestActiveSignal = null; // Holds the single best confirmed BUY/SELL signal across all scanned stocks
 
         function log(msg, type='INFO') {
             const feed = document.getElementById('terminalFeed');
@@ -305,6 +307,7 @@
                 renderSectorsUI(sectorsDict);
                 const stocks = sec.top_5 || sec.top_5_stocks || [];
                 if (stocks.length > 0) {
+                    userSelectedStock = stocks[0].symbol; // Set user selected stock
                     selectStock(stocks[0].symbol);
                 }
             }
@@ -322,7 +325,10 @@
                 chip.id = 'chip_' + stk.symbol.replace('.NS', '');
                 chip.className = `stock-chip ${stk.symbol === currentStockSymbol ? 'active' : ''}`;
                 chip.innerText = `${stk.symbol.replace('.NS', '')} (${stk.change >= 0 ? '+' : ''}${stk.change.toFixed(1)}%)`;
-                chip.onclick = () => selectStock(stk.symbol);
+                chip.onclick = () => {
+                    userSelectedStock = stk.symbol; // Explicit user selection lock
+                    selectStock(stk.symbol);
+                };
                 bar.appendChild(chip);
             });
         }
@@ -334,8 +340,20 @@
             scanStock(stk);
         }
 
+        function updateConfirmedBanner(symbol, smc) {
+            const alertBox = document.getElementById('confirmedTradeAlert');
+            const alertDetails = document.getElementById('alertDetails');
+            const isBuy = smc.action.includes('BUY');
+            alertBox.style.display = 'block';
+            alertBox.style.borderColor = isBuy ? 'var(--accent-green)' : 'var(--accent-red)';
+            alertBox.style.background = isBuy 
+                ? 'linear-gradient(90deg, rgba(0,208,156,0.18), rgba(15,23,42,0.95))' 
+                : 'linear-gradient(90deg, rgba(235,90,90,0.18), rgba(15,23,42,0.95))';
+            alertDetails.innerHTML = `<span style="color:${isBuy ? 'var(--accent-green)' : 'var(--accent-red)'}">🔥 BEST CONFIRMED TRADE: ${isBuy ? 'BUY / CALL (CE)' : 'SELL / PUT (PE)'}</span> <strong>${symbol.replace('.NS', '')}</strong> @ ₹${smc.current_price.toFixed(1)} &nbsp;|&nbsp; SL: <span style="color:#f59e0b;">₹${smc.suggested_sl}</span> &nbsp;|&nbsp; Target 1: <span style="color:#38bdf8;">₹${smc.suggested_tp1}</span> ${smc.suggested_tp2 ? '&nbsp;|&nbsp; Target 2: ₹' + smc.suggested_tp2 : ''}`;
+        }
+
         async function scanAllWatchlistCandidates() {
-            // Scan all 30 top candidates (15 Bullish + 15 Bearish)
+            // Background scan across active watchlist (30 candidates: 15 Bullish + 15 Bearish)
             for (let i = 0; i < activeWatchlist.length; i++) {
                 const item = activeWatchlist[i];
                 try {
@@ -344,10 +362,17 @@
                     if (d.success && d.smc) {
                         const smc = d.smc;
                         if (smc.action.includes('BUY') || smc.action.includes('SELL')) {
-                            log(`🎯 [IMMEDIATE ENTRY CONFIRMED] ${item.symbol} (${item.bias}) => ${smc.action} | SL: ₹${smc.suggested_sl} | TP1: ₹${smc.suggested_tp1}`, 'ENTRY');
-                            // If radar is on mid-range stock, switch to the confirmed stock!
-                            const curAction = document.getElementById('decisionAction').innerText;
-                            if (curAction.includes('NO TRADE') || curAction.includes('WAIT')) {
+                            log(`🎯 [EXACT ENTRY FOUND] ${item.symbol} (${item.bias}) => ${smc.action} | SL: ₹${smc.suggested_sl} | TP1: ₹${smc.suggested_tp1}`, 'ENTRY');
+                            
+                            // Check if this signal has higher composite score or if current best has reached target/stopped out
+                            const curScore = smc.composite_score || 0;
+                            if (!bestActiveSignal || curScore >= (bestActiveSignal.smc.composite_score || 0)) {
+                                bestActiveSignal = { symbol: item.symbol, smc: smc, time: Date.now() };
+                                updateConfirmedBanner(item.symbol, smc);
+                            }
+
+                            // If user hasn't explicitly locked onto a stock, focus the radar on the best confirmed trade
+                            if (!userSelectedStock) {
                                 currentSectorName = item.sector;
                                 document.getElementById('selectedSectorTitle').innerText = item.sector;
                                 selectStock(item.symbol);
@@ -358,30 +383,72 @@
             }
         }
 
-        // Automated continuous scanning loop through active watchlist
+        // Automated continuous background scanning loop
         async function cycleStockScan() {
             if (activeWatchlist.length === 0) return;
             watchlistIndex = (watchlistIndex + 1) % activeWatchlist.length;
             const target = activeWatchlist[watchlistIndex];
-            document.getElementById('cycleStatus').innerText = `Cycle: Auto-Scanning ${target.symbol.replace('.NS', '')} [${watchlistIndex + 1}/${activeWatchlist.length}]`;
+            document.getElementById('cycleStatus').innerText = `Cycle: Background-Scanning ${target.symbol.replace('.NS', '')} [${watchlistIndex + 1}/${activeWatchlist.length}]`;
             
-            // Only update main radar if user hasn't explicitly clicked a different stock or during rotation
-            if (target.sector === currentSectorName) {
-                selectStock(target.symbol);
-            } else {
-                // Background scan log
-                try {
-                    const res = await fetch(`/api/market/smc-scan?symbol=${encodeURIComponent(target.symbol)}`);
-                    const data = await res.json();
-                    if (data.success && data.smc) {
-                        const smc = data.smc;
-                        if (smc.action.includes('BUY') || smc.action.includes('SELL')) {
-                            log(`🎯 [HIGH-PROBABILITY ENTRY FOUND] ${target.symbol} => ${smc.action} | Stop Loss: ₹${smc.suggested_sl} | Target: ₹${smc.suggested_tp1}`, 'ENTRY');
-                        } else {
-                            log(`[Scan: ${target.symbol}] Price: ₹${smc.current_price.toFixed(1)} - Inside range. No Order Block mitigation yet.`, 'NO_ENTRY');
+            try {
+                const res = await fetch(`/api/market/smc-scan?symbol=${encodeURIComponent(target.symbol)}`);
+                const data = await res.json();
+                if (data.success && data.smc) {
+                    const smc = data.smc;
+                    if (smc.action.includes('BUY') || smc.action.includes('SELL')) {
+                        log(`🎯 [LIVE SIGNAL DETECTED] ${target.symbol} => ${smc.action} | SL: ₹${smc.suggested_sl} | TP1: ₹${smc.suggested_tp1}`, 'ENTRY');
+                        
+                        // Check if previous signal achieved its target or if this new signal has stronger confluence
+                        const newScore = smc.composite_score || 0;
+                        if (!bestActiveSignal || newScore >= (bestActiveSignal.smc.composite_score || 0) || (Date.now() - bestActiveSignal.time > 300000)) {
+                            bestActiveSignal = { symbol: target.symbol, smc: smc, time: Date.now() };
+                            updateConfirmedBanner(target.symbol, smc);
                         }
+                    } else {
+                        log(`[Scan: ${target.symbol}] Price: ₹${smc.current_price.toFixed(1)} - Waiting for OB or Breakout trigger.`, 'NO_ENTRY');
                     }
-                } catch (e) {}
+
+                    // If user is actively viewing this exact stock on radar, refresh its live radar metrics
+                    if (target.symbol === currentStockSymbol) {
+                        renderRadarData(target.symbol, smc);
+                    }
+                }
+            } catch (e) {}
+        }
+
+        function renderRadarData(symbol, smc) {
+            document.getElementById('valPrice').innerText = `₹${smc.current_price.toFixed(1)} (VWAP: ₹${smc.vwap})`;
+            document.getElementById('valRsi').innerText = `RSI: ${smc.rsi} | Vol: ${smc.vol_multiplier}x`;
+            document.getElementById('valEma').innerText = `EMA9: ${smc.ema9} | EMA21: ${smc.ema21}`;
+            
+            const score = smc.composite_score || 0;
+            const prob = smc.probability_pct || 50;
+            document.getElementById('valQuantScore').innerText = `Score: ${score}/100 (${prob}% Prob)`;
+            const strats = (smc.triggered_strategies && smc.triggered_strategies.length > 0) ? smc.triggered_strategies.join(', ') : 'Price Action';
+            document.getElementById('valStrategies').innerText = strats;
+
+            const actEl = document.getElementById('decisionAction');
+            const banner = document.getElementById('decisionBanner');
+            actEl.innerText = smc.action;
+
+            if (smc.action.includes('BUY')) {
+                actEl.style.color = 'var(--accent-green)';
+                banner.style.borderLeftColor = 'var(--accent-green)';
+            } else if (smc.action.includes('SELL')) {
+                actEl.style.color = 'var(--accent-red)';
+                banner.style.borderLeftColor = 'var(--accent-red)';
+            } else {
+                actEl.style.color = '#94a3b8';
+                banner.style.borderLeftColor = '#64748b';
+            }
+
+            document.getElementById('decisionSetup').innerText = smc.verdict;
+            document.getElementById('decisionReason').innerText = smc.reasoning;
+
+            if (smc.suggested_sl && smc.suggested_tp1) {
+                document.getElementById('valTargets').innerText = `SL: ₹${smc.suggested_sl} | TP1: ₹${smc.suggested_tp1}`;
+            } else {
+                document.getElementById('valTargets').innerText = 'NO ENTRY (Wait for Order Block trigger)';
             }
         }
 
@@ -392,52 +459,7 @@
                 const data = await res.json();
                 if (data.success && data.smc) {
                     const smc = data.smc;
-                    document.getElementById('valPrice').innerText = `₹${smc.current_price.toFixed(1)} (VWAP: ₹${smc.vwap})`;
-                    document.getElementById('valRsi').innerText = `RSI: ${smc.rsi} | Vol: ${smc.vol_multiplier}x`;
-                    document.getElementById('valEma').innerText = `EMA9: ${smc.ema9} | EMA21: ${smc.ema21}`;
-                    
-                    const score = smc.composite_score || 0;
-                    const prob = smc.probability_pct || 50;
-                    document.getElementById('valQuantScore').innerText = `Score: ${score}/100 (${prob}% Prob)`;
-                    const strats = (smc.triggered_strategies && smc.triggered_strategies.length > 0) ? smc.triggered_strategies.join(', ') : 'Price Action';
-                    document.getElementById('valStrategies').innerText = strats;
-
-                    const actEl = document.getElementById('decisionAction');
-                    const banner = document.getElementById('decisionBanner');
-                    actEl.innerText = smc.action;
-
-                    if (smc.action.includes('BUY')) {
-                        actEl.style.color = 'var(--accent-green)';
-                        banner.style.borderLeftColor = 'var(--accent-green)';
-                    } else if (smc.action.includes('SELL')) {
-                        actEl.style.color = 'var(--accent-red)';
-                        banner.style.borderLeftColor = 'var(--accent-red)';
-                    } else {
-                        actEl.style.color = '#94a3b8';
-                        banner.style.borderLeftColor = '#64748b';
-                    }
-
-                    document.getElementById('decisionSetup').innerText = smc.verdict;
-                    document.getElementById('decisionReason').innerText = smc.reasoning;
-
-                    if (smc.suggested_sl && smc.suggested_tp1) {
-                        document.getElementById('valTargets').innerText = `SL: ₹${smc.suggested_sl} | TP1: ₹${smc.suggested_tp1}`;
-                    } else {
-                        document.getElementById('valTargets').innerText = 'NO ENTRY (Wait for Order Block trigger)';
-                    }
-
-                    // Update Top Confirmed Trade Alert Box
-                    const alertBox = document.getElementById('confirmedTradeAlert');
-                    const alertDetails = document.getElementById('alertDetails');
-                    if (smc.action.includes('BUY') || smc.action.includes('SELL')) {
-                        alertBox.style.display = 'block';
-                        const isBuy = smc.action.includes('BUY');
-                        alertBox.style.borderColor = isBuy ? 'var(--accent-green)' : 'var(--accent-red)';
-                        alertBox.style.background = isBuy 
-                            ? 'linear-gradient(90deg, rgba(0,208,156,0.18), rgba(15,23,42,0.95))' 
-                            : 'linear-gradient(90deg, rgba(235,90,90,0.18), rgba(15,23,42,0.95))';
-                        alertDetails.innerHTML = `<span style="color:${isBuy ? 'var(--accent-green)' : 'var(--accent-red)'}">${isBuy ? 'BUY / CALL (CE)' : 'SELL / PUT (PE)'}</span> ${symbol.replace('.NS', '')} @ ₹${smc.current_price.toFixed(1)} &nbsp;|&nbsp; SL: <span style="color:#f59e0b;">₹${smc.suggested_sl}</span> &nbsp;|&nbsp; Target 1: <span style="color:#38bdf8;">₹${smc.suggested_tp1}</span> ${smc.suggested_tp2 ? '&nbsp;|&nbsp; Target 2: ₹' + smc.suggested_tp2 : ''}`;
-                    }
+                    renderRadarData(symbol, smc);
 
                     if (smc.action.includes('BUY') || smc.action.includes('SELL')) {
                         log(`🎯 [EXACT ENTRY ACTIVE] ${symbol} => ${smc.action} | Stop Loss: ₹${smc.suggested_sl} | TP: ₹${smc.suggested_tp1}`, 'ENTRY');
