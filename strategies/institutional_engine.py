@@ -64,9 +64,9 @@ class InstitutionalStrategyEngine:
         session_vwap_series = (today_tp * today_df['Volume']).cumsum() / today_cum_vol
         vwap = float(session_vwap_series.iloc[-1])
 
-        # 3. MULTI-DURATION OPENING RANGE (5m, 15m, 30m) & GAP
+        # 3. UNIFIED MULTI-DURATION OPENING RANGE (5m, 15m, 30m) & GAP
         today_open = float(today_df['Open'].iloc[0])
-        # 5m ORB (1 candle), 15m ORB (first 3 candles), 30m ORB (first 6 candles)
+        # 5m ORB (first 1 completed candle), 15m ORB (first 3 completed candles), 30m ORB (first 6 completed candles)
         or_5m_h = float(today_df['High'].iloc[0])
         or_5m_l = float(today_df['Low'].iloc[0])
         or_15m_h = float(today_df['High'].iloc[:3].max()) if len(today_df) >= 3 else or_5m_h
@@ -74,8 +74,28 @@ class InstitutionalStrategyEngine:
         or_30m_h = float(today_df['High'].iloc[:6].max()) if len(today_df) >= 6 else or_15m_h
         or_30m_l = float(today_df['Low'].iloc[:6].min()) if len(today_df) >= 6 else or_15m_l
 
-        or_high = or_15m_h if len(today_df) >= 3 else or_5m_h
-        or_low = or_15m_l if len(today_df) >= 3 else or_5m_l
+        # Unified ORB selection: finalize range once respective period is complete
+        if len(today_df) >= 6:
+            or_high = or_30m_h
+            or_low = or_30m_l
+            orb_type = "30m ORB"
+        elif len(today_df) >= 3:
+            or_high = or_15m_h
+            or_low = or_15m_l
+            orb_type = "15m ORB"
+        else:
+            or_high = or_5m_h
+            or_low = or_5m_l
+            orb_type = "5m ORB"
+
+        shared_orb_levels = {
+            "orh": or_high,
+            "orl": or_low,
+            "orb_type": orb_type,
+            "or_5m": (or_5m_h, or_5m_l),
+            "or_15m": (or_15m_h, or_15m_l),
+            "or_30m": (or_30m_h, or_30m_l)
+        }
         gap_pct = ((today_open - prev_close) / prev_close) * 100 if prev_close else 0.0
 
         # Technical Indicators across full series
@@ -263,7 +283,8 @@ class InstitutionalStrategyEngine:
             supply_obs=bear_obs,
             demand_obs=bull_obs,
             stop_loss=candidate_sl,
-            daily_df=daily_df
+            daily_df=daily_df,
+            orb_levels=shared_orb_levels
         )
 
         if buy_score >= 50 and buy_score > sell_score and opp_eval["is_viable"]:

@@ -63,8 +63,8 @@ class GrowwSectorEngine:
         sorted_bearish = sorted([s for s in sectors_raw if s.get('dayChangePercent', 0) < 0], key=lambda x: x.get('dayChangePercent', 0))
 
         sector_results = {}
-        # Clear mapping before repopulating to guarantee no stale mappings survive refresh
-        self.stock_to_sector_map = {}
+        # Build local dictionary first to ensure atomic replacement on completion
+        new_stock_to_sector_map = {}
 
         # 1. Evaluate Bullish Sectors
         bull_count = 0
@@ -87,7 +87,7 @@ class GrowwSectorEngine:
                     "top_5": constituents[:5]
                 }
                 for stk in constituents:
-                    self.stock_to_sector_map[stk["symbol"]] = {
+                    new_stock_to_sector_map[stk["symbol"]] = {
                         "sector": s_name,
                         "bias": "BULLISH",
                         "relative_strength": stk.get("relative_strength", 0.0)
@@ -116,7 +116,7 @@ class GrowwSectorEngine:
                     "top_5": constituents[:5]
                 }
                 for stk in constituents:
-                    self.stock_to_sector_map[stk["symbol"]] = {
+                    new_stock_to_sector_map[stk["symbol"]] = {
                         "sector": s_name,
                         "bias": "BEARISH",
                         "relative_strength": stk.get("relative_strength", 0.0)
@@ -124,6 +124,8 @@ class GrowwSectorEngine:
                 if bear_count >= 3:
                     break
 
+        # Atomic replacement: assign once rebuild is completely finished
+        self.stock_to_sector_map = new_stock_to_sector_map
         self.cached_sectors = sector_results
         self.last_fetch_time = now
         return sector_results

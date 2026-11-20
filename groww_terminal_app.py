@@ -539,12 +539,6 @@ def smc_scan():
         symbol = f"{fno_list[0]}.NS" if fno_list else "NIFTY"
     now = time.time()
     
-    # 1. Check enriched cache (TTL: 180 seconds)
-    if symbol in screener_state["enriched_signals_cache"]:
-        cached = screener_state["enriched_signals_cache"][symbol]
-        if now - cached["timestamp"] < 180:
-            return jsonify({"success": True, "smc": cached["data"]})
-
     try:
         # Check raw market cache for pre-fetched dataframe to minimize network latency
         raw_cached = screener_state["raw_market_cache"].get(symbol)
@@ -584,6 +578,23 @@ def smc_scan():
                 }
             })
 
+        # Distinguish Completed Candles vs Live Forming Candle
+        last_candle_end = 0
+        latest_candle_ts = 0
+        if hasattr(df.index[-1], 'timestamp'):
+            latest_candle_ts = df.index[-1].timestamp()
+            last_candle_end = latest_candle_ts + 300  # 5-minute candle duration
+        
+        is_completed_candle = (now >= last_candle_end and last_candle_end > 0)
+
+        # 1. Check enriched cache (TTL: 180s) strictly after validating candle freshness and completion
+        # If a newer completed candle has closed since cached analysis, invalidate cache
+        if symbol in screener_state["enriched_signals_cache"]:
+            cached = screener_state["enriched_signals_cache"][symbol]
+            cached_candle_ts = cached.get("last_candle_ts", 0)
+            if (now - cached["timestamp"] < 180) and (latest_candle_ts <= cached_candle_ts):
+                return jsonify({"success": True, "smc": cached["data"]})
+
         if len(dates) >= 2:
             prev_date = dates[-2]
             prev_day_df = df_copy[df_copy['Date'] == prev_date]
@@ -618,15 +629,7 @@ def smc_scan():
         news_cat = news_engine.match_catalyst_for_stock(clean_sym)
         news_headline = news_cat["title"] if news_cat else ""
 
-        # 5. Distinguish Completed Candles vs Live Forming Candle
-        # Check if the latest candle in df is completed (timestamp + candle_duration <= now)
-        last_candle_end = 0
-        if hasattr(df.index[-1], 'timestamp'):
-            last_candle_end = df.index[-1].timestamp() + 300  # 5-minute candle duration
-        
-        is_completed_candle = (now >= last_candle_end and last_candle_end > 0)
-
-        # Run strategy evaluation strictly on completed candles
+        # 5. Run strategy evaluation strictly on completed candles
         if is_completed_candle:
             eval_df = df
         else:
@@ -741,9 +744,10 @@ def smc_scan():
             res["signal_id"] = None
             res["signal_status"] = "NEUTRAL"
 
-        # Save to enriched signals cache with TTL
+        # Save to enriched signals cache with TTL and latest candle timestamp
         screener_state["enriched_signals_cache"][symbol] = {
             "timestamp": now,
+            "last_candle_ts": latest_candle_ts,
             "data": res
         }
         return jsonify({"success": True, "smc": res})

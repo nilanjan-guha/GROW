@@ -1,5 +1,7 @@
 import pandas as pd
 import numpy as np
+import datetime
+import pytz
 
 class OpportunityPotentialEngine:
     """
@@ -26,26 +28,56 @@ class OpportunityPotentialEngine:
 
     @staticmethod
     def calculate_daily_atr(df_copy, dates, current_price, daily_df=None):
-        """Calculates true Daily Wilder ATR14 using historical completed daily sessions"""
-        # Case 1: Separate dedicated Daily OHLC DataFrame provided (15+ days)
-        if daily_df is not None and not daily_df.empty and len(daily_df) >= 14:
+        """
+        Calculates true Daily Wilder ATR14 using historical completed daily sessions.
+        Uses conventional Wilder initialization (SMA of first 14 TRs, followed by recursive smoothing).
+        Excludes today's incomplete daily candle during live market hours.
+        Returns a tuple: (atr_value: float, source: str)
+        """
+        ist_tz = pytz.timezone('Asia/Kolkata') if 'pytz' in globals() else None
+        today_date = datetime.datetime.now(ist_tz).date() if ist_tz else datetime.date.today()
+
+        # Case 1: Separate dedicated Daily OHLC DataFrame provided
+        if daily_df is not None and not daily_df.empty:
             try:
-                dh = daily_df['High']
-                dl = daily_df['Low']
-                dc = daily_df['Close']
-                d_prev_c = dc.shift(1)
-                tr = pd.concat([dh - dl, (dh - d_prev_c).abs(), (dl - d_prev_c).abs()], axis=1).max(axis=1)
-                # Wilder's 14-period exponential smoothing
-                atr14 = tr.ewm(alpha=1/14, min_periods=14, adjust=False).mean().iloc[-1]
-                if not pd.isna(atr14) and atr14 > 0:
-                    return float(atr14)
+                d_df = daily_df.copy()
+                if not pd.api.types.is_datetime64_any_dtype(d_df.index):
+                    d_df.index = pd.to_datetime(d_df.index)
+                
+                # Exclude today's incomplete daily candle if present
+                d_df['d_date'] = d_df.index.date
+                clean_daily = d_df[d_df['d_date'] < today_date]
+                if len(clean_daily) < 14:
+                    # In case of weekend or pre-market, allow today if it is completed or if history is sufficient
+                    clean_daily = d_df
+
+                if len(clean_daily) >= 15:
+                    dh = clean_daily['High']
+                    dl = clean_daily['Low']
+                    dc = clean_daily['Close']
+                    d_prev_c = dc.shift(1)
+                    tr = pd.concat([dh - dl, (dh - d_prev_c).abs(), (dl - d_prev_c).abs()], axis=1).max(axis=1).dropna()
+                    
+                    if len(tr) >= 14:
+                        # Conventional Wilder smoothing: first value is 14-period SMA
+                        tr_vals = tr.values
+                        wilder_atr = np.mean(tr_vals[:14])
+                        for t in tr_vals[14:]:
+                            wilder_atr = (wilder_atr * 13 + t) / 14
+                        
+                        if not pd.isna(wilder_atr) and wilder_atr > 0:
+                            return float(wilder_atr), "DEDICATED_DAILY_WILDER_ATR14"
             except Exception:
                 pass
 
-        # Case 2: Daily records extracted from intraday history
+        # Case 2: Daily records extracted from intraday history (excluding today's incomplete session)
         daily_records = []
-        for i in range(len(dates) - 1):
-            day_data = df_copy[df_copy['Date'] == dates[i]]
+        completed_dates = [d for d in dates if d < today_date] if dates else []
+        if len(completed_dates) < 2 and len(dates) >= 2:
+            completed_dates = dates[:-1]
+
+        for d in completed_dates:
+            day_data = df_copy[df_copy['Date'] == d]
             if not day_data.empty:
                 d_high = float(day_data['High'].max())
                 d_low = float(day_data['Low'].min())
@@ -63,23 +95,27 @@ class OpportunityPotentialEngine:
             if true_ranges:
                 avg_atr = float(np.mean(true_ranges))
                 if not pd.isna(avg_atr) and avg_atr > 0:
-                    return avg_atr
+                    return avg_atr, "INTRADAY_DAILY_RANGE_AVERAGE"
 
-        return float(current_price * 0.018)  # Standard 1.8% daily volatility baseline
+        return float(current_price * 0.018), "BASELINE_VOLATILITY_FALLBACK"  # Standard 1.8% daily volatility baseline
 
     @staticmethod
-    def evaluate_potential(df, current_price, direction, prev_close=None, vwap=None, supply_obs=None, demand_obs=None, stop_loss=None, daily_df=None):
+    def evaluate_potential(df, current_price, direction, prev_close=None, vwap=None, supply_obs=None, demand_obs=None, stop_loss=None, daily_df=None, orb_levels=None):
         if df is None or df.empty or len(df) < 5 or direction == "NEUTRAL":
             return {
                 "is_viable": False,
                 "potential_pct": 0.0,
+                "potential_tp2_pct": 0.0,
                 "tp1": None,
                 "tp2": None,
                 "tp1_type": "None",
                 "tp2_type": "None",
                 "nearest_obstacle": "None",
+                "structural_target": "None",
                 "risk_reward_ratio": 0.0,
                 "exhaustion_risk": "HIGH",
+                "range_exhaustion_ratio": 0.0,
+                "daily_atr_source": "NONE",
                 "is_reversal_detected": False,
                 "reason": "Neutral direction or insufficient data"
             }
@@ -105,8 +141,30 @@ class OpportunityPotentialEngine:
             pdl = float(prev_day_df['Low'].min())
 
         today_df = df_copy[df_copy['Date'] == dates[-1]] if dates else df_copy
-        orh = float(today_df['High'].iloc[0]) if not today_df.empty else float(h.iloc[0])
-        orl = float(today_df['Low'].iloc[0]) if not today_df.empty else float(l.iloc[0])
+        
+        # Unified ORB resolution: use passed-in verified orb_levels if available
+        if orb_levels and orb_levels.get("orh") is not None and orb_levels.get("orl") is not None:
+            orh = float(orb_levels["orh"])
+            orl = float(orb_levels["orl"])
+            orb_type = orb_levels.get("orb_type", "15m ORB")
+        else:
+            # Fallback unified multi-duration ORB calculation
+            if len(today_df) >= 6:
+                orh = float(today_df['High'].iloc[:6].max())
+                orl = float(today_df['Low'].iloc[:6].min())
+                orb_type = "30m ORB"
+            elif len(today_df) >= 3:
+                orh = float(today_df['High'].iloc[:3].max())
+                orl = float(today_df['Low'].iloc[:3].min())
+                orb_type = "15m ORB"
+            elif not today_df.empty:
+                orh = float(today_df['High'].iloc[0])
+                orl = float(today_df['Low'].iloc[0])
+                orb_type = "5m ORB"
+            else:
+                orh = float(h.iloc[0])
+                orl = float(l.iloc[0])
+                orb_type = "5m ORB"
 
         # 2. SEPARATE INTRADAY 5m ATR vs TRUE DAILY WILDER ATR14
         tr_5m = pd.concat([h - l, (h - c.shift(1)).abs(), (l - c.shift(1)).abs()], axis=1).max(axis=1)
@@ -114,9 +172,13 @@ class OpportunityPotentialEngine:
         atr_5m_14 = float(rolling_atr5m) if (not pd.isna(rolling_atr5m) and rolling_atr5m > 0) else float(curr_c * 0.005)
 
         # True Daily Wilder ATR14 using dedicated daily data when available
-        daily_atr = OpportunityPotentialEngine.calculate_daily_atr(df_copy, dates, curr_c, daily_df=daily_df)
+        daily_atr, daily_atr_source = OpportunityPotentialEngine.calculate_daily_atr(df_copy, dates, curr_c, daily_df=daily_df)
         today_range = float(today_df['High'].max() - today_df['Low'].min()) if not today_df.empty else atr_5m_14
         range_exhaustion_ratio = round(today_range / daily_atr, 2)
+
+        # Volatility-aware dynamic clearance threshold:
+        # Normalized as max(0.20%, min(0.60%, 0.45 * atr_5m_14 / curr_c * 100))
+        dynamic_clearance_pct = max(0.20, min(0.60, round((0.45 * atr_5m_14 / curr_c) * 100, 2)))
 
         # 3. Detect Fractal Swing Highs and Swing Lows across all completed candles in df
         hist_df = df
@@ -199,11 +261,12 @@ class OpportunityPotentialEngine:
             reward = tp1 - curr_c
             raw_rr_ratio = (reward / risk) if risk > 0 else 0.0
 
-            # Obstacle clearance check: If an immediate obstacle sits too close (<0.3%), downgrade entry
+            # Obstacle clearance check: volatility-aware dynamic clearance threshold
             immediate_clearance_blocked = False
+            imm_dist_pct = 0.0
             if obstacles:
                 imm_dist_pct = ((obstacles[0][1] - curr_c) / curr_c) * 100
-                if imm_dist_pct < 0.35:
+                if imm_dist_pct < dynamic_clearance_pct:
                     immediate_clearance_blocked = True
 
             # STRICT > 1.0% UNROUNDED POTENTIAL GATE + STRICT UNROUNDED RR >= 1.5 GATE
@@ -218,7 +281,7 @@ class OpportunityPotentialEngine:
                 elif is_exhausted:
                     reason = f"Intraday move exhausted: Daily range ({range_exhaustion_ratio}x Daily ATR) already consumed."
                 elif immediate_clearance_blocked:
-                    reason = f"Entry blocked by immediate overhead ceiling: {obstacles[0][0]} @ ₹{obstacles[0][1]:.1f} ({imm_dist_pct:.2f}% away)."
+                    reason = f"Entry blocked by immediate overhead ceiling: {obstacles[0][0]} @ ₹{obstacles[0][1]:.1f} ({imm_dist_pct:.2f}% away < {dynamic_clearance_pct:.2f}% dynamic threshold)."
                 elif raw_rr_ratio < 1.5:
                     reason = f"Insufficient Risk:Reward ratio (RR: 1:{rr_ratio:.2f} < 1:1.50 required)."
                 else:
@@ -235,10 +298,13 @@ class OpportunityPotentialEngine:
                 "tp1_type": tp1_type,
                 "tp2_type": tp2_type,
                 "nearest_obstacle": immediate_obstacle_str if immediate_obstacle_str != "None" else f"{nearest_name} @ ₹{tp1:.1f}",
+                "obstacle_distance_pct": round(imm_dist_pct, 2) if obstacles else None,
                 "structural_target": f"{nearest_name} @ ₹{tp1:.1f}",
                 "risk_reward_ratio": rr_ratio,
                 "range_exhaustion_ratio": range_exhaustion_ratio,
                 "exhaustion_risk": exhaustion_level,
+                "daily_atr_source": daily_atr_source,
+                "dynamic_clearance_pct": dynamic_clearance_pct,
                 "is_reversal_detected": reversal_detected,
                 "reason": reason
             }
@@ -299,11 +365,12 @@ class OpportunityPotentialEngine:
             reward = curr_c - tp1
             raw_rr_ratio = (reward / risk) if risk > 0 else 0.0
 
-            # Obstacle clearance check: If an immediate obstacle sits too close (<0.3%), downgrade entry
+            # Obstacle clearance check: volatility-aware dynamic clearance threshold
             immediate_clearance_blocked = False
+            imm_dist_pct = 0.0
             if obstacles:
                 imm_dist_pct = ((curr_c - obstacles[0][1]) / curr_c) * 100
-                if imm_dist_pct < 0.35:
+                if imm_dist_pct < dynamic_clearance_pct:
                     immediate_clearance_blocked = True
 
             # STRICT > 1.0% UNROUNDED POTENTIAL GATE + STRICT UNROUNDED RR >= 1.5 GATE
@@ -318,7 +385,7 @@ class OpportunityPotentialEngine:
                 elif is_exhausted:
                     reason = f"Downside move exhausted: Daily range ({range_exhaustion_ratio}x Daily ATR) already consumed."
                 elif immediate_clearance_blocked:
-                    reason = f"Entry blocked by immediate floor support: {obstacles[0][0]} @ ₹{obstacles[0][1]:.1f} ({imm_dist_pct:.2f}% away)."
+                    reason = f"Entry blocked by immediate floor support: {obstacles[0][0]} @ ₹{obstacles[0][1]:.1f} ({imm_dist_pct:.2f}% away < {dynamic_clearance_pct:.2f}% dynamic threshold)."
                 elif raw_rr_ratio < 1.5:
                     reason = f"Insufficient Risk:Reward ratio (RR: 1:{rr_ratio:.2f} < 1:1.50 required)."
                 else:
@@ -335,10 +402,13 @@ class OpportunityPotentialEngine:
                 "tp1_type": tp1_type,
                 "tp2_type": tp2_type,
                 "nearest_obstacle": immediate_obstacle_str if immediate_obstacle_str != "None" else f"{nearest_name} @ ₹{tp1:.1f}",
+                "obstacle_distance_pct": round(imm_dist_pct, 2) if obstacles else None,
                 "structural_target": f"{nearest_name} @ ₹{tp1:.1f}",
                 "risk_reward_ratio": rr_ratio,
                 "range_exhaustion_ratio": range_exhaustion_ratio,
                 "exhaustion_risk": exhaustion_level,
+                "daily_atr_source": daily_atr_source,
+                "dynamic_clearance_pct": dynamic_clearance_pct,
                 "is_reversal_detected": reversal_detected,
                 "reason": reason
             }
