@@ -35,7 +35,10 @@ class OpportunityPotentialEngine:
         Returns a tuple: (atr_value: float, source: str)
         """
         ist_tz = pytz.timezone('Asia/Kolkata') if 'pytz' in globals() else None
-        today_date = datetime.datetime.now(ist_tz).date() if ist_tz else datetime.date.today()
+        now_dt = datetime.datetime.now(ist_tz) if ist_tz else datetime.datetime.now()
+        today_date = now_dt.date()
+        # Market hours check: Weekdays 09:15 to 15:30 IST
+        is_live_mkt = (now_dt.weekday() < 5) and (555 <= (now_dt.hour * 60 + now_dt.minute) <= 930)
 
         # Case 1: Separate dedicated Daily OHLC DataFrame provided
         if daily_df is not None and not daily_df.empty:
@@ -44,11 +47,11 @@ class OpportunityPotentialEngine:
                 if not pd.api.types.is_datetime64_any_dtype(d_df.index):
                     d_df.index = pd.to_datetime(d_df.index)
                 
-                # Exclude today's incomplete daily candle if present
                 d_df['d_date'] = d_df.index.date
-                clean_daily = d_df[d_df['d_date'] < today_date]
-                if len(clean_daily) < 14:
-                    # In case of weekend or pre-market, allow today if it is completed or if history is sufficient
+                # Strictly exclude today's incomplete candle if market is live or if candle belongs to today
+                if is_live_mkt or (d_df['d_date'].iloc[-1] == today_date and now_dt.hour < 16):
+                    clean_daily = d_df[d_df['d_date'] < today_date]
+                else:
                     clean_daily = d_df
 
                 if len(clean_daily) >= 15:

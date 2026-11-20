@@ -561,22 +561,45 @@ def smc_scan():
         dates = sorted(df_copy['Date'].unique())
         
         # Verify candle freshness: during live market, reject stale candles older than current date
+        # Also reject stalled feeds: if market is open and elapsed time since last completed candle exceeds 15 minutes (900s)
         ist_tz = pytz.timezone('Asia/Kolkata')
-        today_ist = datetime.datetime.now(ist_tz).date()
+        now_dt_ist = datetime.datetime.now(ist_tz)
+        today_ist = now_dt_ist.date()
         latest_candle_date = dates[-1] if dates else None
         
-        if is_market_open() and latest_candle_date and (latest_candle_date < today_ist):
-            return jsonify({
-                "success": True,
-                "smc": {
-                    "action": "WAIT FOR ENTRY (NO TRADE)",
-                    "verdict": "STALE MARKET DATA - WAITING FOR SESSION OPEN",
-                    "reasoning": f"Latest candle date ({latest_candle_date}) is prior to today ({today_ist}). Waiting for current session feed.",
-                    "current_price": float(df['Close'].iloc[-1]),
-                    "signal_status": "NEUTRAL",
-                    "signal_id": None
-                }
-            })
+        if is_market_open():
+            if latest_candle_date and (latest_candle_date < today_ist):
+                return jsonify({
+                    "success": True,
+                    "smc": {
+                        "action": "WAIT FOR ENTRY (NO TRADE)",
+                        "verdict": "STALE MARKET DATA - WAITING FOR SESSION OPEN",
+                        "reasoning": f"Latest candle date ({latest_candle_date}) is prior to today ({today_ist}). Waiting for current session feed.",
+                        "current_price": float(df['Close'].iloc[-1]),
+                        "signal_status": "NEUTRAL",
+                        "signal_id": None
+                    }
+                })
+
+            # Check for stalled same-day feed during active market hours (after 09:30 IST)
+            # If current IST time is beyond 09:30 and latest candle is more than 900 seconds old
+            current_minute_of_day = now_dt_ist.hour * 60 + now_dt_ist.minute
+            if current_minute_of_day >= 570:  # 09:30 IST
+                last_dt = df.index[-1]
+                last_ts = last_dt.timestamp() if hasattr(last_dt, 'timestamp') else 0
+                if last_ts > 0 and (now - last_ts > 900):
+                    delay_min = int((now - last_ts) / 60)
+                    return jsonify({
+                        "success": True,
+                        "smc": {
+                            "action": "WAIT FOR ENTRY (NO TRADE)",
+                            "verdict": f"STALLED MARKET FEED (DELAY: {delay_min}m)",
+                            "reasoning": f"Latest 5-minute candle timestamp is stalled by {delay_min} minutes. Waiting for fresh live stream before evaluating entries.",
+                            "current_price": float(df['Close'].iloc[-1]),
+                            "signal_status": "NEUTRAL",
+                            "signal_id": None
+                        }
+                    })
 
         # Distinguish Completed Candles vs Live Forming Candle
         last_candle_end = 0

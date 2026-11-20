@@ -1,4 +1,7 @@
 import unittest
+import os
+import tempfile
+import sqlite3
 import pandas as pd
 import numpy as np
 import datetime
@@ -6,13 +9,18 @@ import pytz
 
 from engine.opportunity_potential_engine import OpportunityPotentialEngine
 from strategies.institutional_engine import InstitutionalStrategyEngine
-from engine.groww_sector_engine import GrowwSectorEngine
-from core.storage import log_signal, evaluate_open_outcomes, get_strategy_performance_stats, get_db_connection
+import core.storage as storage
 
 class TestIntradayScreenerCore(unittest.TestCase):
 
     def setUp(self):
-        # Create synthetic 5m OHLC DataFrame (60 candles = 5 hours of trading)
+        # Create an isolated temporary SQLite database for test execution
+        self.temp_db_fd, self.temp_db_path = tempfile.mkstemp(suffix=".db")
+        self.orig_db_path = storage.DB_PATH
+        storage.DB_PATH = self.temp_db_path
+        storage.init_db()
+
+        # Create synthetic 5m OHLC DataFrame (60 candles)
         np.random.seed(42)
         ist = pytz.timezone('Asia/Kolkata')
         start_dt = datetime.datetime.now(ist).replace(hour=9, minute=15, second=0, microsecond=0)
@@ -51,6 +59,14 @@ class TestIntradayScreenerCore(unittest.TestCase):
             "Volume": [500000]*len(d_times)
         }, index=pd.DatetimeIndex(d_times))
 
+    def tearDown(self):
+        storage.DB_PATH = self.orig_db_path
+        os.close(self.temp_db_fd)
+        try:
+            os.remove(self.temp_db_path)
+        except Exception:
+            pass
+
     def test_wilder_daily_atr_conventional_smoothing(self):
         curr_price = float(self.df_5m['Close'].iloc[-1])
         dates = [d.date() for d in self.df_5m.index]
@@ -63,7 +79,6 @@ class TestIntradayScreenerCore(unittest.TestCase):
 
     def test_volatility_aware_dynamic_clearance(self):
         curr_price = 1000.0
-        # If immediate obstacle is 0.1% away, it must be blocked
         opp = OpportunityPotentialEngine.evaluate_potential(
             self.df_5m, curr_price, "BUY", stop_loss=990.0, daily_df=self.daily_df
         )
@@ -73,7 +88,6 @@ class TestIntradayScreenerCore(unittest.TestCase):
 
     def test_strict_unrounded_potential_and_rr_gates(self):
         curr_price = float(self.df_5m['Close'].iloc[-1])
-        # Force a stop-loss very close to entry so RR is artificially high, but test if potential > 1.0% holds
         res = OpportunityPotentialEngine.evaluate_potential(
             self.df_5m, curr_price, "BUY", stop_loss=curr_price * 0.998, daily_df=self.daily_df
         )
@@ -81,41 +95,35 @@ class TestIntradayScreenerCore(unittest.TestCase):
             self.assertGreater(res["potential_pct"], 1.0)
             self.assertGreaterEqual(res["risk_reward_ratio"], 1.50)
 
-    def test_independent_tp1_and_tp2_outcomes(self):
-        # Create a test signal in database
-        sym = "TESTSTOCK.NS"
-        entry = 500.0
-        sl = 490.0
-        tp1 = 510.0
-        tp2 = 520.0
-        now_ts = 100000.0
+    def test_buy_independent_tp1_and_tp2_lifecycle(self):
+        sym = "TEST_BUY.NS"
+        entry, sl, tp1, tp2 = 500.0, 490.0, 510.0, 520.0
 
-        conn = get_db_connection()
+        sig_id = storage.log_signal({
+            "symbol": sym, "direction": "BUY", "strategy": "Gap-and-Go",
+            "entry_price": entry, "stop_loss": sl, "target_1": tp1, "target_2": tp2,
+            "score": 85, "confidence": "HIGH"
+        })
+
+        conn = storage.get_db_connection()
         c = conn.cursor()
-        c.execute("""
-            INSERT INTO historical_signals (
-                timestamp, datetime_str, symbol, direction, strategy, entry_price, stop_loss, target_1, target_2, score, confidence, outcome, last_candle_time
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (now_ts, "2026-11-21 10:00:00", sym, "BUY", "Gap-and-Go", entry, sl, tp1, tp2, 85, "HIGH", "ACTIVE", now_ts))
-        sig_id = c.lastrowid
-        conn.commit()
-        conn.close()
+        c.execute("SELECT timestamp FROM historical_signals WHERE id = ?", (sig_id,))
+        now_ts = float(c.fetchone()["timestamp"])
 
-        # Candle 1 reaches TP1 (High 512, Low 502) -> Should record TP1 hit and move stop to breakeven
+        # Candle 1 reaches TP1 (High 512, Low 502) -> TP1 hit, stop moved to breakeven (500)
         c1 = {"high": 512.0, "low": 502.0, "timestamp": now_ts + 300, "is_completed": True}
-        evaluate_open_outcomes({sym: c1})
+        storage.evaluate_open_outcomes({sym: c1})
 
-        conn = get_db_connection()
-        c = conn.cursor()
-        c.execute("SELECT outcome, tp1_hit, tp2_hit, stop_loss FROM historical_signals WHERE id = ?", (sig_id,))
+        c.execute("SELECT outcome, tp1_hit, tp2_hit, current_stop_loss FROM historical_signals WHERE id = ?", (sig_id,))
         row = c.fetchone()
         self.assertEqual(row["tp1_hit"], 1)
         self.assertEqual(row["tp2_hit"], 0)
         self.assertEqual(row["outcome"], "ACTIVE")
+        self.assertEqual(row["current_stop_loss"], entry)
 
-        # Candle 2 reaches TP2 (High 525, Low 508) -> Should record WIN_FULL and net P&L
+        # Candle 2 reaches TP2 (High 525, Low 508) -> WIN_FULL
         c2 = {"high": 525.0, "low": 508.0, "timestamp": now_ts + 600, "is_completed": True}
-        evaluate_open_outcomes({sym: c2})
+        storage.evaluate_open_outcomes({sym: c2})
 
         c.execute("SELECT outcome, tp1_hit, tp2_hit, final_pnl, net_pnl FROM historical_signals WHERE id = ?", (sig_id,))
         row2 = c.fetchone()
@@ -123,10 +131,101 @@ class TestIntradayScreenerCore(unittest.TestCase):
         self.assertEqual(row2["tp2_hit"], 1)
         self.assertGreater(row2["final_pnl"], 0.0)
         self.assertGreater(row2["net_pnl"], 0.0)
+        conn.close()
 
-        # Clean up test row
-        c.execute("DELETE FROM historical_signals WHERE id = ?", (sig_id,))
-        conn.commit()
+    def test_sell_independent_tp1_and_tp2_lifecycle(self):
+        sym = "TEST_SELL.NS"
+        entry, sl, tp1, tp2 = 500.0, 510.0, 490.0, 480.0
+
+        sig_id = storage.log_signal({
+            "symbol": sym, "direction": "SELL", "strategy": "Opening Range Breakdown",
+            "entry_price": entry, "stop_loss": sl, "target_1": tp1, "target_2": tp2,
+            "score": 80, "confidence": "HIGH"
+        })
+
+        conn = storage.get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT timestamp FROM historical_signals WHERE id = ?", (sig_id,))
+        now_ts = float(c.fetchone()["timestamp"])
+
+        # Candle 1 reaches TP1 for SELL (High 498, Low 488) -> TP1 hit, stop moved to breakeven (500)
+        c1 = {"high": 498.0, "low": 488.0, "timestamp": now_ts + 300, "is_completed": True}
+        storage.evaluate_open_outcomes({sym: c1})
+
+        c.execute("SELECT outcome, tp1_hit, current_stop_loss FROM historical_signals WHERE id = ?", (sig_id,))
+        row = c.fetchone()
+        self.assertEqual(row["tp1_hit"], 1)
+        self.assertEqual(row["current_stop_loss"], entry)
+
+        # Candle 2 reaches TP2 for SELL (High 492, Low 475) -> WIN_FULL
+        c2 = {"high": 492.0, "low": 475.0, "timestamp": now_ts + 600, "is_completed": True}
+        storage.evaluate_open_outcomes({sym: c2})
+
+        c.execute("SELECT outcome, tp2_hit, final_pnl, net_pnl FROM historical_signals WHERE id = ?", (sig_id,))
+        row2 = c.fetchone()
+        self.assertEqual(row2["outcome"], "WIN_FULL")
+        self.assertEqual(row2["tp2_hit"], 1)
+        self.assertGreater(row2["final_pnl"], 0.0)
+        self.assertGreater(row2["net_pnl"], 0.0)
+        conn.close()
+
+    def test_ambiguous_same_candle_tp1_and_sl_conservative_accounting(self):
+        sym = "TEST_AMBIGUOUS.NS"
+        entry, sl, tp1 = 500.0, 490.0, 515.0
+
+        sig_id = storage.log_signal({
+            "symbol": sym, "direction": "BUY", "strategy": "EMA Momentum",
+            "entry_price": entry, "stop_loss": sl, "target_1": tp1, "target_2": 530.0,
+            "score": 75, "confidence": "HIGH"
+        })
+
+        conn = storage.get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT timestamp FROM historical_signals WHERE id = ?", (sig_id,))
+        now_ts = float(c.fetchone()["timestamp"])
+
+        # Candle touches BOTH TP1 (High 518 >= 515) and original SL (Low 488 <= 490) in the same bar
+        c_ambiguous = {"high": 518.0, "low": 488.0, "timestamp": now_ts + 300, "is_completed": True}
+        storage.evaluate_open_outcomes({sym: c_ambiguous})
+
+        c.execute("SELECT outcome, tp1_hit, final_pnl, net_pnl FROM historical_signals WHERE id = ?", (sig_id,))
+        row = c.fetchone()
+        # Conservative accounting must treat same-bar cross as LOSS
+        self.assertEqual(row["outcome"], "LOSS")
+        self.assertEqual(row["tp1_hit"], 0)
+        self.assertLess(row["final_pnl"], 0.0)
+        self.assertLess(row["net_pnl"], 0.0)
+        conn.close()
+
+    def test_tp1_followed_by_breakeven_sl(self):
+        sym = "TEST_BE.NS"
+        entry, sl, tp1, tp2 = 500.0, 490.0, 510.0, 530.0
+
+        sig_id = storage.log_signal({
+            "symbol": sym, "direction": "BUY", "strategy": "VWAP Reclaim",
+            "entry_price": entry, "stop_loss": sl, "target_1": tp1, "target_2": tp2,
+            "score": 78, "confidence": "HIGH"
+        })
+
+        conn = storage.get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT timestamp FROM historical_signals WHERE id = ?", (sig_id,))
+        now_ts = float(c.fetchone()["timestamp"])
+
+        # Candle 1 hits TP1
+        c1 = {"high": 512.0, "low": 502.0, "timestamp": now_ts + 300, "is_completed": True}
+        storage.evaluate_open_outcomes({sym: c1})
+
+        # Candle 2 reverses back to entry price (breakeven stop triggered)
+        c2 = {"high": 508.0, "low": 499.0, "timestamp": now_ts + 600, "is_completed": True}
+        storage.evaluate_open_outcomes({sym: c2})
+
+        c.execute("SELECT outcome, tp1_hit, tp2_hit, final_pnl FROM historical_signals WHERE id = ?", (sig_id,))
+        row = c.fetchone()
+        self.assertEqual(row["outcome"], "WIN_PARTIAL")
+        self.assertEqual(row["tp1_hit"], 1)
+        self.assertEqual(row["tp2_hit"], 0)
+        self.assertEqual(row["final_pnl"], 5.0)
         conn.close()
 
 if __name__ == '__main__':

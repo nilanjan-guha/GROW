@@ -68,6 +68,9 @@ def init_db():
         win_rate REAL DEFAULT 0.0,
         avg_rr REAL DEFAULT 0.0,
         profit_factor REAL DEFAULT 0.0,
+        net_profit_factor REAL DEFAULT 0.0,
+        total_gross_pnl REAL DEFAULT 0.0,
+        total_net_pnl REAL DEFAULT 0.0,
         updated_at REAL
     )
     """)
@@ -82,6 +85,7 @@ def init_db():
         ("final_pnl", "REAL DEFAULT 0.0"),
         ("closed_at", "REAL"),
         ("last_candle_time", "REAL"),
+        ("current_stop_loss", "REAL"),
         ("tp1_hit", "INTEGER DEFAULT 0"),
         ("tp1_hit_time", "REAL"),
         ("tp2_hit", "INTEGER DEFAULT 0"),
@@ -92,6 +96,19 @@ def init_db():
         if col_name not in existing_cols:
             try:
                 cursor.execute(f"ALTER TABLE historical_signals ADD COLUMN {col_name} {col_type}")
+            except Exception:
+                pass
+
+    cursor.execute("PRAGMA table_info(strategy_performance)")
+    existing_perf_cols = {r[1] for r in cursor.fetchall()}
+    for col_name, col_type in [
+        ("net_profit_factor", "REAL DEFAULT 0.0"),
+        ("total_gross_pnl", "REAL DEFAULT 0.0"),
+        ("total_net_pnl", "REAL DEFAULT 0.0")
+    ]:
+        if col_name not in existing_perf_cols:
+            try:
+                cursor.execute(f"ALTER TABLE strategy_performance ADD COLUMN {col_name} {col_type}")
             except Exception:
                 pass
 
@@ -122,9 +139,9 @@ def log_signal(signal_dict):
         cursor.execute("""
         INSERT INTO historical_signals (
             timestamp, datetime_str, symbol, direction, strategy, 
-            entry_price, stop_loss, target_1, target_2, score, 
+            entry_price, stop_loss, current_stop_loss, target_1, target_2, score, 
             confidence, catalyst, features_json, market_regime, outcome
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             now,
             time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -132,6 +149,7 @@ def log_signal(signal_dict):
             direction,
             strategy,
             signal_dict.get("entry_price"),
+            signal_dict.get("stop_loss"),
             signal_dict.get("stop_loss"),
             signal_dict.get("target_1"),
             signal_dict.get("target_2"),
@@ -202,7 +220,9 @@ def evaluate_open_outcomes(data_map):
                 continue
 
             entry = float(sig["entry_price"])
-            sl = float(sig["stop_loss"])
+            orig_sl = float(sig["stop_loss"])
+            curr_sl = float(sig["current_stop_loss"]) if sig["current_stop_loss"] is not None else orig_sl
+            sl = curr_sl
             tp1 = float(sig["target_1"])
             tp2 = float(sig["target_2"]) if sig["target_2"] is not None else None
             direction = sig["direction"]
@@ -222,8 +242,7 @@ def evaluate_open_outcomes(data_map):
             net_pnl = float(sig["net_pnl"] or 0.0)
             brokerage_costs = float(sig["brokerage_costs"] or 0.0)
 
-            # Brokerage, STT and slippage estimation per executed share / point basis:
-            # Baseline: ~0.08% per turn (or 0.0008 * entry) in point terms
+            # Realistic Indian F&O equity cost model on turn (approx 0.08% = ₹80 per 1 lakh turnover for STT, stamp duty, exchange turnover fee, SEBI & GST)
             est_costs = round(entry * 0.0008, 2)
 
             # Case A: Full DataFrame provided
@@ -252,67 +271,99 @@ def evaluate_open_outcomes(data_map):
                         mfe = max(mfe, c_high - entry)
                         mae = min(mae, c_low - entry)
                         
-                        # 1. Independent TP1 tracking (50% partial exit)
-                        if not tp1_hit and c_high >= tp1:
-                            tp1_hit = 1
-                            tp1_hit_time = c_ts
-                            # Trailing SL for remaining position moved to breakeven
-                            sl = max(sl, entry)
-
-                        # 2. Independent TP2 tracking (final 50% exit)
-                        if tp1_hit and tp2 and c_high >= tp2:
-                            tp2_hit = 1
-                            tp2_hit_time = c_ts
-                            outcome = "WIN_FULL"
-                            final_pnl = round(0.5 * (tp1 - entry) + 0.5 * (tp2 - entry), 2)
-                            brokerage_costs = est_costs
-                            net_pnl = round(final_pnl - brokerage_costs, 2)
-                            break
-
-                        # 3. Stop loss trigger
-                        if c_low <= sl:
-                            if tp1_hit:
+                        # Ambiguous same-candle check: if candle touches both TP1 and original SL before TP1 was confirmed
+                        if not tp1_hit:
+                            hit_tp1_now = c_high >= tp1
+                            hit_orig_sl_now = c_low <= orig_sl
+                            if hit_tp1_now and hit_orig_sl_now:
+                                outcome = "LOSS"
+                                final_pnl = round(orig_sl - entry, 2)
+                                brokerage_costs = est_costs
+                                net_pnl = round(final_pnl - brokerage_costs, 2)
+                                break
+                            elif hit_orig_sl_now:
+                                outcome = "LOSS"
+                                final_pnl = round(orig_sl - entry, 2)
+                                brokerage_costs = est_costs
+                                net_pnl = round(final_pnl - brokerage_costs, 2)
+                                break
+                            elif hit_tp1_now:
+                                tp1_hit = 1
+                                tp1_hit_time = c_ts
+                                sl = max(sl, entry)
+                        
+                        # Independent TP2 tracking or trailing breakeven stop evaluation
+                        if tp1_hit:
+                            hit_tp2_now = tp2 and (c_high >= tp2)
+                            hit_be_sl_now = c_low <= sl
+                            if hit_tp2_now and hit_be_sl_now:
                                 outcome = "WIN_PARTIAL"
                                 final_pnl = round(0.5 * (tp1 - entry) + 0.5 * (sl - entry), 2)
-                            else:
-                                outcome = "LOSS"
-                                final_pnl = round(sl - entry, 2)
-                            brokerage_costs = est_costs
-                            net_pnl = round(final_pnl - brokerage_costs, 2)
-                            break
+                                brokerage_costs = est_costs
+                                net_pnl = round(final_pnl - brokerage_costs, 2)
+                                break
+                            elif hit_tp2_now:
+                                tp2_hit = 1
+                                tp2_hit_time = c_ts
+                                outcome = "WIN_FULL"
+                                final_pnl = round(0.5 * (tp1 - entry) + 0.5 * (tp2 - entry), 2)
+                                brokerage_costs = est_costs
+                                net_pnl = round(final_pnl - brokerage_costs, 2)
+                                break
+                            elif hit_be_sl_now:
+                                outcome = "WIN_PARTIAL"
+                                final_pnl = round(0.5 * (tp1 - entry) + 0.5 * (sl - entry), 2)
+                                brokerage_costs = est_costs
+                                net_pnl = round(final_pnl - brokerage_costs, 2)
+                                break
 
                     elif direction == "SELL":
                         mfe = max(mfe, entry - c_low)
                         mae = min(mae, entry - c_high)
                         
-                        # 1. Independent TP1 tracking (50% partial exit)
-                        if not tp1_hit and c_low <= tp1:
-                            tp1_hit = 1
-                            tp1_hit_time = c_ts
-                            # Trailing SL for remaining position moved to breakeven
-                            sl = min(sl, entry)
+                        if not tp1_hit:
+                            hit_tp1_now = c_low <= tp1
+                            hit_orig_sl_now = c_high >= orig_sl
+                            if hit_tp1_now and hit_orig_sl_now:
+                                outcome = "LOSS"
+                                final_pnl = round(entry - orig_sl, 2)
+                                brokerage_costs = est_costs
+                                net_pnl = round(final_pnl - brokerage_costs, 2)
+                                break
+                            elif hit_orig_sl_now:
+                                outcome = "LOSS"
+                                final_pnl = round(entry - orig_sl, 2)
+                                brokerage_costs = est_costs
+                                net_pnl = round(final_pnl - brokerage_costs, 2)
+                                break
+                            elif hit_tp1_now:
+                                tp1_hit = 1
+                                tp1_hit_time = c_ts
+                                sl = min(sl, entry)
 
-                        # 2. Independent TP2 tracking (final 50% exit)
-                        if tp1_hit and tp2 and c_low <= tp2:
-                            tp2_hit = 1
-                            tp2_hit_time = c_ts
-                            outcome = "WIN_FULL"
-                            final_pnl = round(0.5 * (entry - tp1) + 0.5 * (entry - tp2), 2)
-                            brokerage_costs = est_costs
-                            net_pnl = round(final_pnl - brokerage_costs, 2)
-                            break
-
-                        # 3. Stop loss trigger
-                        if c_high >= sl:
-                            if tp1_hit:
+                        if tp1_hit:
+                            hit_tp2_now = tp2 and (c_low <= tp2)
+                            hit_be_sl_now = c_high >= sl
+                            if hit_tp2_now and hit_be_sl_now:
                                 outcome = "WIN_PARTIAL"
                                 final_pnl = round(0.5 * (entry - tp1) + 0.5 * (entry - sl), 2)
-                            else:
-                                outcome = "LOSS"
-                                final_pnl = round(entry - sl, 2)
-                            brokerage_costs = est_costs
-                            net_pnl = round(final_pnl - brokerage_costs, 2)
-                            break
+                                brokerage_costs = est_costs
+                                net_pnl = round(final_pnl - brokerage_costs, 2)
+                                break
+                            elif hit_tp2_now:
+                                tp2_hit = 1
+                                tp2_hit_time = c_ts
+                                outcome = "WIN_FULL"
+                                final_pnl = round(0.5 * (entry - tp1) + 0.5 * (entry - tp2), 2)
+                                brokerage_costs = est_costs
+                                net_pnl = round(final_pnl - brokerage_costs, 2)
+                                break
+                            elif hit_be_sl_now:
+                                outcome = "WIN_PARTIAL"
+                                final_pnl = round(0.5 * (entry - tp1) + 0.5 * (entry - sl), 2)
+                                brokerage_costs = est_costs
+                                net_pnl = round(final_pnl - brokerage_costs, 2)
+                                break
 
             # Case B: Single candle dictionary
             elif isinstance(data, dict):
@@ -326,58 +377,97 @@ def evaluate_open_outcomes(data_map):
                     if direction == "BUY":
                         mfe = max(mfe, c_high - entry)
                         mae = min(mae, c_low - entry)
-                        if not tp1_hit and c_high >= tp1:
-                            tp1_hit = 1
-                            tp1_hit_time = c_ts
-                            sl = max(sl, entry)
-                        if tp1_hit and tp2 and c_high >= tp2:
-                            tp2_hit = 1
-                            tp2_hit_time = c_ts
-                            outcome = "WIN_FULL"
-                            final_pnl = round(0.5 * (tp1 - entry) + 0.5 * (tp2 - entry), 2)
-                            brokerage_costs = est_costs
-                            net_pnl = round(final_pnl - brokerage_costs, 2)
-                        elif c_low <= sl:
-                            if tp1_hit:
+                        
+                        if not tp1_hit:
+                            hit_tp1_now = c_high >= tp1
+                            hit_orig_sl_now = c_low <= orig_sl
+                            if hit_tp1_now and hit_orig_sl_now:
+                                outcome = "LOSS"
+                                final_pnl = round(orig_sl - entry, 2)
+                                brokerage_costs = est_costs
+                                net_pnl = round(final_pnl - brokerage_costs, 2)
+                            elif hit_orig_sl_now:
+                                outcome = "LOSS"
+                                final_pnl = round(orig_sl - entry, 2)
+                                brokerage_costs = est_costs
+                                net_pnl = round(final_pnl - brokerage_costs, 2)
+                            elif hit_tp1_now:
+                                tp1_hit = 1
+                                tp1_hit_time = c_ts
+                                sl = max(sl, entry)
+                        
+                        if tp1_hit and outcome == "ACTIVE":
+                            hit_tp2_now = tp2 and (c_high >= tp2)
+                            hit_be_sl_now = c_low <= sl
+                            if hit_tp2_now and hit_be_sl_now:
                                 outcome = "WIN_PARTIAL"
                                 final_pnl = round(0.5 * (tp1 - entry) + 0.5 * (sl - entry), 2)
-                            else:
-                                outcome = "LOSS"
-                                final_pnl = round(sl - entry, 2)
-                            brokerage_costs = est_costs
-                            net_pnl = round(final_pnl - brokerage_costs, 2)
+                                brokerage_costs = est_costs
+                                net_pnl = round(final_pnl - brokerage_costs, 2)
+                            elif hit_tp2_now:
+                                tp2_hit = 1
+                                tp2_hit_time = c_ts
+                                outcome = "WIN_FULL"
+                                final_pnl = round(0.5 * (tp1 - entry) + 0.5 * (tp2 - entry), 2)
+                                brokerage_costs = est_costs
+                                net_pnl = round(final_pnl - brokerage_costs, 2)
+                            elif hit_be_sl_now:
+                                outcome = "WIN_PARTIAL"
+                                final_pnl = round(0.5 * (tp1 - entry) + 0.5 * (sl - entry), 2)
+                                brokerage_costs = est_costs
+                                net_pnl = round(final_pnl - brokerage_costs, 2)
+
                     elif direction == "SELL":
                         mfe = max(mfe, entry - c_low)
                         mae = min(mae, entry - c_high)
-                        if not tp1_hit and c_low <= tp1:
-                            tp1_hit = 1
-                            tp1_hit_time = c_ts
-                            sl = min(sl, entry)
-                        if tp1_hit and tp2 and c_low <= tp2:
-                            tp2_hit = 1
-                            tp2_hit_time = c_ts
-                            outcome = "WIN_FULL"
-                            final_pnl = round(0.5 * (entry - tp1) + 0.5 * (entry - tp2), 2)
-                            brokerage_costs = est_costs
-                            net_pnl = round(final_pnl - brokerage_costs, 2)
-                        elif c_high >= sl:
-                            if tp1_hit:
+                        
+                        if not tp1_hit:
+                            hit_tp1_now = c_low <= tp1
+                            hit_orig_sl_now = c_high >= orig_sl
+                            if hit_tp1_now and hit_orig_sl_now:
+                                outcome = "LOSS"
+                                final_pnl = round(entry - orig_sl, 2)
+                                brokerage_costs = est_costs
+                                net_pnl = round(final_pnl - brokerage_costs, 2)
+                            elif hit_orig_sl_now:
+                                outcome = "LOSS"
+                                final_pnl = round(entry - orig_sl, 2)
+                                brokerage_costs = est_costs
+                                net_pnl = round(final_pnl - brokerage_costs, 2)
+                            elif hit_tp1_now:
+                                tp1_hit = 1
+                                tp1_hit_time = c_ts
+                                sl = min(sl, entry)
+
+                        if tp1_hit and outcome == "ACTIVE":
+                            hit_tp2_now = tp2 and (c_low <= tp2)
+                            hit_be_sl_now = c_high >= sl
+                            if hit_tp2_now and hit_be_sl_now:
                                 outcome = "WIN_PARTIAL"
                                 final_pnl = round(0.5 * (entry - tp1) + 0.5 * (entry - sl), 2)
-                            else:
-                                outcome = "LOSS"
-                                final_pnl = round(entry - sl, 2)
-                            brokerage_costs = est_costs
-                            net_pnl = round(final_pnl - brokerage_costs, 2)
+                                brokerage_costs = est_costs
+                                net_pnl = round(final_pnl - brokerage_costs, 2)
+                            elif hit_tp2_now:
+                                tp2_hit = 1
+                                tp2_hit_time = c_ts
+                                outcome = "WIN_FULL"
+                                final_pnl = round(0.5 * (entry - tp1) + 0.5 * (entry - tp2), 2)
+                                brokerage_costs = est_costs
+                                net_pnl = round(final_pnl - brokerage_costs, 2)
+                            elif hit_be_sl_now:
+                                outcome = "WIN_PARTIAL"
+                                final_pnl = round(0.5 * (entry - tp1) + 0.5 * (entry - sl), 2)
+                                brokerage_costs = est_costs
+                                net_pnl = round(final_pnl - brokerage_costs, 2)
 
             cursor.execute("""
             UPDATE historical_signals 
             SET mfe = ?, mae = ?, outcome = ?, final_pnl = ?, closed_at = ?, last_candle_time = ?,
-                tp1_hit = ?, tp1_hit_time = ?, tp2_hit = ?, tp2_hit_time = ?, net_pnl = ?, brokerage_costs = ?
+                current_stop_loss = ?, tp1_hit = ?, tp1_hit_time = ?, tp2_hit = ?, tp2_hit_time = ?, net_pnl = ?, brokerage_costs = ?
             WHERE id = ?
             """, (
                 mfe, mae, outcome, final_pnl, now if outcome != "ACTIVE" else None, newest_candle_time,
-                tp1_hit, tp1_hit_time, tp2_hit, tp2_hit_time, net_pnl, brokerage_costs, sig["id"]
+                sl, tp1_hit, tp1_hit_time, tp2_hit, tp2_hit_time, net_pnl, brokerage_costs, sig["id"]
             ))
 
             if outcome in ("WIN", "WIN_FULL", "WIN_PARTIAL", "LOSS"):
@@ -427,22 +517,36 @@ def update_strategy_performance(cursor, strategy, signal_id=None):
         gross_profit = sum(float(t["final_pnl"]) for t in trades if float(t["final_pnl"]) > 0)
         gross_loss = abs(sum(float(t["final_pnl"]) for t in trades if float(t["final_pnl"]) < 0))
 
+        net_profit = sum(float(t["net_pnl"] or t["final_pnl"]) for t in trades if float(t["net_pnl"] or t["final_pnl"]) > 0)
+        net_loss = abs(sum(float(t["net_pnl"] or t["final_pnl"]) for t in trades if float(t["net_pnl"] or t["final_pnl"]) < 0))
+
         if gross_loss > 0:
             profit_factor = round(gross_profit / gross_loss, 2)
         else:
             profit_factor = 99.0 if gross_profit > 0 else 1.0
 
+        if net_loss > 0:
+            net_profit_factor = round(net_profit / net_loss, 2)
+        else:
+            net_profit_factor = 99.0 if net_profit > 0 else 1.0
+
+        total_gross_pnl = round(sum(float(t["final_pnl"]) for t in trades), 2)
+        total_net_pnl = round(sum(float(t["net_pnl"] or t["final_pnl"]) for t in trades), 2)
+
         signed_r_list = []
         for t in trades:
             risk = abs(float(t["entry_price"]) - float(t["stop_loss"])) or 1.0
-            pnl = float(t["final_pnl"])
+            pnl = float(t["net_pnl"] or t["final_pnl"])
             r_multiple = pnl / risk
             signed_r_list.append(r_multiple)
         avg_rr = round(sum(signed_r_list) / len(signed_r_list), 2) if signed_r_list else 1.0
 
         cursor.execute("""
-        INSERT INTO strategy_performance (strategy, total_signals, wins, losses, win_rate, avg_rr, profit_factor, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO strategy_performance (
+            strategy, total_signals, wins, losses, win_rate, avg_rr, 
+            profit_factor, net_profit_factor, total_gross_pnl, total_net_pnl, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(strategy) DO UPDATE SET
             total_signals = excluded.total_signals,
             wins = excluded.wins,
@@ -450,8 +554,11 @@ def update_strategy_performance(cursor, strategy, signal_id=None):
             win_rate = excluded.win_rate,
             avg_rr = excluded.avg_rr,
             profit_factor = excluded.profit_factor,
+            net_profit_factor = excluded.net_profit_factor,
+            total_gross_pnl = excluded.total_gross_pnl,
+            total_net_pnl = excluded.total_net_pnl,
             updated_at = excluded.updated_at
-        """, (strat, total, wins, losses, win_rate, avg_rr, profit_factor, time.time()))
+        """, (strat, total, wins, losses, win_rate, avg_rr, profit_factor, net_profit_factor, total_gross_pnl, total_net_pnl, time.time()))
 
 def get_strategy_performance_stats():
     try:
