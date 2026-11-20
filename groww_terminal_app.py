@@ -27,7 +27,8 @@ screener_state = {
     "bullish_momentum_watchlist": [],
     "bearish_momentum_watchlist": [],
     "last_screener_update": 0,
-    "cached_smc_analysis": {}
+    "raw_market_cache": {},        # 15m OHLCV and raw technicals
+    "enriched_signals_cache": {}   # Full 15-strategy + AI enriched results with timestamps
 }
 
 # Real-Time NSE Sector Indices (Live index price performance queried directly via API)
@@ -387,8 +388,9 @@ def calculate_dynamic_sectors():
     sorted_sectors = dict(sorted(sector_results.items(), key=lambda x: x[1]["change"], reverse=True))
     return sorted_sectors
 
-# Background Screener Daemon: dynamically scans Sectors and F&O stocks with Chartink Explosive Momentum
+# Background Screener Daemon: dynamically scans Sectors, updates watchlists, and pre-caches market data
 def background_screener_worker():
+    last_outcome_check = 0
     while True:
         try:
             now = time.time()
@@ -414,8 +416,9 @@ def background_screener_worker():
                 screener_state["last_screener_update"] = now
                 print(f"[CHARTINK ENGINE] Sectors updated. Bullish: {[x['symbol'] for x in bull_watchlist[:4]]}, Bearish: {[x['symbol'] for x in bear_watchlist[:4]]}")
 
-            # Pre-compute Chartink Momentum + SMC Order Blocks
+            # Pre-compute raw technicals into raw_market_cache (Never overwrite enriched_signals_cache)
             all_stks = (screener_state["bullish_momentum_watchlist"] + screener_state["bearish_momentum_watchlist"])
+            latest_prices = {}
             for item in all_stks:
                 sym = item["symbol"]
                 try:
@@ -424,10 +427,23 @@ def background_screener_worker():
                         cdf = cdf.xs(sym, axis=1, level=1) if sym in cdf.columns.levels[1] else cdf
                     res = evaluate_explosive_momentum(cdf, sym)
                     if res:
-                        screener_state["cached_smc_analysis"][sym] = res
+                        screener_state["raw_market_cache"][sym] = {
+                            "timestamp": time.time(),
+                            "data": res,
+                            "df": cdf
+                        }
+                        latest_prices[sym] = res["current_price"]
                 except Exception:
                     pass
-                time.sleep(0.8)
+                time.sleep(0.5)
+
+            # Evaluate open signal outcomes every 60 seconds
+            if now - last_outcome_check > 60 and latest_prices:
+                try:
+                    evaluate_open_outcomes(latest_prices)
+                    last_outcome_check = now
+                except Exception as oe:
+                    print("[OUTCOME TRACKER] Evaluation error:", oe)
 
         except Exception as e:
             print("Screener worker exception:", e)
@@ -457,7 +473,8 @@ def get_sectors_dynamic():
 from strategies.institutional_engine import InstitutionalStrategyEngine
 from engine.news_engine import NewsIntelligenceEngine
 from engine.groq_client import GroqIntelligence
-from core.storage import log_signal, get_recent_signals
+from engine.anomaly_engine import AnomalyDetector
+from core.storage import log_signal, get_recent_signals, evaluate_open_outcomes, get_strategy_performance_stats
 
 news_engine = NewsIntelligenceEngine()
 groq_ai = GroqIntelligence()
@@ -466,22 +483,57 @@ groq_ai = GroqIntelligence()
 def smc_scan():
     """Returns Institutional Multi-Strategy + SMC + News Intelligence Analysis"""
     symbol = request.args.get("symbol", "INDUSINDBK.NS")
-    if symbol in screener_state["cached_smc_analysis"]:
-        return jsonify({"success": True, "smc": screener_state["cached_smc_analysis"][symbol]})
+    now = time.time()
+    
+    # 1. Check enriched cache (TTL: 180 seconds)
+    if symbol in screener_state["enriched_signals_cache"]:
+        cached = screener_state["enriched_signals_cache"][symbol]
+        if now - cached["timestamp"] < 180:
+            return jsonify({"success": True, "smc": cached["data"]})
 
     try:
-        df = yf.download(symbol, period="5d", interval="15m", progress=False)
-        if isinstance(df.columns, pd.MultiIndex):
-            df = df.xs(symbol, axis=1, level=1) if symbol in df.columns.levels[1] else df
+        # Check raw market cache for pre-fetched dataframe to minimize network latency
+        raw_cached = screener_state["raw_market_cache"].get(symbol)
+        if raw_cached and (now - raw_cached["timestamp"] < 120) and raw_cached.get("df") is not None:
+            df = raw_cached["df"]
+            res = raw_cached["data"].copy()
+        else:
+            df = yf.download(symbol, period="5d", interval="15m", progress=False)
+            if isinstance(df.columns, pd.MultiIndex):
+                df = df.xs(symbol, axis=1, level=1) if symbol in df.columns.levels[1] else df
+            res = evaluate_explosive_momentum(df, symbol)
+            if not res:
+                return jsonify({"success": False, "error": "Insufficient market data"}), 400
+
+        # Calculate accurate previous trading session close
+        df_copy = df.copy()
+        if not pd.api.types.is_datetime64_any_dtype(df_copy.index):
+            df_copy.index = pd.to_datetime(df_copy.index)
+        df_copy['Date'] = df_copy.index.date
+        dates = sorted(df_copy['Date'].unique())
         
-        # 1. Evaluate classic momentum
-        res = evaluate_explosive_momentum(df, symbol)
-        
+        if len(dates) >= 2:
+            prev_date = dates[-2]
+            prev_day_df = df_copy[df_copy['Date'] == prev_date]
+            prev_close = float(prev_day_df['Close'].iloc[-1].item() if hasattr(prev_day_df['Close'].iloc[-1], 'item') else prev_day_df['Close'].iloc[-1])
+        else:
+            prev_close = float(df_copy['Close'].iloc[0].item() if hasattr(df_copy['Close'].iloc[0], 'item') else df_copy['Close'].iloc[0])
+
         # 2. Evaluate Institutional 15-Strategy Multi-Layer Engine
-        prev_close = float(df['Close'].iloc[-20]) if len(df) >= 20 else float(df['Close'].iloc[0])
         inst_res = InstitutionalStrategyEngine.evaluate_strategies(df, prev_close)
+
+        # 3. Check Anomaly Detector (Flat-Open Sudden Expansion & RVOL Acceleration)
+        today_date = dates[-1] if dates else None
+        today_df = df_copy[df_copy['Date'] == today_date] if today_date else df_copy
+        anomaly_info = AnomalyDetector.detect_flat_open_breakout(
+            today_df['Open'], today_df['High'], today_df['Low'], today_df['Close'], today_df['Volume'], prev_close
+        )
+        if anomaly_info["is_flat_open"] and anomaly_info["is_sudden_expansion"]:
+            if "Flat-Open Sudden Momentum" not in inst_res["triggered_strategies"]:
+                inst_res["triggered_strategies"].append("Flat-Open Sudden Momentum")
+                inst_res["composite_score"] = min(100, inst_res["composite_score"] + 15)
         
-        # 3. Match News & AI Summary
+        # 4. Match News & AI Summary
         clean_sym = symbol.replace(".NS", "")
         news_cat = news_engine.match_catalyst_for_stock(clean_sym)
         news_headline = news_cat["title"] if news_cat else ""
@@ -494,7 +546,7 @@ def smc_scan():
             news_headline=news_headline
         )
         
-        # Merge metrics
+        # Merge metrics into response
         res["composite_score"] = inst_res["composite_score"]
         res["probability_pct"] = inst_res["probability_pct"]
         res["triggered_strategies"] = inst_res["triggered_strategies"]
@@ -502,11 +554,12 @@ def smc_scan():
         res["ai_summary"] = ai_intel.get("ai_summary", "")
         res["catalyst_impact"] = ai_intel.get("catalyst_impact", "")
         res["risk_rating"] = ai_intel.get("risk_rating", "MODERATE")
+        res["anomaly_info"] = anomaly_info
         
         # If institutional engine flagged BUY or SELL, upgrade action
         if inst_res["direction"] != "NEUTRAL":
             res["action"] = f"{inst_res['direction']} / {'CALL (CE)' if inst_res['direction'] == 'BUY' else 'PUT (PE)'} [{inst_res['primary_strategy'].upper()}]"
-            res["verdict"] = f"SCORE {inst_res['composite_score']}/100 | PROBABILITY {inst_res['probability_pct']}%"
+            res["verdict"] = f"SCORE {inst_res['composite_score']}/100 | WIN PROB {inst_res['probability_pct']}%"
             res["suggested_sl"] = inst_res["suggested_sl"]
             res["suggested_tp1"] = inst_res["suggested_tp1"]
             res["suggested_tp2"] = inst_res["suggested_tp2"]
@@ -527,10 +580,20 @@ def smc_scan():
                 "features": {"rvol": inst_res["rvol"], "rsi": inst_res["rsi"], "vwap": inst_res["vwap"]}
             })
 
-        screener_state["cached_smc_analysis"][symbol] = res
+        # Save to enriched signals cache with TTL
+        screener_state["enriched_signals_cache"][symbol] = {
+            "timestamp": now,
+            "data": res
+        }
         return jsonify({"success": True, "smc": res})
     except Exception as e:
+        traceback.print_exc()
         return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route("/api/signals/performance")
+def get_performance_stats():
+    """Returns actual win rate, profit factor, and outcome stats per strategy"""
+    return jsonify({"success": True, "stats": get_strategy_performance_stats()})
 
 @app.route("/api/signals/recent")
 def get_recent_logged_signals():

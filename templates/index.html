@@ -309,7 +309,8 @@
         }
 
         async function scanAllWatchlistCandidates() {
-            for (let i = 0; i < Math.min(activeWatchlist.length, 10); i++) {
+            // Scan all 30 top candidates (15 Bullish + 15 Bearish)
+            for (let i = 0; i < activeWatchlist.length; i++) {
                 const item = activeWatchlist[i];
                 try {
                     const res = await fetch(`/api/market/smc-scan?symbol=${encodeURIComponent(item.symbol)}`);

@@ -25,29 +25,36 @@ class AnomalyDetector:
         return round((curr - mean) / std, 2)
 
     @staticmethod
-    def detect_flat_open_breakout(o, h, l, c, v, prev_close):
+    def detect_flat_open_breakout(o, h, l, c, v, prev_close=None):
         """
-        Detects Scenario C: Stocks opening flat (|gap| < 0.5%) that experience
+        Detects Scenario C: Stocks opening flat (|gap| < 0.65%) that experience
         sudden volume displacement and explosive range expansion.
         """
+        if len(o) < 2:
+            return {"is_flat_open": False, "is_sudden_expansion": False, "rvol": 1.0, "range_expansion": 1.0, "direction": "NEUTRAL"}
+
+        # Calculate actual today open vs previous close
         open_price = float(o.iloc[0])
-        gap_pct = abs((open_price - prev_close) / prev_close) * 100 if prev_close else 0.0
+        if prev_close and prev_close > 0:
+            gap_pct = abs((open_price - prev_close) / prev_close) * 100
+        else:
+            gap_pct = 0.0
         
-        # Check if open was flat
+        # Check if open was flat (gap <= 0.65%)
         is_flat_open = gap_pct <= 0.65
         
         # Current candle velocity
         curr_c = float(c.iloc[-1])
         curr_o = float(o.iloc[-1])
         curr_range = float(h.iloc[-1] - l.iloc[-1])
-        avg_range = float((h - l).rolling(15).mean().iloc[-1]) or 0.0001
+        avg_range = float((h - l).rolling(min(len(h), 15)).mean().iloc[-1]) or 0.0001
         
         range_expansion = curr_range / avg_range
         rvol = AnomalyDetector.calculate_rvol(v)
         
-        is_sudden_expansion = (rvol >= 1.6 and range_expansion >= 1.5)
+        is_sudden_expansion = bool(rvol >= 1.5 and range_expansion >= 1.4)
         
-        direction = "BULLISH" if curr_c > curr_o else "BEARISH"
+        direction = "BULLISH" if curr_c >= curr_o else "BEARISH"
         return {
             "is_flat_open": is_flat_open,
             "gap_pct": round(gap_pct, 2),

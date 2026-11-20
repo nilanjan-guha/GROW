@@ -1,0 +1,10 @@
+Flask==3.1.0
+pandas>=2.2.0
+numpy>=1.26.0
+yfinance>=0.2.50
+python-dotenv>=1.0.0
+growwapi>=0.0.8
+scikit-learn>=1.5.0
+scipy>=1.14.0
+xgboost>=2.1.0
+lightgbm>=4.5.0

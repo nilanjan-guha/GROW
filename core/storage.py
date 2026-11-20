@@ -30,10 +30,11 @@ def init_db():
         catalyst TEXT,
         features_json TEXT,
         market_regime TEXT,
-        mfe REAL,
-        mae REAL,
-        outcome TEXT,
-        final_pnl REAL
+        mfe REAL DEFAULT 0.0,
+        mae REAL DEFAULT 0.0,
+        outcome TEXT DEFAULT 'ACTIVE',
+        final_pnl REAL DEFAULT 0.0,
+        closed_at REAL
     )
     """)
     
@@ -83,6 +84,105 @@ def log_signal(signal_dict):
         conn.close()
     except Exception as e:
         print("[STORAGE] Error logging signal:", e)
+
+def evaluate_open_outcomes(latest_prices):
+    """
+    Evaluates all ACTIVE signals against latest prices to update:
+    MFE (Max Favourable Excursion), MAE (Max Adverse Excursion),
+    and marks outcome as WIN (Target reached) or LOSS (Stop Loss hit).
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM historical_signals WHERE outcome = 'ACTIVE'")
+        active_signals = cursor.fetchall()
+        now = time.time()
+
+        for sig in active_signals:
+            sym = sig["symbol"]
+            curr_price = latest_prices.get(sym) or latest_prices.get(f"{sym}.NS")
+            if not curr_price:
+                continue
+
+            entry = float(sig["entry_price"])
+            sl = float(sig["stop_loss"])
+            tp1 = float(sig["target_1"])
+            direction = sig["direction"]
+            strategy = sig["strategy"]
+            mfe = float(sig["mfe"] or 0.0)
+            mae = float(sig["mae"] or 0.0)
+
+            outcome = "ACTIVE"
+            final_pnl = 0.0
+
+            if direction == "BUY":
+                curr_diff = curr_price - entry
+                mfe = max(mfe, curr_diff)
+                mae = min(mae, curr_diff)
+                if curr_price >= tp1:
+                    outcome = "WIN"
+                    final_pnl = round(curr_price - entry, 2)
+                elif curr_price <= sl:
+                    outcome = "LOSS"
+                    final_pnl = round(curr_price - entry, 2)
+            elif direction == "SELL":
+                curr_diff = entry - curr_price
+                mfe = max(mfe, curr_diff)
+                mae = min(mae, curr_diff)
+                if curr_price <= tp1:
+                    outcome = "WIN"
+                    final_pnl = round(entry - curr_price, 2)
+                elif curr_price >= sl:
+                    outcome = "LOSS"
+                    final_pnl = round(entry - curr_price, 2)
+
+            cursor.execute("""
+            UPDATE historical_signals 
+            SET mfe = ?, mae = ?, outcome = ?, final_pnl = ?, closed_at = ?
+            WHERE id = ?
+            """, (mfe, mae, outcome, final_pnl, now if outcome != "ACTIVE" else None, sig["id"]))
+
+            # If trade resolved, update strategy performance statistics
+            if outcome in ("WIN", "LOSS"):
+                update_strategy_performance(cursor, strategy, outcome)
+
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print("[STORAGE] Error evaluating outcomes:", e)
+
+def update_strategy_performance(cursor, strategy, outcome):
+    cursor.execute("SELECT * FROM strategy_performance WHERE strategy = ?", (strategy,))
+    row = cursor.fetchone()
+    if row:
+        total = row["total_signals"] + 1
+        wins = row["wins"] + (1 if outcome == "WIN" else 0)
+        losses = row["losses"] + (1 if outcome == "LOSS" else 0)
+        win_rate = round((wins / total) * 100, 1)
+        profit_factor = round(wins / (losses or 1), 2)
+        cursor.execute("""
+        UPDATE strategy_performance 
+        SET total_signals = ?, wins = ?, losses = ?, win_rate = ?, profit_factor = ?, updated_at = ?
+        WHERE strategy = ?
+        """, (total, wins, losses, win_rate, profit_factor, time.time(), strategy))
+    else:
+        wins = 1 if outcome == "WIN" else 0
+        losses = 1 if outcome == "LOSS" else 0
+        cursor.execute("""
+        INSERT INTO strategy_performance (strategy, total_signals, wins, losses, win_rate, profit_factor, updated_at)
+        VALUES (?, 1, ?, ?, ?, ?, ?)
+        """, (strategy, wins, losses, 100.0 if wins else 0.0, 1.0, time.time()))
+
+def get_strategy_performance_stats():
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM strategy_performance ORDER BY total_signals DESC")
+        rows = [dict(r) for r in cursor.fetchall()]
+        conn.close()
+        return rows
+    except Exception:
+        return []
 
 def get_recent_signals(limit=50):
     try:
