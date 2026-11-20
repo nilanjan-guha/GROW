@@ -268,6 +268,8 @@ class OpportunityPotentialEngine:
             room_to_tp1_pct = round(raw_room_to_tp1_pct, 2)
             room_to_tp2_pct = round(((curr_c - tp2) / curr_c) * 100, 2)
 
+            is_exhausted = range_exhaustion_ratio >= 1.8 and curr_c <= float(today_df['Low'].min()) * 1.005
+
             risk = (float(stop_loss) - curr_c) if (stop_loss and float(stop_loss) > curr_c) else (intraday_atr_15m * 1.2)
             reward = curr_c - tp1
             rr_ratio = round(reward / risk, 2) if risk > 0 else 0.0
