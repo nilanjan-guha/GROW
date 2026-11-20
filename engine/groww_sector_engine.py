@@ -176,10 +176,10 @@ class GrowwSectorEngine:
                     "relative_strength": round(pct - sec_pct, 2)
                 })
 
-        # Rank: Bullish by highest gainer; Bearish by biggest loser (most negative)
+        # Rank: Bullish by combined momentum + relative strength; Bearish by most negative change
         if is_bullish:
-            qualified_fno.sort(key=lambda x: x["change"], reverse=True)
+            qualified_fno.sort(key=lambda x: (x["change"] + x.get("relative_strength", 0.0)), reverse=True)
         else:
-            qualified_fno.sort(key=lambda x: x["change"])
+            qualified_fno.sort(key=lambda x: (x["change"] + x.get("relative_strength", 0.0)))
 
         return qualified_fno

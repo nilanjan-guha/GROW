@@ -107,8 +107,8 @@ class OpportunityPotentialEngine:
         today_range = float(today_df['High'].max() - today_df['Low'].min()) if not today_df.empty else intraday_atr_15m
         range_exhaustion_ratio = round(today_range / daily_atr, 2)
 
-        # 3. Detect Fractal Swing Highs and Swing Lows across prior completed candles
-        hist_df = df.iloc[:-1] if len(df) > 5 else df
+        # 3. Detect Fractal Swing Highs and Swing Lows across all completed candles in df
+        hist_df = df
         swing_highs = []
         swing_lows = []
         for i in range(2, len(hist_df) - 2):
@@ -157,6 +157,7 @@ class OpportunityPotentialEngine:
                         obstacles.append(("Supply Zone Floor", b, "STRUCTURAL_SUPPLY_OB"))
 
             obstacles.sort(key=lambda x: x[1])
+            immediate_obstacle_str = f"{obstacles[0][0]} @ ₹{obstacles[0][1]:.1f}" if obstacles else "None"
             meaningful_obstacles = [obs for obs in obstacles if ((obs[1] - curr_c) / curr_c) >= 0.0025]
 
             if meaningful_obstacles:
@@ -248,6 +249,7 @@ class OpportunityPotentialEngine:
                         obstacles.append(("Demand Zone Ceiling", t, "STRUCTURAL_DEMAND_OB"))
 
             obstacles.sort(key=lambda x: x[1], reverse=True)
+            immediate_obstacle_str = f"{obstacles[0][0]} @ ₹{obstacles[0][1]:.1f}" if obstacles else "None"
             meaningful_obstacles = [obs for obs in obstacles if ((curr_c - obs[1]) / curr_c) >= 0.0025]
 
             if meaningful_obstacles:

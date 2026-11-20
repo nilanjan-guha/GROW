@@ -429,15 +429,17 @@ def calculate_dynamic_sectors():
 # Background Screener Daemon: dynamically scans Sectors, updates watchlists, and pre-caches market data
 def background_screener_worker():
     last_outcome_check = 0
+    last_market_poll = 0
+    latest_dfs = {}
     while True:
         try:
             now = time.time()
+            # 1. Sector ranking refresh every 5 minutes (300 seconds)
             if now - screener_state["last_screener_update"] > 300 or not screener_state["sectors"]:
-                print("[CHARTINK ENGINE] Scanning live Sector indices & Top FNO candidates...")
+                print("[GROWW ENGINE] Refreshing live Trending Sectors & Watchlists...")
                 sorted_sectors = calculate_dynamic_sectors()
                 screener_state["sectors"] = sorted_sectors
 
-                # Bullish & Bearish momentum watchlist from Top 3 Bullish and Top 3 Bearish Groww sectors
                 bull_sectors = [s for s in sorted_sectors.values() if s.get("is_bullish")][:3]
                 bear_sectors = [s for s in sorted_sectors.values() if not s.get("is_bullish")][:3]
 
@@ -452,16 +454,14 @@ def background_screener_worker():
                 screener_state["bullish_momentum_watchlist"] = bull_watchlist
                 screener_state["bearish_momentum_watchlist"] = bear_watchlist
                 screener_state["last_screener_update"] = now
-                print(f"[CHARTINK ENGINE] Sectors updated. Bullish: {[x['symbol'] for x in bull_watchlist[:4]]}, Bearish: {[x['symbol'] for x in bear_watchlist[:4]]}")
+                print(f"[GROWW ENGINE] Sectors updated. Bullish: {[x['symbol'] for x in bull_watchlist[:4]]}, Bearish: {[x['symbol'] for x in bear_watchlist[:4]]}")
 
-                # Pre-compute raw technicals into raw_market_cache (Never overwrite enriched_signals_cache)
-                # Combine current top sectors watchlist + all symbols with open ACTIVE trades across database
+            # 2. Stock market-data polling separated from sector refresh (runs every 45-60s)
+            if now - last_market_poll > 45:
                 watchlist_stks = [x["symbol"] for x in (screener_state["bullish_momentum_watchlist"] + screener_state["bearish_momentum_watchlist"])]
                 active_db_symbols = list(get_active_signal_symbols())
-                # Union of both sets to ensure active open trades are ALWAYS tracked even if stock dropped out of top sectors
                 all_stk_symbols = list(dict.fromkeys(watchlist_stks + active_db_symbols))
                 
-                latest_dfs = {}
                 for sym in all_stk_symbols:
                     try:
                         cdf = yf.download(sym, period="5d", interval="5m", progress=False)
@@ -474,13 +474,13 @@ def background_screener_worker():
                                 "data": res,
                                 "df": cdf
                             }
-                            # Pass full chronological OHLC DataFrame to outcome tracker
                             latest_dfs[sym] = cdf
                     except Exception:
                         pass
-                    time.sleep(0.4)
+                    time.sleep(0.3)
+                last_market_poll = now
 
-            # Evaluate open signal outcomes every 60 seconds with full historical/subsequent candles
+            # 3. Evaluate open signal outcomes every 60 seconds with full historical/subsequent candles
             if now - last_outcome_check > 60 and latest_dfs:
                 try:
                     evaluate_open_outcomes(latest_dfs)
@@ -488,6 +488,7 @@ def background_screener_worker():
                 except Exception as oe:
                     print("[OUTCOME TRACKER] Evaluation error:", oe)
 
+            time.sleep(1)
         except Exception as e:
             print("Screener worker exception:", e)
             time.sleep(5)
@@ -598,16 +599,13 @@ def smc_scan():
         news_cat = news_engine.match_catalyst_for_stock(clean_sym)
         news_headline = news_cat["title"] if news_cat else ""
 
-        # 4. Check Anomaly Detector (Flat-Open Sudden Expansion & Time-of-Day RVOL Acceleration)
-        anomaly_info = AnomalyDetector.detect_flat_open_breakout(df=df_copy, prev_close=prev_close)
-
         # 5. Distinguish Completed Candles vs Live Forming Candle
         # Check if the latest candle in df is completed (timestamp + candle_duration <= now)
         last_candle_end = 0
         if hasattr(df.index[-1], 'timestamp'):
             last_candle_end = df.index[-1].timestamp() + 300  # 5-minute candle duration
         
-        is_completed_candle = (not is_market_open()) or (now >= last_candle_end and last_candle_end > 0)
+        is_completed_candle = (now >= last_candle_end and last_candle_end > 0)
 
         # Run strategy evaluation strictly on completed candles
         if is_completed_candle:
@@ -627,6 +625,9 @@ def smc_scan():
                     "signal_id": None
                 }
             })
+
+        # 4. Check Anomaly Detector strictly on completed-candle history
+        anomaly_info = AnomalyDetector.detect_flat_open_breakout(df=eval_df, prev_close=prev_close)
 
         # 6. Evaluate Institutional 15-Strategy Multi-Layer Engine WITH Sector, News & Anomaly Evidence
         inst_res = InstitutionalStrategyEngine.evaluate_strategies(
@@ -673,8 +674,8 @@ def smc_scan():
             res["reasoning"] = f"{inst_res['primary_strategy']} active. {ai_intel.get('ai_summary', '')}"
             res["signal_status"] = "CONFIRMED (Completed Candle)" if is_completed_candle else "PROVISIONAL (Live Candle)"
             
-            # Persist ONLY CONFIRMED signals to historical signals database
-            if is_completed_candle:
+            # Persist ONLY CONFIRMED signals generated during live market hours to historical signals database
+            if is_completed_candle and is_market_open():
                 signal_id = log_signal({
                     "symbol": symbol,
                     "direction": inst_res["direction"],

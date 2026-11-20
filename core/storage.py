@@ -224,9 +224,9 @@ def evaluate_open_outcomes(data_map):
                     if c_ts <= last_candle_time or c_ts <= sig_time:
                         continue
 
-                    # If this is the very last candle in df during live market hours and candle hasn't closed yet, do not process it
+                    # If this is the very last candle in df during live market hours and candle hasn't closed yet (300s for 5m candle), do not process it
                     is_last_candle = (idx == len(df) - 1)
-                    if is_last_candle and (c_ts + 900 > now_ts):
+                    if is_last_candle and (c_ts + 300 > now_ts):
                         continue
 
                     newest_candle_time = max(newest_candle_time, c_ts)
