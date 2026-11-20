@@ -28,7 +28,9 @@ screener_state = {
     "bearish_momentum_watchlist": [],
     "last_screener_update": 0,
     "raw_market_cache": {},        # 15m OHLCV and raw technicals
-    "enriched_signals_cache": {}   # Full 15-strategy + AI enriched results with timestamps
+    "enriched_signals_cache": {},  # Full 15-strategy + AI enriched results with timestamps
+    "symbol_names": {},            # Dynamic symbol to company name map from Groww API
+    "stock_sector_cache": {}       # Dynamic sector mapping cache for all discovered stocks
 }
 
 # Real-Time NSE Sector Indices (Live index price performance queried directly via API)
@@ -79,6 +81,14 @@ def auto_connect_groww():
             ]
             screener_state["fno_universe"] = sorted(raw_fno)
             print(f"Dynamically discovered {len(raw_fno)} F&O tradeable stocks from Groww API.")
+
+            # Dynamically extract all official company names from Groww cash segment instruments
+            cash_nse = df[(df['exchange'] == 'NSE') & (df['segment'] == 'CASH')].dropna(subset=['trading_symbol', 'name'])
+            symbol_to_name = dict(zip(cash_nse['trading_symbol'], cash_nse['name']))
+            screener_state["symbol_names"] = symbol_to_name
+            # Register dynamic company names into news engine
+            news_engine.register_symbol_names(symbol_to_name)
+            print(f"Dynamically mapped {len(symbol_to_name)} company names from Groww for real-time news.")
         except Exception as e:
             print("Error loading FNO universe:", e)
 
@@ -100,27 +110,54 @@ def clean_dataframe(df, symbol=None):
     return df
 
 def classify_stock_sector(sym):
-    """Classifies any F&O symbol from Groww into its corresponding NSE Sector Index dynamically"""
-    sym = sym.replace(".NS", "").upper()
-    if 'BANK' in sym or sym in {'SBIN', 'PNB', 'CANBK', 'CUB', 'INDIANB', 'MAHABANK', 'UNIONBANK', 'YESBANK', 'RBLBANK', 'KARURVYSYA', 'UJJIVANSFB', 'AUBANK', 'FEDERALBNK', 'IDFCFIRSTB', 'BANDHANBNK', 'BANKBARODA', 'BANKINDIA'}:
-        return 'NIFTY BANK'
-    if sym in {'TCS', 'INFY', 'WIPRO', 'TECHM', 'HCLTECH', 'COFORGE', 'PERSISTENT', 'MPHASIS', 'LTIM', 'OFSS', 'KPITTECH', 'TATAELXSI', 'NAUKRI'}:
-        return 'NIFTY IT'
-    if sym in {'MARUTI', 'M&M', 'BAJAJ-AUTO', 'HEROMOTOCO', 'EICHERMOT', 'TVSMOTOR', 'BHARATFORG', 'ASHOKLEY', 'BOSCHLTD', 'MOTHERSON', 'SONACOMS', 'UNOMINDA', 'FORCEMOT', 'TIINDIA', 'BALKRISIND', 'MRF', 'APOLLOTYRE', 'EXIDEIND', 'AMARAJABAT'}:
-        return 'NIFTY AUTO'
-    if sym in {'SUNPHARMA', 'CIPLA', 'DRREDDY', 'DIVISLAB', 'APOLLOHOSP', 'MANKIND', 'TORNTPHARM', 'LUPIN', 'ZYDUSLIFE', 'AUROPHARMA', 'ALKEM', 'BIOCON', 'GLENMARK', 'MAXHEALTH', 'LAURUSLABS', 'FORTIS', 'SYNGENE', 'IPCALAB', 'GRANULES'}:
-        return 'NIFTY PHARMA'
-    if sym in {'DLF', 'GODREJPROP', 'LODHA', 'OBEROIRLTY', 'PHOENIXLTD', 'BRIGADE', 'PRESTIGE', 'NBCC', 'SOBHA'}:
-        return 'NIFTY REALTY'
-    if sym in {'TATASTEEL', 'JSWSTEEL', 'HINDALCO', 'VEDL', 'JINDALSTEL', 'NMDC', 'SAIL', 'NATIONALUM', 'HINDZINC', 'APLAPOLLO', 'RATNAMANI', 'HINDCOPPER'}:
-        return 'NIFTY METAL'
-    if sym in {'RELIANCE', 'NTPC', 'ONGC', 'POWERGRID', 'BPCL', 'COALINDIA', 'IOC', 'GAIL', 'ADANIENT', 'ADANIGREEN', 'ADANIPOWER', 'TATAPOWER', 'PETRONET', 'OIL', 'HINDPETRO', 'JSWENERGY', 'NHPC', 'IREDA', 'SJVN', 'SUZLON'}:
-        return 'NIFTY ENERGY'
-    if sym in {'LT', 'ULTRACEMCO', 'AMBUJACEM', 'ACC', 'SHREECEM', 'DALBHARAT', 'GRASIM', 'BHARTIARTL', 'INDIGO', 'CONCOR', 'DELHIVERY', 'GMRAIRPORT', 'INDUSTOWER', 'ADANIPORTS', 'IRCTC', 'BHEL', 'SIEMENS', 'ABB', 'CUMMINSIND', 'HAL', 'BEL', 'BDL', 'COCHINSHIP', 'MAZDOCK'}:
-        return 'NIFTY INFRA'
-    if sym in {'ITC', 'HINDUNILVR', 'NESTLEIND', 'BRITANNIA', 'TATACONSUM', 'DABUR', 'MARICO', 'COLPAL', 'VBL', 'GODREJCP', 'JUBLFOOD', 'PATANJALI', 'RADICO', 'UNITDSPR', 'PAGEIND', 'TITAN', 'TRENT', 'KALYANKJIL', 'DMART', 'HAVELLS', 'VOLTAS', 'POLYCAB', 'DIXON', 'CROMPTON'}:
-        return 'NIFTY FMCG'
-    return 'NIFTY INFRA'  # Default institutional proxy
+    """
+    Dynamically classifies ANY discovered F&O stock into its corresponding NSE Sector Index.
+    Uses yfinance metadata (Sector and Industry) with persistent caching.
+    ZERO hardcoded stock tickers.
+    """
+    clean_sym = sym.replace(".NS", "").upper()
+    cached = screener_state["stock_sector_cache"].get(clean_sym)
+    if cached:
+        return cached
+
+    # Query yfinance metadata for the stock
+    yf_ticker = f"{clean_sym}.NS"
+    sector_name = "NIFTY INFRA"  # Default fallback
+    try:
+        t = yf.Ticker(yf_ticker)
+        yf_sec = str(t.info.get("sector", "")).strip().lower()
+        yf_ind = str(t.info.get("industry", "")).strip().lower()
+
+        if "bank" in yf_ind or "bank" in yf_sec:
+            if "public" in yf_ind or "psu" in yf_ind:
+                sector_name = "NIFTY PSU BANK"
+            else:
+                sector_name = "NIFTY BANK"
+        elif "financial" in yf_sec or "capital markets" in yf_ind or "credit" in yf_ind:
+            sector_name = "NIFTY BANK"
+        elif "technology" in yf_sec or "software" in yf_ind or "it services" in yf_ind:
+            sector_name = "NIFTY IT"
+        elif "auto" in yf_ind or "auto" in yf_sec or "vehicles" in yf_ind:
+            sector_name = "NIFTY AUTO"
+        elif "health" in yf_sec or "pharm" in yf_ind or "biotech" in yf_ind or "drug" in yf_ind:
+            sector_name = "NIFTY PHARMA"
+        elif "real estate" in yf_sec or "reit" in yf_ind:
+            sector_name = "NIFTY REALTY"
+        elif "steel" in yf_ind or "metals" in yf_sec or "mining" in yf_sec or "aluminum" in yf_ind or "copper" in yf_ind:
+            sector_name = "NIFTY METAL"
+        elif "oil" in yf_ind or "gas" in yf_ind or "energy" in yf_sec or "petroleum" in yf_ind or "power" in yf_ind or "utilities" in yf_sec:
+            sector_name = "NIFTY ENERGY"
+        elif "consumer defensive" in yf_sec or "fmcg" in yf_ind or "food" in yf_ind or "beverage" in yf_ind or "tobacco" in yf_ind:
+            sector_name = "NIFTY FMCG"
+        elif "industrial" in yf_sec or "engineering" in yf_ind or "infrastructure" in yf_ind or "cement" in yf_ind or "construction" in yf_ind:
+            sector_name = "NIFTY INFRA"
+        else:
+            sector_name = "NIFTY INFRA"
+    except Exception:
+        sector_name = "NIFTY INFRA"
+
+    screener_state["stock_sector_cache"][clean_sym] = sector_name
+    return sector_name
 
 # Chartink Explosive Momentum Engine: Evaluates 15M Close, VWAP, EMA 9/21, RSI 14, Volume 1.5x SMA20
 def evaluate_explosive_momentum(df, symbol):
@@ -482,7 +519,11 @@ groq_ai = GroqIntelligence()
 @app.route("/api/market/smc-scan")
 def smc_scan():
     """Returns Institutional Multi-Strategy + SMC + News Intelligence Analysis"""
-    symbol = request.args.get("symbol", "INDUSINDBK.NS")
+    symbol = request.args.get("symbol")
+    if not symbol:
+        # Fallback to first stock in active watchlist or universe dynamically
+        fno_list = screener_state.get("fno_universe", [])
+        symbol = f"{fno_list[0]}.NS" if fno_list else "NIFTY"
     now = time.time()
     
     # 1. Check enriched cache (TTL: 180 seconds)
