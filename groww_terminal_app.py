@@ -454,31 +454,31 @@ def background_screener_worker():
                 screener_state["last_screener_update"] = now
                 print(f"[CHARTINK ENGINE] Sectors updated. Bullish: {[x['symbol'] for x in bull_watchlist[:4]]}, Bearish: {[x['symbol'] for x in bear_watchlist[:4]]}")
 
-            # Pre-compute raw technicals into raw_market_cache (Never overwrite enriched_signals_cache)
-            # Combine current top sectors watchlist + all symbols with open ACTIVE trades across database
-            watchlist_stks = [x["symbol"] for x in (screener_state["bullish_momentum_watchlist"] + screener_state["bearish_momentum_watchlist"])]
-            active_db_symbols = list(get_active_signal_symbols())
-            # Union of both sets to ensure active open trades are ALWAYS tracked even if stock dropped out of top sectors
-            all_stk_symbols = list(dict.fromkeys(watchlist_stks + active_db_symbols))
-            
-            latest_dfs = {}
-            for sym in all_stk_symbols:
-                try:
-                    cdf = yf.download(sym, period="5d", interval="15m", progress=False)
-                    if isinstance(cdf.columns, pd.MultiIndex):
-                        cdf = cdf.xs(sym, axis=1, level=1) if sym in cdf.columns.levels[1] else cdf
-                    res = evaluate_explosive_momentum(cdf, sym)
-                    if res:
-                        screener_state["raw_market_cache"][sym] = {
-                            "timestamp": time.time(),
-                            "data": res,
-                            "df": cdf
-                        }
-                        # Pass full chronological OHLC DataFrame to outcome tracker
-                        latest_dfs[sym] = cdf
-                except Exception:
-                    pass
-                time.sleep(0.4)
+                # Pre-compute raw technicals into raw_market_cache (Never overwrite enriched_signals_cache)
+                # Combine current top sectors watchlist + all symbols with open ACTIVE trades across database
+                watchlist_stks = [x["symbol"] for x in (screener_state["bullish_momentum_watchlist"] + screener_state["bearish_momentum_watchlist"])]
+                active_db_symbols = list(get_active_signal_symbols())
+                # Union of both sets to ensure active open trades are ALWAYS tracked even if stock dropped out of top sectors
+                all_stk_symbols = list(dict.fromkeys(watchlist_stks + active_db_symbols))
+                
+                latest_dfs = {}
+                for sym in all_stk_symbols:
+                    try:
+                        cdf = yf.download(sym, period="5d", interval="5m", progress=False)
+                        if isinstance(cdf.columns, pd.MultiIndex):
+                            cdf = cdf.xs(sym, axis=1, level=1) if sym in cdf.columns.levels[1] else cdf
+                        res = evaluate_explosive_momentum(cdf, sym)
+                        if res:
+                            screener_state["raw_market_cache"][sym] = {
+                                "timestamp": time.time(),
+                                "data": res,
+                                "df": cdf
+                            }
+                            # Pass full chronological OHLC DataFrame to outcome tracker
+                            latest_dfs[sym] = cdf
+                    except Exception:
+                        pass
+                    time.sleep(0.4)
 
             # Evaluate open signal outcomes every 60 seconds with full historical/subsequent candles
             if now - last_outcome_check > 60 and latest_dfs:
@@ -550,7 +550,7 @@ def smc_scan():
             df = raw_cached["df"]
             res = raw_cached["data"].copy()
         else:
-            df = yf.download(symbol, period="5d", interval="15m", progress=False)
+            df = yf.download(symbol, period="5d", interval="5m", progress=False)
             if isinstance(df.columns, pd.MultiIndex):
                 df = df.xs(symbol, axis=1, level=1) if symbol in df.columns.levels[1] else df
             res = evaluate_explosive_momentum(df, symbol)
@@ -602,15 +602,31 @@ def smc_scan():
         anomaly_info = AnomalyDetector.detect_flat_open_breakout(df=df_copy, prev_close=prev_close)
 
         # 5. Distinguish Completed Candles vs Live Forming Candle
-        # Check if the latest candle in df is completed
+        # Check if the latest candle in df is completed (timestamp + candle_duration <= now)
         last_candle_end = 0
         if hasattr(df.index[-1], 'timestamp'):
-            last_candle_end = df.index[-1].timestamp() + 900
+            last_candle_end = df.index[-1].timestamp() + 300  # 5-minute candle duration
         
         is_completed_candle = (not is_market_open()) or (now >= last_candle_end and last_candle_end > 0)
 
         # Run strategy evaluation strictly on completed candles
-        eval_df = df if is_completed_candle or len(df) <= 20 else df.iloc[:-1]
+        if is_completed_candle:
+            eval_df = df
+        else:
+            eval_df = df.iloc[:-1]
+
+        if len(eval_df) < 20:
+            return jsonify({
+                "success": True,
+                "smc": {
+                    "action": "WAIT FOR ENTRY (NO TRADE)",
+                    "verdict": "INSUFFICIENT COMPLETED CANDLE HISTORY",
+                    "reasoning": "Waiting for at least 20 completed candles to ensure statistically verified institutional confluence.",
+                    "current_price": float(df['Close'].iloc[-1]),
+                    "signal_status": "NEUTRAL",
+                    "signal_id": None
+                }
+            })
 
         # 6. Evaluate Institutional 15-Strategy Multi-Layer Engine WITH Sector, News & Anomaly Evidence
         inst_res = InstitutionalStrategyEngine.evaluate_strategies(

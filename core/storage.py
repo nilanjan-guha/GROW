@@ -272,8 +272,9 @@ def evaluate_open_outcomes(data_map):
             # Case B: Single candle dictionary
             elif isinstance(data, dict):
                 c_ts = float(data.get("timestamp", now))
-                # Only evaluate if candle is strictly after signal entry
-                if c_ts > last_candle_time and c_ts > sig_time:
+                # Enforce completed-candle rule: candle must be finished (c_ts + 300 <= now)
+                is_completed = data.get("is_completed", (c_ts + 300 <= now))
+                if is_completed and c_ts > last_candle_time and c_ts > sig_time:
                     newest_candle_time = c_ts
                     c_high = float(data.get("high", entry))
                     c_low = float(data.get("low", entry))
