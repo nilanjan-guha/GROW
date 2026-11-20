@@ -1,0 +1,326 @@
+:root {
+    --bg-color: #060911;
+    --panel-bg: #0c1220;
+    --card-bg: #111a2d;
+    --border-color: #1e293b;
+    --text-color: #f8fafc;
+    --text-muted: #94a3b8;
+    --accent-green: #00d09c;
+    --accent-red: #eb5757;
+    --accent-blue: #38bdf8;
+    --accent-yellow: #f59e0b;
+    --term-bg: #03060d;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Segoe UI', monospace;
+}
+
+body {
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    padding: 10px;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 16px;
+    background: var(--panel-bg);
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    margin-bottom: 8px;
+    flex-shrink: 0;
+}
+
+.header-title {
+    font-size: 1.05rem;
+    font-weight: 800;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.badge {
+    font-size: 0.72rem;
+    background: #1e293b;
+    color: var(--text-muted);
+    padding: 3px 8px;
+    border-radius: 4px;
+    border: 1px solid #334155;
+}
+
+.countdown-badge {
+    background: rgba(245, 158, 11, 0.15);
+    color: var(--accent-yellow);
+    border: 1px solid var(--accent-yellow);
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: bold;
+}
+
+.status-badge {
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: bold;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    text-transform: uppercase;
+    background: rgba(0, 208, 156, 0.15);
+    color: var(--accent-green);
+    border: 1px solid var(--accent-green);
+}
+
+/* 3 Clean Columns: Top 3 Bullish | Active Scanner & Sniper Radar | Top 3 Bearish */
+.workspace-grid {
+    display: grid;
+    grid-template-columns: 340px 1fr 340px;
+    gap: 10px;
+    flex: 1;
+    min-height: 0;
+}
+
+.panel {
+    background: var(--panel-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.panel-header {
+    padding: 10px 14px;
+    background: rgba(255, 255, 255, 0.02);
+    border-bottom: 1px solid var(--border-color);
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.panel-body {
+    padding: 10px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+/* Sector Cards */
+.sector-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 10px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.sector-card:hover {
+    border-color: var(--accent-blue);
+    background: #15223b;
+}
+
+.sector-card.selected {
+    border-color: #38bdf8;
+    background: #192a4a;
+    box-shadow: 0 0 10px rgba(56, 189, 248, 0.25);
+}
+
+.sec-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.82rem;
+    font-weight: 800;
+    margin-bottom: 6px;
+}
+
+.fno-tag {
+    font-size: 0.65rem;
+    background: rgba(56, 189, 248, 0.15);
+    color: var(--accent-blue);
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    padding: 1px 5px;
+    border-radius: 3px;
+    margin-left: 4px;
+}
+
+.ratio-bar {
+    height: 5px;
+    border-radius: 3px;
+    display: flex;
+    overflow: hidden;
+    margin: 6px 0;
+}
+
+.bar-green { background: var(--accent-green); height: 100%; }
+.bar-red { background: var(--accent-red); height: 100%; }
+
+.ratio-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.68rem;
+    color: var(--text-muted);
+}
+
+.top-stocks-preview {
+    margin-top: 8px;
+    font-size: 0.7rem;
+    color: #94a3b8;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    padding-top: 6px;
+    line-height: 1.4;
+}
+
+/* Middle Column: Stock Chips & SMC Radar */
+.stock-chips-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+    padding: 8px;
+    background: #02050b;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    flex-shrink: 0;
+}
+
+.stock-chip {
+    cursor: pointer;
+    padding: 5px 12px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: bold;
+    background: #1e293b;
+    color: #cbd5e1;
+    border: 1px solid #334155;
+    transition: all 0.15s;
+}
+
+.stock-chip:hover {
+    background: #334155;
+    color: #fff;
+}
+
+.stock-chip.active {
+    background: var(--accent-blue);
+    color: #040711;
+    border-color: var(--accent-blue);
+}
+
+.stock-chip.signal-long {
+    border-color: var(--accent-green);
+    background: rgba(0, 208, 156, 0.2);
+    color: #fff;
+}
+
+.stock-chip.signal-short {
+    border-color: var(--accent-red);
+    background: rgba(235, 87, 87, 0.2);
+    color: #fff;
+}
+
+/* Radar Card */
+.radar-box {
+    background: var(--card-bg);
+    border: 1px solid #334155;
+    border-radius: 6px;
+    padding: 14px;
+    margin-bottom: 10px;
+    flex-shrink: 0;
+}
+
+.trade-decision-banner {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: #040711;
+    padding: 12px 16px;
+    border-radius: 6px;
+    border-left: 6px solid #64748b;
+    margin-bottom: 10px;
+}
+
+.decision-action {
+    font-size: 1.3rem;
+    font-weight: 900;
+    letter-spacing: 0.5px;
+}
+
+.decision-setup {
+    font-size: 0.8rem;
+    font-weight: bold;
+    color: #cbd5e1;
+}
+
+.decision-reason {
+    font-size: 0.78rem;
+    color: #cbd5e1;
+    margin-top: 6px;
+    line-height: 1.45;
+}
+
+.radar-metrics {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.metric-cell {
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    padding: 8px 10px;
+    border-radius: 4px;
+}
+
+.m-lbl { font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; }
+.m-val { font-size: 0.9rem; font-weight: bold; margin-top: 3px; }
+
+/* Live Scanner Terminal Feed */
+.terminal-feed {
+    background: var(--term-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 10px;
+    flex: 1;
+    overflow-y: auto;
+    font-size: 0.75rem;
+    line-height: 1.45;
+    min-height: 160px;
+}
+
+.feed-line { margin-bottom: 3px; }
+
+.green { color: var(--accent-green) !important; }
+.red { color: var(--accent-red) !important; }
+.yellow { color: var(--accent-yellow) !important; }
+
+.btn-action {
+    cursor: pointer;
+    padding: 3px 8px;
+    background: #1e293b;
+    color: #cbd5e1;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-size: 0.7rem;
+}
+
+.btn-action:hover { background: #334155; }

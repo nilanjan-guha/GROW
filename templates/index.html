@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Groww Real-Time F&O SMC Sniper Scanner & Terminal</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+    <!-- Header -->
+    <header>
+        <div class="header-title">
+            <span>⚡ GROWW DYNAMIC F&O SECTOR & SMC SNIPER SCANNER</span>
+            <span class="badge" id="uccBadge">Groww UCC: Active</span>
+            <span class="badge" id="fnoBadge">FNO Universe: Loading...</span>
+            <span class="badge" id="cycleStatus" style="color:var(--accent-blue);">Cycle: Scanning Stock Loop</span>
+        </div>
+        <div style="display:flex; gap:12px; align-items:center;">
+            <span class="countdown-badge" id="timerBadge">Next Sector Scan: 05:00</span>
+            <div class="status-badge"><span>●</span> <span>CONNECTED</span></div>
+        </div>
+    </header>
+
+    <!-- 3 Clean Columns -->
+    <div class="workspace-grid">
+
+        <!-- Column 1: Top 3 Bullish Sectors -->
+        <div class="panel">
+            <div class="panel-header">
+                <span class="green">▲ TOP 3 BULLISH SECTORS</span>
+                <span style="font-size:0.68rem; color:var(--text-muted);">GROWW DYNAMIC</span>
+            </div>
+            <div class="panel-body" id="bullishSectors">
+                <div style="font-size:0.72rem; color:var(--text-muted); text-align:center; margin-top:30px;">
+                    Scanning dynamic market leadership...
+                </div>
+            </div>
+        </div>
+
+        <!-- Column 2: Middle Screen: Intraday Stock Selector & Strict SMC Trade Radar -->
+        <div class="panel">
+            <div class="panel-header">
+                <span>INTRADAY TRADE RADAR: <span id="radarStockTitle" style="color: var(--accent-blue);">--</span></span>
+                <span id="selectedSectorTitle" style="color: var(--accent-yellow); font-size:0.72rem;">--</span>
+            </div>
+            <div class="panel-body" style="display:flex; flex-direction:column;">
+                
+                <!-- Confirmed Intraday Trade Alert Banner -->
+                <div id="confirmedTradeAlert" style="display:none; margin-bottom:10px; padding:10px 14px; background:linear-gradient(90deg, rgba(0,208,156,0.15), rgba(15,23,42,0.9)); border:1px solid var(--accent-green); border-radius:6px; box-shadow:0 0 15px rgba(0,208,156,0.25);">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span style="font-size:0.75rem; font-weight:bold; color:var(--accent-green); letter-spacing:0.5px;">🔥 CONFIRMED INTRADAY TRADE SIGNAL</span>
+                        <span id="alertTime" style="font-size:0.65rem; color:var(--text-muted);">READY TO EXECUTE</span>
+                    </div>
+                    <div id="alertDetails" style="font-size:0.82rem; font-weight:700; color:#fff; margin-top:4px;">
+                        --
+                    </div>
+                </div>
+
+                <!-- Stock selector chips for selected sector -->
+                <div class="stock-chips-bar" id="stockChipsBar"></div>
+
+                <!-- Strict SMC Intraday Trade Decision Card -->
+                <div class="radar-box">
+                    <div class="trade-decision-banner" id="decisionBanner">
+                        <div>
+                            <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase;">STRICT INTRADAY ACTION</div>
+                            <div class="decision-action" id="decisionAction" style="color:#94a3b8;">NO TRADE SETUP YET</div>
+                        </div>
+                        <div style="text-align:right;">
+                            <div style="font-size:0.65rem; color:var(--text-muted);">SMC SETUP DETECTED</div>
+                            <div class="decision-setup" id="decisionSetup">WAITING FOR ORDER BLOCK / LIQUIDITY</div>
+                        </div>
+                    </div>
+                    
+                    <div class="decision-reason" id="decisionReason">
+                        Bot will only recommend a trade when price hits Demand OB (for Long) or Supply OB (for Short) with confirmed institutional order flow.
+                    </div>
+
+                    <div class="radar-metrics">
+                        <div class="metric-cell">
+                            <div class="m-lbl">Price / VWAP</div>
+                            <div class="m-val" id="valPrice" style="color:#fff;">--</div>
+                        </div>
+                        <div class="metric-cell">
+                            <div class="m-lbl">RSI (14) & RVOL</div>
+                            <div class="m-val yellow" id="valRsi">--</div>
+                        </div>
+                        <div class="metric-cell">
+                            <div class="m-lbl">EMA 9 vs EMA 21</div>
+                            <div class="m-val blue" id="valEma">--</div>
+                        </div>
+                        <div class="metric-cell">
+                            <div class="m-lbl">Quant Score & Win Prob</div>
+                            <div class="m-val green" id="valQuantScore">--</div>
+                        </div>
+                        <div class="metric-cell">
+                            <div class="m-lbl">Triggered Strategies</div>
+                            <div class="m-val blue" id="valStrategies">--</div>
+                        </div>
+                        <div class="metric-cell">
+                            <div class="m-lbl">Recommended Stop Loss & Target</div>
+                            <div class="m-val yellow" id="valTargets">--</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Live Stream Terminal Console -->
+                <div class="panel-header" style="background:none; padding: 4px 0 6px 0; border:none;">
+                    <span>Continuous Scanner Stream (Cycling every stock in Top Sectors)</span>
+                    <button class="btn-action" onclick="clearLogs()">Clear</button>
+                </div>
+                <div class="terminal-feed" id="terminalFeed"></div>
+
+            </div>
+        </div>
+
+        <!-- Column 3: Top 3 Bearish Sectors -->
+        <div class="panel">
+            <div class="panel-header">
+                <span class="red">▼ TOP 3 BEARISH SECTORS</span>
+                <span style="font-size:0.68rem; color:var(--text-muted);">GROWW DYNAMIC</span>
+            </div>
+            <div class="panel-body" id="bearishSectors">
+                <div style="font-size:0.72rem; color:var(--text-muted); text-align:center; margin-top:30px;">
+                    Scanning dynamic market weakness...
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        let currentSectorName = "";
+        let currentStockSymbol = "";
+        let sectorsDict = {};
+        let activeWatchlist = [];
+        let watchlistIndex = 0;
+        let sectorCountdown = 300; // 5 minutes
+
+        function log(msg, type='INFO') {
+            const feed = document.getElementById('terminalFeed');
+            const time = new Date().toLocaleTimeString();
+            const div = document.createElement('div');
+            div.className = 'feed-line';
+
+            let col = '#38bdf8';
+            if (type === 'SUCCESS') col = '#00d09c';
+            if (type === 'WARN') col = '#f59e0b';
+            if (type === 'ENTRY') col = '#a855f7';
+            if (type === 'NO_ENTRY') col = '#64748b';
+
+            div.innerHTML = `<span style="color:#64748b; margin-right:6px;">[${time}]</span><span style="color:${col}; font-weight:bold; margin-right:6px;">[${type}]</span>${msg}`;
+            feed.appendChild(div);
+            feed.scrollTop = feed.scrollHeight;
+        }
+
+        function clearLogs() {
+            document.getElementById('terminalFeed').innerHTML = '';
+        }
+
+        async function init() {
+            log('Groww Engine Handshake active. Starting Dynamic Sector Scan...', 'SUCCESS');
+            try {
+                const res = await fetch('/api/status');
+                const d = await res.json();
+                if (d.fno_count) {
+                    document.getElementById('fnoBadge').innerText = `FNO Universe: ${d.fno_count} Active`;
+                }
+            } catch (e) {}
+
+            await loadDynamicTopSectors();
+
+            // Sector 5-minute countdown timer
+            setInterval(() => {
+                sectorCountdown--;
+                if (sectorCountdown <= 0) {
+                    sectorCountdown = 300;
+                    log('5-MINUTE INTERVAL HIT: Re-evaluating Sector Rankings & Momentum...', 'INFO');
+                    loadDynamicTopSectors();
+                }
+                const m = Math.floor(sectorCountdown / 60).toString().padStart(2, '0');
+                const s = (sectorCountdown % 60).toString().padStart(2, '0');
+                document.getElementById('timerBadge').innerText = `Next Sector Scan: ${m}:${s}`;
+            }, 1000);
+
+            // Continuous stock cycling scanner (cycles every 8 seconds through the stocks)
+            setInterval(cycleStockScan, 8000);
+        }
+
+        async function loadDynamicTopSectors() {
+            try {
+                const res = await fetch('/api/groww/sectors-dynamic');
+                const data = await res.json();
+                if (data.success && data.sectors) {
+                    sectorsDict = data.sectors;
+                    renderSectorsUI(data.sectors);
+                }
+            } catch (e) {
+                log('Sector query error: ' + e.message, 'WARN');
+            }
+        }
+
+        function renderSectorsUI(sectors) {
+            const bullEl = document.getElementById('bullishSectors');
+            const bearEl = document.getElementById('bearishSectors');
+            bullEl.innerHTML = '';
+            bearEl.innerHTML = '';
+
+            const allSectors = Object.entries(sectors);
+            const bullishList = allSectors.filter(([_, sec]) => sec.is_bullish).slice(0, 3);
+            const bearishList = allSectors.filter(([_, sec]) => !sec.is_bullish).slice(0, 3);
+
+            // Rebuild active watchlist from the Top 3 Bullish + Top 3 Bearish sectors (total 30 stocks: 15 bull + 15 bear)
+            activeWatchlist = [];
+
+            bullishList.forEach(([name, sec], idx) => {
+                if (!currentSectorName) currentSectorName = name;
+                bullEl.appendChild(createSectorCard(name, sec, name === currentSectorName, idx + 1));
+                const stocks = sec.top_5 || sec.top_5_stocks || [];
+                stocks.forEach(stk => activeWatchlist.push({ sector: name, symbol: stk.symbol, bias: 'BULLISH' }));
+            });
+
+            bearishList.forEach(([name, sec], idx) => {
+                bearEl.appendChild(createSectorCard(name, sec, name === currentSectorName, idx + 1));
+                const stocks = sec.top_5 || sec.top_5_stocks || [];
+                stocks.forEach(stk => activeWatchlist.push({ sector: name, symbol: stk.symbol, bias: 'BEARISH' }));
+            });
+
+            // Find first stock with a confirmed entry, or default to first in watchlist
+            if (!currentStockSymbol && activeWatchlist.length > 0) {
+                currentStockSymbol = activeWatchlist[0].symbol;
+            }
+
+            renderStockChips();
+            if (currentStockSymbol) {
+                scanStock(currentStockSymbol);
+            }
+
+            // Immediately scan the 15 bull and 15 bear stocks to flag active entries right away
+            scanAllWatchlistCandidates();
+        }
+
+        function createSectorCard(name, sec, isSelected, rank) {
+            const total = (sec.gainers + sec.losers) || 1;
+            const gPct = (sec.gainers / total) * 100;
+            const lPct = (sec.losers / total) * 100;
+            const stocks = sec.top_5 || sec.top_5_stocks || [];
+
+            const card = document.createElement('div');
+            card.className = `sector-card ${isSelected ? 'selected' : ''}`;
+            card.onclick = () => selectSector(name);
+
+            card.innerHTML = `
+                <div class="sec-header-row">
+                    <span>#${rank} ${name} <span class="fno-tag">F&O</span></span>
+                    <span class="${sec.is_bullish ? 'green' : 'red'}">${sec.is_bullish ? '+' : ''}${sec.change.toFixed(2)}%</span>
+                </div>
+                <div class="ratio-label">
+                    <span class="green">Gainers: ${sec.gainers}</span>
+                    <span class="red">Losers: ${sec.losers}</span>
+                </div>
+                <div class="ratio-bar">
+                    <div class="bar-green" style="width: ${gPct}%"></div>
+                    <div class="bar-red" style="width: ${lPct}%"></div>
+                </div>
+                <div class="top-stocks-preview">
+                    Top 5 F&O: ${stocks.map(s => s.symbol.replace('.NS', '') + ' (' + (s.change >= 0 ? '+' : '') + s.change.toFixed(1) + '%)').join(', ')}
+                </div>
+            `;
+            return card;
+        }
+
+        function selectSector(name) {
+            currentSectorName = name;
+            const sec = sectorsDict[name];
+            if (sec) {
+                document.getElementById('selectedSectorTitle').innerText = `${name} (${sec.is_bullish ? '+' : ''}${sec.change.toFixed(2)}%)`;
+                renderSectorsUI(sectorsDict);
+                const stocks = sec.top_5 || sec.top_5_stocks || [];
+                if (stocks.length > 0) {
+                    selectStock(stocks[0].symbol);
+                }
+            }
+        }
+
+        function renderStockChips() {
+            const bar = document.getElementById('stockChipsBar');
+            bar.innerHTML = '';
+            const sec = sectorsDict[currentSectorName];
+            if (!sec) return;
+
+            const stocks = sec.top_5 || sec.top_5_stocks || [];
+            stocks.forEach(stk => {
+                const chip = document.createElement('div');
+                chip.id = 'chip_' + stk.symbol.replace('.NS', '');
+                chip.className = `stock-chip ${stk.symbol === currentStockSymbol ? 'active' : ''}`;
+                chip.innerText = `${stk.symbol.replace('.NS', '')} (${stk.change >= 0 ? '+' : ''}${stk.change.toFixed(1)}%)`;
+                chip.onclick = () => selectStock(stk.symbol);
+                bar.appendChild(chip);
+            });
+        }
+
+        function selectStock(stk) {
+            currentStockSymbol = stk;
+            document.getElementById('radarStockTitle').innerText = stk;
+            renderStockChips();
+            scanStock(stk);
+        }
+
+        async function scanAllWatchlistCandidates() {
+            for (let i = 0; i < Math.min(activeWatchlist.length, 10); i++) {
+                const item = activeWatchlist[i];
+                try {
+                    const res = await fetch(`/api/market/smc-scan?symbol=${encodeURIComponent(item.symbol)}`);
+                    const d = await res.json();
+                    if (d.success && d.smc) {
+                        const smc = d.smc;
+                        if (smc.action.includes('BUY') || smc.action.includes('SELL')) {
+                            log(`🎯 [IMMEDIATE ENTRY CONFIRMED] ${item.symbol} (${item.bias}) => ${smc.action} | SL: ₹${smc.suggested_sl} | TP1: ₹${smc.suggested_tp1}`, 'ENTRY');
+                            // If radar is on mid-range stock, switch to the confirmed stock!
+                            const curAction = document.getElementById('decisionAction').innerText;
+                            if (curAction.includes('NO TRADE') || curAction.includes('WAIT')) {
+                                currentSectorName = item.sector;
+                                document.getElementById('selectedSectorTitle').innerText = item.sector;
+                                selectStock(item.symbol);
+                            }
+                        }
+                    }
+                } catch (e) {}
+            }
+        }
+
+        // Automated continuous scanning loop through active watchlist
+        async function cycleStockScan() {
+            if (activeWatchlist.length === 0) return;
+            watchlistIndex = (watchlistIndex + 1) % activeWatchlist.length;
+            const target = activeWatchlist[watchlistIndex];
+            document.getElementById('cycleStatus').innerText = `Cycle: Auto-Scanning ${target.symbol.replace('.NS', '')} [${watchlistIndex + 1}/${activeWatchlist.length}]`;
+            
+            // Only update main radar if user hasn't explicitly clicked a different stock or during rotation
+            if (target.sector === currentSectorName) {
+                selectStock(target.symbol);
+            } else {
+                // Background scan log
+                try {
+                    const res = await fetch(`/api/market/smc-scan?symbol=${encodeURIComponent(target.symbol)}`);
+                    const data = await res.json();
+                    if (data.success && data.smc) {
+                        const smc = data.smc;
+                        if (smc.action.includes('BUY') || smc.action.includes('SELL')) {
+                            log(`🎯 [HIGH-PROBABILITY ENTRY FOUND] ${target.symbol} => ${smc.action} | Stop Loss: ₹${smc.suggested_sl} | Target: ₹${smc.suggested_tp1}`, 'ENTRY');
+                        } else {
+                            log(`[Scan: ${target.symbol}] Price: ₹${smc.current_price.toFixed(1)} - Inside range. No Order Block mitigation yet.`, 'NO_ENTRY');
+                        }
+                    }
+                } catch (e) {}
+            }
+        }
+
+        async function scanStock(symbol) {
+            log(`Deep SMC Scan running for ${symbol} (Order Blocks, Sweeps, Entry Check)...`, 'INFO');
+            try {
+                const res = await fetch(`/api/market/smc-scan?symbol=${encodeURIComponent(symbol)}`);
+                const data = await res.json();
+                if (data.success && data.smc) {
+                    const smc = data.smc;
+                    document.getElementById('valPrice').innerText = `₹${smc.current_price.toFixed(1)} (VWAP: ₹${smc.vwap})`;
+                    document.getElementById('valRsi').innerText = `RSI: ${smc.rsi} | Vol: ${smc.vol_multiplier}x`;
+                    document.getElementById('valEma').innerText = `EMA9: ${smc.ema9} | EMA21: ${smc.ema21}`;
+                    
+                    const score = smc.composite_score || 0;
+                    const prob = smc.probability_pct || 50;
+                    document.getElementById('valQuantScore').innerText = `Score: ${score}/100 (${prob}% Prob)`;
+                    const strats = (smc.triggered_strategies && smc.triggered_strategies.length > 0) ? smc.triggered_strategies.join(', ') : 'Price Action';
+                    document.getElementById('valStrategies').innerText = strats;
+
+                    const actEl = document.getElementById('decisionAction');
+                    const banner = document.getElementById('decisionBanner');
+                    actEl.innerText = smc.action;
+
+                    if (smc.action.includes('BUY')) {
+                        actEl.style.color = 'var(--accent-green)';
+                        banner.style.borderLeftColor = 'var(--accent-green)';
+                    } else if (smc.action.includes('SELL')) {
+                        actEl.style.color = 'var(--accent-red)';
+                        banner.style.borderLeftColor = 'var(--accent-red)';
+                    } else {
+                        actEl.style.color = '#94a3b8';
+                        banner.style.borderLeftColor = '#64748b';
+                    }
+
+                    document.getElementById('decisionSetup').innerText = smc.verdict;
+                    document.getElementById('decisionReason').innerText = smc.reasoning;
+
+                    if (smc.suggested_sl && smc.suggested_tp1) {
+                        document.getElementById('valTargets').innerText = `SL: ₹${smc.suggested_sl} | TP1: ₹${smc.suggested_tp1}`;
+                    } else {
+                        document.getElementById('valTargets').innerText = 'NO ENTRY (Wait for Order Block trigger)';
+                    }
+
+                    // Update Top Confirmed Trade Alert Box
+                    const alertBox = document.getElementById('confirmedTradeAlert');
+                    const alertDetails = document.getElementById('alertDetails');
+                    if (smc.action.includes('BUY') || smc.action.includes('SELL')) {
+                        alertBox.style.display = 'block';
+                        const isBuy = smc.action.includes('BUY');
+                        alertBox.style.borderColor = isBuy ? 'var(--accent-green)' : 'var(--accent-red)';
+                        alertBox.style.background = isBuy 
+                            ? 'linear-gradient(90deg, rgba(0,208,156,0.18), rgba(15,23,42,0.95))' 
+                            : 'linear-gradient(90deg, rgba(235,90,90,0.18), rgba(15,23,42,0.95))';
+                        alertDetails.innerHTML = `<span style="color:${isBuy ? 'var(--accent-green)' : 'var(--accent-red)'}">${isBuy ? 'BUY / CALL (CE)' : 'SELL / PUT (PE)'}</span> ${symbol.replace('.NS', '')} @ ₹${smc.current_price.toFixed(1)} &nbsp;|&nbsp; SL: <span style="color:#f59e0b;">₹${smc.suggested_sl}</span> &nbsp;|&nbsp; Target 1: <span style="color:#38bdf8;">₹${smc.suggested_tp1}</span> ${smc.suggested_tp2 ? '&nbsp;|&nbsp; Target 2: ₹' + smc.suggested_tp2 : ''}`;
+                    }
+
+                    if (smc.action.includes('BUY') || smc.action.includes('SELL')) {
+                        log(`🎯 [EXACT ENTRY ACTIVE] ${symbol} => ${smc.action} | Stop Loss: ₹${smc.suggested_sl} | TP: ₹${smc.suggested_tp1}`, 'ENTRY');
+                    } else {
+                        log(`[${symbol} Verdict] ${smc.action} - ${smc.reasoning}`, 'NO_ENTRY');
+                    }
+                }
+            } catch (e) {
+                log('SMC scan error: ' + e.message, 'WARN');
+            }
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>

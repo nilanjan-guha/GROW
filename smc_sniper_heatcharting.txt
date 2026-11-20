@@ -1,0 +1,444 @@
+//@version=6
+indicator("SMC Sniper Scalper & Order Flow Engine - HeatCharting V4", "SMC Sniper V4", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500)
+
+// ==================================================
+// 1. TIMEFRAME LOCK & AGGREGATION
+// ==================================================
+grp_tf          = "Timeframe Settings"
+lockTF          = input.bool(false, "Enable Timeframe Lock", group=grp_tf)
+lockedTF        = input.timeframe("60", "Locked Timeframe", group=grp_tf)
+tz              = input.string("Asia/Kolkata", "Aggregation Timezone", options=["Asia/Kolkata", "America/New_York", "Europe/London", "Etc/UTC"], group=grp_tf)
+
+// ==================================================
+// 2. SMART MONEY CONCEPTS & SWING SETTINGS
+// ==================================================
+grp_smc         = "Smart Money Concepts (SMC)"
+swingStrengthH  = input.int(5, "Swing High Strength", minval=1, maxval=50, group=grp_smc)
+swingStrengthL  = input.int(5, "Swing Low Strength", minval=1, maxval=50, group=grp_smc)
+showBOS         = input.bool(true, "Show BOS (Break of Structure)", group=grp_smc)
+showCHoCH       = input.bool(true, "Show CHoCH (Trend Reversal)", group=grp_smc)
+showOB          = input.bool(true, "Show Order Block Zones (Demand / Supply)", group=grp_smc)
+showSweeps      = input.bool(true, "Show Liquidity Sweeps (EQH / EQL Grabs)", group=grp_smc)
+
+// Styling
+shColor         = input.color(color.red, "Swing High Color", group=grp_smc)
+slColor         = input.color(color.aqua, "Swing Low Color", group=grp_smc)
+obDemandColor   = input.color(color.new(#089981, 75), "Order Block Demand Color", group=grp_smc)
+obSupplyColor   = input.color(color.new(#f23645, 75), "Order Block Supply Color", group=grp_smc)
+
+// ==================================================
+// 3. SNIPER SCALPER & 4-STAGE TP ENGINE (As in HeatCharting Screenshot)
+// ==================================================
+grp_engine      = "Order Flow & 4-Stage TP Engine"
+enableSniper    = input.bool(true, "Enable Sniper Engine", group=grp_engine)
+maxSpotRiskPts  = input.float(15.0, "Max Spot Risk Points (Nifty/Sensex)", minval=5.0, maxval=50.0, step=1.0, group=grp_engine)
+slAtrPadding    = input.float(0.25, "Tight SL Buffer (ATR Multiple)", minval=0.05, maxval=1.0, step=0.05, group=grp_engine)
+enableTrailing  = input.bool(true, "Auto Break-Even at TP1 & Trail", group=grp_engine)
+showHUDTable    = input.bool(true, "Show Top-Right Flow Engine HUD Table", group=grp_engine)
+
+// ==================================================
+// HELPER FUNCTIONS (Safe for HeatCharting compiler)
+// ==================================================
+f_minutes(string tf) =>
+    float result = na
+    string t = str.upper(tf)
+    if t == "D" or t == "1D"
+        result := 1440
+    else if t == "W" or t == "1W"
+        result := 10080
+    else if t == "M" or t == "1M"
+        result := 43200
+    else
+        float n = str.tonumber(tf)
+        if not na(n)
+            result := n
+    result
+
+f_period(string tf) =>
+    int result = na
+    string t = str.upper(tf)
+    int yy = year(time, tz)
+    int mm = month(time, tz)
+    int dd = dayofmonth(time, tz)
+    if t == "M" or t == "1M"
+        result := yy * 100 + mm
+    else if t == "W" or t == "1W"
+        int dow = dayofweek(time, tz)
+        int daysFromMonday = (dow + 5) % 7
+        int weekStart = time - daysFromMonday * 86400000
+        result := int(math.floor(weekStart / 604800000))
+    else if t == "D" or t == "1D"
+        result := yy * 10000 + mm * 100 + dd
+    else
+        float mins = f_minutes(tf)
+        if not na(mins) and mins > 0
+            int minuteOfDay = hour(time, tz) * 60 + minute(time, tz)
+            int bucket = int(math.floor(minuteOfDay / mins))
+            result := (yy * 10000 + mm * 100 + dd) * 10000 + bucket
+    result
+
+// ==================================================
+// SWING AGGREGATION ENGINE
+// ==================================================
+f_swings(string tf, int highStrength, int lowStrength, bool enabled) =>
+    var float aggH = na
+    var float aggL = na
+    var int aggX = na
+    var int lastPeriod = na
+
+    var array<float> highs = array.new_float()
+    var array<float> lows = array.new_float()
+    var array<int> indexes = array.new_int()
+
+    float newHigh = na
+    float newLow = na
+    int newHighX = na
+    int newLowX = na
+
+    if enabled
+        int p = f_period(tf)
+        if not na(p)
+            if na(lastPeriod)
+                aggH := high
+                aggL := low
+                aggX := bar_index
+                lastPeriod := p
+            else if p != lastPeriod
+                array.push(highs, aggH)
+                array.push(lows, aggL)
+                array.push(indexes, aggX)
+
+                int n = array.size(highs)
+                if n >= highStrength * 2 + 1
+                    int pivot = n - 1 - highStrength
+                    float candidate = array.get(highs, pivot)
+                    bool found = true
+                    for i = 1 to highStrength
+                        if candidate <= array.get(highs, pivot - i) or candidate <= array.get(highs, pivot + i)
+                            found := false
+                    if found
+                        newHigh := candidate
+                        newHighX := array.get(indexes, pivot)
+
+                if n >= lowStrength * 2 + 1
+                    int pivot = n - 1 - lowStrength
+                    float candidate = array.get(lows, pivot)
+                    bool found = true
+                    for i = 1 to lowStrength
+                        if candidate >= array.get(lows, pivot - i) or candidate >= array.get(lows, pivot + i)
+                            found := false
+                    if found
+                        newLow := candidate
+                        newLowX := array.get(indexes, pivot)
+
+                int keep = math.max(highStrength, lowStrength) * 2 + 3
+                while array.size(highs) > keep
+                    array.shift(highs)
+                    array.shift(lows)
+                    array.shift(indexes)
+
+                aggH := high
+                aggL := low
+                aggX := bar_index
+                lastPeriod := p
+            else
+                aggH := math.max(aggH, high)
+                aggL := math.min(aggL, low)
+
+    [newHigh, newHighX, newLow, newLowX]
+
+// ==================================================
+// TIMEFRAME VALIDATION
+// ==================================================
+chartMinutes  = f_minutes(timeframe.period)
+activeTF      = lockTF ? lockedTF : timeframe.period
+activeMinutes = f_minutes(activeTF)
+validTF       = not na(chartMinutes) and not na(activeMinutes) and activeMinutes >= chartMinutes
+mainOn        = validTF
+
+// Compute Swings
+[mainH, mainHX, mainL, mainLX] = f_swings(activeTF, swingStrengthH, swingStrengthL, mainOn)
+
+// Persistent Active Swings
+var float curSwingHigh = na
+var float curSwingLow  = na
+var int   curSwingHighX = na
+var int   curSwingLowX  = na
+
+var line  curHighLine  = na
+var line  curLowLine   = na
+
+if not na(mainH)
+    curSwingHigh := mainH
+    curSwingHighX := mainHX
+    if not na(curHighLine)
+        line.delete(curHighLine)
+    curHighLine := line.new(curSwingHighX, curSwingHigh, bar_index, curSwingHigh, color=shColor, width=2, style=line.style_solid)
+
+if not na(mainL)
+    curSwingLow := mainL
+    curSwingLowX := mainLX
+    if not na(curLowLine)
+        line.delete(curLowLine)
+    curLowLine := line.new(curSwingLowX, curSwingLow, bar_index, curSwingLow, color=slColor, width=2, style=line.style_solid)
+
+// Extend current lines to live bar
+if not na(curHighLine)
+    line.set_x2(curHighLine, bar_index)
+if not na(curLowLine)
+    line.set_x2(curLowLine, bar_index)
+
+// ==================================================
+// 4. SMART MONEY CONCEPTS ENGINE (BOS, CHoCH, Sweeps, OB)
+// ==================================================
+atr14   = ta.atr(14)
+ema50   = ta.ema(close, 50)
+ema200  = ta.ema(close, 200)
+
+var int trendBias = 0 // +1: Bullish, -1: Bearish
+
+bool isBOSBull   = false
+bool isBOSBear   = false
+bool isCHoCHBull = false
+bool isCHoCHBear = false
+
+// High Break (BOS or CHoCH)
+if not na(curSwingHigh) and ta.crossover(close, curSwingHigh)
+    if trendBias == -1
+        isCHoCHBull := true
+        trendBias := 1
+        if showCHoCH
+            label.new(bar_index, high, "CHoCH", color=color(na), textcolor=color.green, style=label.style_label_down, size=size.tiny)
+    else
+        isBOSBull := true
+        trendBias := 1
+        if showBOS
+            label.new(bar_index, high, "BOS", color=color(na), textcolor=color.green, style=label.style_label_down, size=size.tiny)
+
+    // Store Bullish Order Block (Demand)
+    if showOB
+        box.new(left=curSwingHighX, top=math.max(open[1], close[1]), right=bar_index + 12, bottom=low[1], bgcolor=obDemandColor, border_color=color.teal)
+
+    curSwingHigh := na
+
+// Low Break (BOS or CHoCH)
+if not na(curSwingLow) and ta.crossunder(close, curSwingLow)
+    if trendBias == 1
+        isCHoCHBear := true
+        trendBias := -1
+        if showCHoCH
+            label.new(bar_index, low, "CHoCH", color=color(na), textcolor=color.red, style=label.style_label_up, size=size.tiny)
+    else
+        isBOSBear := true
+        trendBias := -1
+        if showBOS
+            label.new(bar_index, low, "BOS", color=color(na), textcolor=color.red, style=label.style_label_up, size=size.tiny)
+
+    // Store Bearish Order Block (Supply)
+    if showOB
+        box.new(left=curSwingLowX, top=high[1], right=bar_index + 12, bottom=math.min(open[1], close[1]), bgcolor=obSupplyColor, border_color=color.maroon)
+
+    curSwingLow := na
+
+// Liquidity Sweeps (Pierced level with wick rejection)
+bodySize  = math.abs(close - open)
+lowerWick = math.min(close, open) - low
+upperWick = high - math.max(close, open)
+
+sweepBull = not na(curSwingLow) and (low < curSwingLow) and (close > curSwingLow) and (lowerWick >= bodySize * 0.35)
+sweepBear = not na(curSwingHigh) and (high > curSwingHigh) and (close < curSwingHigh) and (upperWick >= bodySize * 0.35)
+
+if showSweeps and sweepBull
+    label.new(bar_index, low, "💧 SSL SWEEP", color=color.teal, textcolor=color.white, style=label.style_label_up, size=size.tiny)
+if showSweeps and sweepBear
+    label.new(bar_index, high, "💧 BSL SWEEP", color=color.maroon, textcolor=color.white, style=label.style_label_down, size=size.tiny)
+
+// Order Flow Strength Metric (-100% to +100%)
+volSma20 = ta.sma(volume, 20)
+flowStrength = ((close - ema50) / atr14) * 15.0 + (close > open ? 15.0 : -15.0)
+flowStrength := math.max(-100.0, math.min(100.0, flowStrength))
+
+// ==================================================
+// 5. TRADE EXECUTION & 4-STAGE TP TARGET LEVELS
+// ==================================================
+var bool  inTrade         = false
+var int   tradeDir        = 0 // 1: Buy, -1: Sell
+var float entryPrice      = na
+var float stopLossPrice   = na
+var float tp1Price        = na
+var float tp2Price        = na
+var float tp3Price        = na
+var float tp4Price        = na
+var float unitRisk        = na
+var string lastSignalType = "NONE"
+
+// Active Lines and Labels on Chart
+var line  entryLine = na
+var line  slLine    = na
+var line  tp1Line   = na
+var line  tp2Line   = na
+var line  tp3Line   = na
+var line  tp4Line   = na
+
+var label entryLbl  = na
+var label slLbl     = na
+var label tp1Lbl    = na
+var label tp2Lbl    = na
+var label tp3Lbl    = na
+var label tp4Lbl    = na
+
+// Triggers
+candleConfirmed = barstate.isconfirmed or barstate.islastconfirmedhistory
+buyTrigger  = candleConfirmed and (isBOSBull or isCHoCHBull or sweepBull) and (close > ema50 or trendBias == 1) and (close > open)
+sellTrigger = candleConfirmed and (isBOSBear or isCHoCHBear or sweepBear) and (close < ema50 or trendBias == -1) and (close < open)
+
+if enableSniper and not inTrade
+    if buyTrigger
+        inTrade         := true
+        tradeDir        := 1
+        entryPrice      := close
+        lastSignalType  := sweepBull ? "SSL SWEEP" : (isCHoCHBull ? "CHoCH" : "BOS")
+
+        // Tight Protected SL
+        calcSL          = low - (atr14 * slAtrPadding)
+        stopLossPrice   := math.max(calcSL, entryPrice - maxSpotRiskPts)
+        unitRisk        := entryPrice - stopLossPrice
+
+        tp1Price        := entryPrice + (unitRisk * 1.0)
+        tp2Price        := entryPrice + (unitRisk * 2.0)
+        tp3Price        := entryPrice + (unitRisk * 3.0)
+        tp4Price        := entryPrice + (unitRisk * 4.0)
+
+        // Draw Lines
+        entryLine := line.new(bar_index, entryPrice, bar_index + 15, entryPrice, color=color.white, width=1, style=line.style_dashed)
+        slLine    := line.new(bar_index, stopLossPrice, bar_index + 15, stopLossPrice, color=color.red, width=2, style=line.style_solid)
+        tp1Line   := line.new(bar_index, tp1Price, bar_index + 15, tp1Price, color=color.green, width=1, style=line.style_dotted)
+        tp2Line   := line.new(bar_index, tp2Price, bar_index + 15, tp2Price, color=color.green, width=1, style=line.style_dotted)
+        tp3Line   := line.new(bar_index, tp3Price, bar_index + 15, tp3Price, color=color.green, width=1, style=line.style_dotted)
+        tp4Line   := line.new(bar_index, tp4Price, bar_index + 15, tp4Price, color=color.green, width=2, style=line.style_solid)
+
+        // Draw Labels
+        entryLbl := label.new(bar_index + 2, entryPrice, "Entry: " + str.tostring(entryPrice, "#.##"), style=label.style_label_left, color=color.gray, textcolor=color.white, size=size.tiny)
+        slLbl    := label.new(bar_index + 2, stopLossPrice, "SL: " + str.tostring(stopLossPrice, "#.##"), style=label.style_label_left, color=color.red, textcolor=color.white, size=size.tiny)
+        tp1Lbl   := label.new(bar_index + 2, tp1Price, "TP 1 (1:1): " + str.tostring(tp1Price, "#.##"), style=label.style_label_left, color=color.green, textcolor=color.white, size=size.tiny)
+        tp2Lbl   := label.new(bar_index + 2, tp2Price, "TP 2 (1:2): " + str.tostring(tp2Price, "#.##"), style=label.style_label_left, color=color.green, textcolor=color.white, size=size.tiny)
+        tp3Lbl   := label.new(bar_index + 2, tp3Price, "TP 3 (1:3): " + str.tostring(tp3Price, "#.##"), style=label.style_label_left, color=color.green, textcolor=color.white, size=size.tiny)
+        tp4Lbl   := label.new(bar_index + 2, tp4Price, "TP 4 (1:4): " + str.tostring(tp4Price, "#.##"), style=label.style_label_left, color=color.green, textcolor=color.white, size=size.tiny)
+
+    else if sellTrigger
+        inTrade         := true
+        tradeDir        := -1
+        entryPrice      := close
+        lastSignalType  := sweepBear ? "BSL SWEEP" : (isCHoCHBear ? "CHoCH" : "BOS")
+
+        // Tight Protected SL
+        calcSL          = high + (atr14 * slAtrPadding)
+        stopLossPrice   := math.min(calcSL, entryPrice + maxSpotRiskPts)
+        unitRisk        := stopLossPrice - entryPrice
+
+        tp1Price        := entryPrice - (unitRisk * 1.0)
+        tp2Price        := entryPrice - (unitRisk * 2.0)
+        tp3Price        := entryPrice - (unitRisk * 3.0)
+        tp4Price        := entryPrice - (unitRisk * 4.0)
+
+        // Draw Lines
+        entryLine := line.new(bar_index, entryPrice, bar_index + 15, entryPrice, color=color.white, width=1, style=line.style_dashed)
+        slLine    := line.new(bar_index, stopLossPrice, bar_index + 15, stopLossPrice, color=color.red, width=2, style=line.style_solid)
+        tp1Line   := line.new(bar_index, tp1Price, bar_index + 15, tp1Price, color=color.green, width=1, style=line.style_dotted)
+        tp2Line   := line.new(bar_index, tp2Price, bar_index + 15, tp2Price, color=color.green, width=1, style=line.style_dotted)
+        tp3Line   := line.new(bar_index, tp3Price, bar_index + 15, tp3Price, color=color.green, width=1, style=line.style_dotted)
+        tp4Line   := line.new(bar_index, tp4Price, bar_index + 15, tp4Price, color=color.green, width=2, style=line.style_solid)
+
+        // Draw Labels
+        entryLbl := label.new(bar_index + 2, entryPrice, "Entry: " + str.tostring(entryPrice, "#.##"), style=label.style_label_left, color=color.gray, textcolor=color.white, size=size.tiny)
+        slLbl    := label.new(bar_index + 2, stopLossPrice, "SL: " + str.tostring(stopLossPrice, "#.##"), style=label.style_label_left, color=color.red, textcolor=color.white, size=size.tiny)
+        tp1Lbl   := label.new(bar_index + 2, tp1Price, "TP 1 (1:1): " + str.tostring(tp1Price, "#.##"), style=label.style_label_left, color=color.green, textcolor=color.white, size=size.tiny)
+        tp2Lbl   := label.new(bar_index + 2, tp2Price, "TP 2 (1:2): " + str.tostring(tp2Price, "#.##"), style=label.style_label_left, color=color.green, textcolor=color.white, size=size.tiny)
+        tp3Lbl   := label.new(bar_index + 2, tp3Price, "TP 3 (1:3): " + str.tostring(tp3Price, "#.##"), style=label.style_label_left, color=color.green, textcolor=color.white, size=size.tiny)
+        tp4Lbl   := label.new(bar_index + 2, tp4Price, "TP 4 (1:4): " + str.tostring(tp4Price, "#.##"), style=label.style_label_left, color=color.green, textcolor=color.white, size=size.tiny)
+
+// Active Trade Management & Progression
+if inTrade
+    if not na(entryLine)
+        line.set_x2(entryLine, bar_index + 5)
+    if not na(slLine)
+        line.set_x2(slLine, bar_index + 5)
+    if not na(tp1Line)
+        line.set_x2(tp1Line, bar_index + 5)
+    if not na(tp2Line)
+        line.set_x2(tp2Line, bar_index + 5)
+    if not na(tp3Line)
+        line.set_x2(tp3Line, bar_index + 5)
+    if not na(tp4Line)
+        line.set_x2(tp4Line, bar_index + 5)
+
+    if tradeDir == 1
+        // Auto Break-Even and Multi-Stage Trailing Stop
+        if enableTrailing and unitRisk > 0
+            if high >= tp2Price and stopLossPrice < tp1Price
+                stopLossPrice := tp1Price
+                line.set_y1(slLine, stopLossPrice)
+                line.set_y2(slLine, stopLossPrice)
+            else if high >= tp1Price and stopLossPrice < entryPrice
+                stopLossPrice := entryPrice
+                line.set_y1(slLine, stopLossPrice)
+                line.set_y2(slLine, stopLossPrice)
+
+        if high >= tp4Price
+            inTrade := false
+            label.new(bar_index, tp4Price, "🎯 ALL TPs HIT (+1:4)", color=color.green, textcolor=color.white, style=label.style_label_down, size=size.tiny)
+        else if low <= stopLossPrice
+            inTrade := false
+            label.new(bar_index, stopLossPrice, stopLossPrice >= entryPrice ? "🔒 TRAIL EXIT (+LOCK)" : "🛑 SL EXIT", color=stopLossPrice >= entryPrice ? color.teal : color.red, textcolor=color.white, style=label.style_label_up, size=size.tiny)
+
+    else if tradeDir == -1
+        // Auto Break-Even and Multi-Stage Trailing Stop
+        if enableTrailing and unitRisk > 0
+            if low <= tp2Price and stopLossPrice > tp1Price
+                stopLossPrice := tp1Price
+                line.set_y1(slLine, stopLossPrice)
+                line.set_y2(slLine, stopLossPrice)
+            else if low <= tp1Price and stopLossPrice > entryPrice
+                stopLossPrice := entryPrice
+                line.set_y1(slLine, stopLossPrice)
+                line.set_y2(slLine, stopLossPrice)
+
+        if low <= tp4Price
+            inTrade := false
+            label.new(bar_index, tp4Price, "🎯 ALL TPs HIT (+1:4)", color=color.green, textcolor=color.white, style=label.style_label_up, size=size.tiny)
+        else if high >= stopLossPrice
+            inTrade := false
+            label.new(bar_index, stopLossPrice, stopLossPrice <= entryPrice ? "🔒 TRAIL EXIT (+LOCK)" : "🛑 SL EXIT", color=stopLossPrice <= entryPrice ? color.teal : color.red, textcolor=color.white, style=label.style_label_down, size=size.tiny)
+
+// ==================================================
+// 6. TOP-RIGHT ORDER FLOW ENGINE HUD TABLE (Exact Match to Your Image)
+// ==================================================
+var table hud = table.new(position.top_right, 2, 8, bgcolor=color.new(#131722, 10), border_color=color.new(#2a2e39, 40), border_width=1)
+
+if showHUDTable and barstate.islast
+    table.cell(hud, 0, 0, "LTF OR Flow Engine", bgcolor=color.new(#1e222d, 0), text_color=color.white, text_size=size.small)
+    table.cell(hud, 1, 0, "Multi-TP Levels", bgcolor=color.new(#1e222d, 0), text_color=color.teal, text_size=size.small)
+
+    table.cell(hud, 0, 1, "Flow Strength", text_color=color.silver, text_size=size.small)
+    table.cell(hud, 1, 1, str.tostring(flowStrength, "#.#") + "%", 
+               text_color = flowStrength > 0 ? color.teal : color.red, text_size=size.small)
+
+    table.cell(hud, 0, 2, "Last Signal", text_color=color.silver, text_size=size.small)
+    table.cell(hud, 1, 2, inTrade ? (tradeDir == 1 ? "BUY (" + lastSignalType + ")" : "SELL (" + lastSignalType + ")") : "SCANNING...", 
+               bgcolor = inTrade ? (tradeDir == 1 ? color.new(color.teal, 30) : color.new(color.maroon, 30)) : color(na),
+               text_color = inTrade ? color.white : color.yellow, text_size=size.small)
+
+    table.cell(hud, 0, 3, "Entry", text_color=color.silver, text_size=size.small)
+    table.cell(hud, 1, 3, inTrade ? str.tostring(entryPrice, "#.##") : "--", text_color=color.white, text_size=size.small)
+
+    table.cell(hud, 0, 4, "Stop Loss", text_color=color.silver, text_size=size.small)
+    table.cell(hud, 1, 4, inTrade ? str.tostring(stopLossPrice, "#.##") : "--", text_color=color.red, text_size=size.small)
+
+    table.cell(hud, 0, 5, "TP 1 (1:1)", text_color=color.silver, text_size=size.small)
+    table.cell(hud, 1, 5, inTrade ? str.tostring(tp1Price, "#.##") : "--", text_color=color.teal, text_size=size.small)
+
+    table.cell(hud, 0, 6, "TP 2 (1:2)", text_color=color.silver, text_size=size.small)
+    table.cell(hud, 1, 6, inTrade ? str.tostring(tp2Price, "#.##") : "--", text_color=color.teal, text_size=size.small)
+
+    table.cell(hud, 0, 7, "TP 3 / TP 4", text_color=color.silver, text_size=size.small)
+    table.cell(hud, 1, 7, inTrade ? str.tostring(tp3Price, "#.##") + " / " + str.tostring(tp4Price, "#.##") : "--", text_color=color.lime, text_size=size.small)
