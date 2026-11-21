@@ -182,8 +182,8 @@ htfPermitsShort = not useHtfConfluence or (htf15TrendState <= 0 and (close <= (n
 
 // ADX & Chop Filter on 1-min to block low-momentum sideways chop / drift
 [plusDI, minusDI, adxVal] = ta.dmi(14, 14)
-isTrendingMarket = adxVal >= 18.0
-isSqueeze = (ta.bbw(close, 20, 2) < ta.sma(ta.bbw(close, 20, 2), 20) * 0.6) // Volatility squeeze filter
+isTrendingMarket = adxVal >= 14.0 // Balanced threshold to capture explosive option rallies from base
+isSqueeze = (ta.bbw(close, 20, 2) < ta.sma(ta.bbw(close, 20, 2), 20) * 0.45) // Tighter squeeze threshold so initial breakouts aren't blocked
 
 // 15M Visual Zones rendering
 var box htfBullBox = na
@@ -788,17 +788,24 @@ bearTrend = not trendFilterEma or (close < ema200 and ema50 <= ema200)
 
 // In addition to shift / sweep, check for pullback into demand/discount to catch continuation pullbacks:
 // When price touches an active bullish order block or pulls back after BOS
-obDemandTouch = not na(internalLow.currentLevel) and (low <= internalLow.currentLevel + (atr14 * 0.5)) and (close > open)
-obSupplyTouch = not na(internalHigh.currentLevel) and (high >= internalHigh.currentLevel - (atr14 * 0.5)) and (close < open)
+obDemandTouch = not na(internalLow.currentLevel) and (low <= internalLow.currentLevel + (atr14 * 0.75)) and (close > open)
+obSupplyTouch = not na(internalHigh.currentLevel) and (high >= internalHigh.currentLevel - (atr14 * 0.75)) and (close < open)
+
+// Structural Order Block Retest: Price tests the high of the most recent internal/swing bullish order block
+bool anyBullObRetest = false
+if internalOrderBlocks.size() > 0
+    recentOb = internalOrderBlocks.get(0)
+    if recentOb.bias == BULLISH and low <= recentOb.barHigh and close >= recentOb.barLow and close > open
+        anyBullObRetest := true
 
 // Major HTF 15M Reversal override: When price sweeps 15M low or hits 15M discount demand with bullish candle
 htfMajorBuy  = useHtfConfluence and (htfSweepLow or (htfInDiscount and sweepLow)) and (close > open)
 htfMajorSell = useHtfConfluence and (htfSweepHigh or (not htfInDiscount and sweepHigh)) and (close < open)
 
 // Complete Trigger: Strict 15M Direction + Active Trending/Expansion Filter + Volume Surge
-// Blocks entry during choppy squeeze periods and prevents entering counter to 15M trend
+// Catches: 1) Bullish Structure Shifts (BOS/CHoCH), 2) Liquidity Sweeps, 3) OB Demand Pullbacks & Direct Order Block Retests
 sniperBuyTrigger  = not isSqueeze and isTrendingMarket and hasVolDisplacement and htfPermitsLong and 
-                    ((bullTrend and (triggeredBullShift or (sweepLow and close > open) or obDemandTouch)) or htfMajorBuy)
+                    ((bullTrend and (triggeredBullShift or (sweepLow and close > open) or obDemandTouch or anyBullObRetest)) or htfMajorBuy)
 
 // In Option Buyer Mode, selling is DISABLED because retail option buyers ONLY buy CE or buy PE!
 sniperSellTrigger = not tradeModeOptionBuyer and not isSqueeze and isTrendingMarket and hasVolDisplacement and htfPermitsShort and 
