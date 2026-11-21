@@ -111,6 +111,7 @@ discountZoneColorInput          = input.color(  GREEN,      'Discount Zone',    
 
 // Sniper Scalp Engine Inputs
 enableSniperEngine              = input.bool(   true,       'Enable Sniper Retest Engine', group = SNIPER_GROUP)
+tradeModeOptionBuyer            = input.bool(   true,       'Option Buyer Mode (BUY ONLY on Call/Put Charts)', group = SNIPER_GROUP, tooltip = 'When enabled, only takes BUY setups on the current chart (CALL or PUT). Shorting/Selling premium is disabled so you only BUY momentum.')
 sniperRRRatio                   = input.float(  3.0,        'Sniper Target R:R Ratio (3, 4, 5, 6+)', minval=1.5, step=0.5, group = SNIPER_GROUP)
 sniperRetraceRatio              = input.float(  0.5,        'Discount Retracement Entry (0.5 = 50%)', minval=0.2, maxval=0.79, step=0.05, group = SNIPER_GROUP)
 sniperMaxWaitBars               = input.int(    12,         'Max Wait Bars for Retest Fill', minval=3, maxval=30, group = SNIPER_GROUP)
@@ -799,7 +800,8 @@ htfMajorSell = useHtfConfluence and (htfSweepHigh or (not htfInDiscount and swee
 sniperBuyTrigger  = not isSqueeze and isTrendingMarket and hasVolDisplacement and htfPermitsLong and 
                     ((bullTrend and (triggeredBullShift or (sweepLow and close > open) or obDemandTouch)) or htfMajorBuy)
 
-sniperSellTrigger = not isSqueeze and isTrendingMarket and hasVolDisplacement and htfPermitsShort and 
+// In Option Buyer Mode, selling is DISABLED because retail option buyers ONLY buy CE or buy PE!
+sniperSellTrigger = not tradeModeOptionBuyer and not isSqueeze and isTrendingMarket and hasVolDisplacement and htfPermitsShort and 
                     ((bearTrend and (triggeredBearShift or (sweepHigh and close < open) or obSupplyTouch)) or htfMajorSell)
 
 // Arm Pending Sniper Orders on Major Shift, Sweeps & OB Retests
