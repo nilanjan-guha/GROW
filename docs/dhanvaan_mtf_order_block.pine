@@ -121,26 +121,32 @@ showSniperScoreboard            = input.bool(   true,       'Show Top-Right Scal
 // Global ATR & Trend calculations
 atr14 = ta.atr(14)
 microBuffer = atr14 * 0.15
-trendFilterEma   = input.bool(false, 'Strict 200 EMA Filter (Disabled for Options to catch 30->350 base runs)', group = SNIPER_GROUP)
+trendFilterEma   = input.bool(true, 'Trend Alignment (HTF & 1M Direction)', group = SNIPER_GROUP)
 ema50  = ta.ema(close, 50)
 ema200 = ta.ema(close, 200)
-useHtfConfluence = input.bool(false, 'Strict 15M Gate (Disabled for Direct 1M SMC Retest Execution)', group = SNIPER_GROUP)
-htfTimeframe     = input.timeframe('15', 'HTF Timeframe', group = SNIPER_GROUP)
-minRiskAtr       = input.float(0.3, 'Minimum Swing Size / Risk (ATR Multiple)', minval=0.1, step=0.1, group = SNIPER_GROUP)
+useHtfConfluence = input.bool(true, 'Use 15M HTF Trend & Zones (Quality 3-4 Trades Only)', group = SNIPER_GROUP, tooltip = 'Uses 15-minute timeframe to determine the master trend and Order Block zones. Trades on the 1-minute chart are taken ONLY when 1M executes a reversal pullback or continuation aligned with the 15M trend.')
+htfTimeframe     = input.timeframe('15', 'HTF Master Timeframe', group = SNIPER_GROUP)
+minRiskAtr       = input.float(0.6, 'Minimum Risk / Swing Quality (ATR Multiple)', minval=0.2, step=0.1, group = SNIPER_GROUP, tooltip = 'Filters out minor 1m micro-noise; only meaningful structural swings qualify.')
 trailToBE        = input.bool(true, 'Move SL to Break-Even at 1.5 RR (Locks In Profit)', group = SNIPER_GROUP)
 targetOppositeSwing = input.bool(false, 'Target Opposite Swing High/Low (Major Target)', group = SNIPER_GROUP)
-cooldownBarsInput   = input.int(2, 'Trade Cooldown Bars (Prevents Chop Spam)', minval=1, maxval=20, group = SNIPER_GROUP)
+cooldownBarsInput   = input.int(10, 'Trade Cooldown Bars (Quality 3-4 Setups/Day)', minval=5, maxval=50, group = SNIPER_GROUP, tooltip = 'Prevents taking rapid repetitive trades in tight consolidate zones. Ensures 3-4 high-quality trades per intraday session.')
 
-// HTF calculations for 15M discount/premium and sweep zones
+// HTF calculations for 15M trend, zones, and Order Block levels
+htfOpen  = request.security(syminfo.tickerid, htfTimeframe, open[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
 htfHigh  = request.security(syminfo.tickerid, htfTimeframe, high[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
 htfLow   = request.security(syminfo.tickerid, htfTimeframe, low[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
 htfClose = request.security(syminfo.tickerid, htfTimeframe, close[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-htfEma   = request.security(syminfo.tickerid, htfTimeframe, ta.ema(close, 50), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+htfEma50 = request.security(syminfo.tickerid, htfTimeframe, ta.ema(close, 50), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+htfEma20 = request.security(syminfo.tickerid, htfTimeframe, ta.ema(close, 20), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+
+// 15M Master Trend: Bullish when 15M Close > 15M EMA or 15M EMA20 > EMA50
+bool htfBullishTrend = htfClose >= htfEma50 or htfEma20 >= htfEma50 or htfClose >= htfOpen
+bool htfBearishTrend = htfClose < htfEma50 or htfEma20 < htfEma50
 
 // 15M HTF Liquidity Sweep & Discount Rejection
-htfSweepLow  = (low < htfLow) and (close > htfLow)
-htfSweepHigh = (high > htfHigh) and (close < htfHigh)
-htfInDiscount = close < htfEma
+htfSweepLow   = (low < htfLow) and (close > htfLow)
+htfSweepHigh  = (high > htfHigh) and (close < htfHigh)
+htfInDiscount = close <= ((htfHigh + htfLow) / 2.0) // 15M equilibrium discount zone
 
 //---------------------------------------------------------------------------------------------------------------------}
 // DATA STRUCTURES
@@ -723,12 +729,14 @@ sweepSwingLow  = not na(swingLow.currentLevel) and low < swingLow.currentLevel a
 sweepHigh = sweepIntHigh or sweepSwingHigh
 sweepLow  = sweepIntLow or sweepSwingLow
 
-// Higher Trend definition: In SMC, a bullish market structure is defined by close above EMA 50 OR making Bullish BOS/CHoCH
-bullTrend = not trendFilterEma or (close >= ema50) or (internalTrend.bias == BULLISH)
-bearTrend = not trendFilterEma or (close <= ema50) or (internalTrend.bias == BEARISH)
+// Higher Trend definition: In SMC, a bullish master structure is defined by 15M trend + 1M structural alignment
+masterBullTrend = not useHtfConfluence or htfBullishTrend
+masterBearTrend = not useHtfConfluence or htfBearishTrend
 
-// In addition to shift / sweep, check for pullback into demand/discount to catch continuation pullbacks:
-// When price touches an active bullish order block or pulls back after BOS
+bullTrend = masterBullTrend and (not trendFilterEma or (close >= ema50) or (internalTrend.bias == BULLISH))
+bearTrend = masterBearTrend and (not trendFilterEma or (close <= ema50) or (internalTrend.bias == BEARISH))
+
+// 1M Pullback & Reversal Confirmation: Price tests 1M/15M Demand Order Block or pulls back into discount after BOS
 obDemandTouch = not na(internalLow.currentLevel) and (low <= internalLow.currentLevel + (atr14 * 0.75)) and (close > open)
 obSupplyTouch = not na(internalHigh.currentLevel) and (high >= internalHigh.currentLevel - (atr14 * 0.75)) and (close < open)
 
@@ -739,13 +747,14 @@ if internalOrderBlocks.size() > 0
     if recentOb.bias == BULLISH and low <= recentOb.barHigh and close >= recentOb.barLow and close > open
         anyBullObRetest := true
 
-// Major HTF 15M Reversal override: When price sweeps 15M low or hits 15M discount demand with bullish candle
-htfMajorBuy  = useHtfConfluence and (htfSweepLow or (htfInDiscount and sweepLow)) and (close > open)
-htfMajorSell = useHtfConfluence and (htfSweepHigh or (not htfInDiscount and sweepHigh)) and (close < open)
+// Major HTF 15M Reversal / Pullback: 15M Demand Discount or Liquidity Sweep turning green
+htfMajorBuy  = useHtfConfluence and masterBullTrend and (htfSweepLow or (htfInDiscount and sweepLow) or anyBullObRetest) and (close > open)
+htfMajorSell = useHtfConfluence and masterBearTrend and (htfSweepHigh or (not htfInDiscount and sweepHigh)) and (close < open)
 
-// Complete Trigger: Pure SMC Concept - Shift (BOS/CHoCH) or Demand Order Block Retest
-sniperBuyTrigger  = (triggeredBullShift or anyBullObRetest or (sweepLow and close > open) or obDemandTouch or htfMajorBuy)
-sniperSellTrigger = not tradeModeOptionBuyer and (triggeredBearShift or (sweepHigh and close < open) or obSupplyTouch or htfMajorSell)
+// 1M Reversal / Continuation Trigger Aligned with 15M Trend:
+// Takes trade ONLY when 15M trend is bullish AND 1M produces a confirmed reversal pullback (sweepLow, OB tap, or BOS continuation)
+sniperBuyTrigger  = masterBullTrend and (triggeredBullShift or anyBullObRetest or (sweepLow and close > open) or obDemandTouch or htfMajorBuy)
+sniperSellTrigger = not tradeModeOptionBuyer and masterBearTrend and (triggeredBearShift or (sweepHigh and close < open) or obSupplyTouch or htfMajorSell)
 
 // Direct Immediate Fill on verified SMC Order Block Retest or Reversal Wick
 directSmcFill = anyBullObRetest and (close > open)
