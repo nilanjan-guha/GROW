@@ -382,7 +382,7 @@
                 const borderBottom = idx < sortedTrades.length - 1 ? 'border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 6px; margin-bottom: 6px;' : '';
 
                 html += `
-                <div style="${borderBottom}">
+                <div style="cursor:pointer; ${borderBottom}" onclick="selectStock('${s}')" title="Click to open radar for ${s}">
                     <span style="color:${isBuy ? 'var(--accent-green)' : 'var(--accent-red)'}">🔥 #${idx + 1} ${isBuy ? 'BUY / CALL (CE)' : 'SELL / PUT (PE)'}</span> 
                     <strong>${s.replace('.NS', '')}</strong> @ ₹${Number(smc.current_price).toFixed(1)} 
                     &nbsp;|&nbsp; SL: <span style="color:#f59e0b;">₹${smc.suggested_sl}</span> 
