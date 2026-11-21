@@ -113,7 +113,8 @@ discountZoneColorInput          = input.color(  GREEN,      'Discount Zone',    
 enableSniperEngine              = input.bool(   true,       'Enable Sniper Retest Engine', group = SNIPER_GROUP)
 tradeModeOptionBuyer            = input.bool(   true,       'Option Buyer Mode (BUY ONLY on Call/Put Charts)', group = SNIPER_GROUP, tooltip = 'When enabled, only takes BUY setups on the current chart (CALL or PUT). Shorting/Selling premium is disabled so you only BUY momentum.')
 entryExecutionType              = input.string( 'Retest Fill (At Zone Demand Bottom)', 'Entry Mode', options = ['Retest Fill (At Zone Demand Bottom)', 'Breakout Confirmation'], group = SNIPER_GROUP, tooltip = 'Retest Fill enters right inside the Demand Order Block / bottom of the pullback (catching the entire green wave shown with red checkmarks). Breakout Confirmation enters on green candle close.')
-sniperRRRatio                   = input.float(  3.0,        'Sniper Target R:R Ratio (3, 4, 5, 6+)', minval=1.5, step=0.5, group = SNIPER_GROUP)
+sniperRRRatio                   = input.float(  5.0,        'Sniper Target R:R Ratio (3, 4, 5, 6+)', minval=1.5, step=0.5, group = SNIPER_GROUP)
+trailRunnerWithEma              = input.bool(   true,       'EMA 20 Trend Runner Trailing (Rides Big 300+ Point Moves)', group = SNIPER_GROUP, tooltip = 'Once trade reaches 1.5R, dynamically trails Stop Loss below EMA 20 so you stay in the trade through the entire multi-hour rally until a structural trend breakdown.')
 sniperRetraceRatio              = input.float(  0.5,        'Discount Retracement Entry (0.5 = 50%)', minval=0.2, maxval=0.79, step=0.05, group = SNIPER_GROUP)
 sniperMaxWaitBars               = input.int(    12,         'Max Wait Bars for Retest Fill', minval=3, maxval=30, group = SNIPER_GROUP)
 showSniperScoreboard            = input.bool(   true,       'Show Top-Right Scalp Scoreboard', group = SNIPER_GROUP)
@@ -122,6 +123,7 @@ showSniperScoreboard            = input.bool(   true,       'Show Top-Right Scal
 atr14 = ta.atr(14)
 microBuffer = atr14 * 0.15
 trendFilterEma   = input.bool(true, 'Strict Trend Filter (EMA 50 & 200)', group = SNIPER_GROUP)
+ema20  = ta.ema(close, 20)
 ema50  = ta.ema(close, 50)
 ema200 = ta.ema(close, 200)
 useHtfConfluence = input.bool(true, '15M HTF Zone & Sweep Confluence (Multi-Timeframe)', group = SNIPER_GROUP)
@@ -907,11 +909,21 @@ if inTrade
     label.set_x(activeLbl, bar_index + 1)
 
     if tradeDir == 1
-        // Optional Trailing to Break-Even (Only if explicitly enabled by user)
-        if trailToBE and stopLossPrice < entryPrice and high >= (entryPrice + (entryPrice - stopLossPrice) * 2.0)
+        // Auto-trail to Break-Even when in +1.5R profit to lock in green
+        if trailToBE and stopLossPrice < entryPrice and high >= (entryPrice + (entryPrice - stopLossPrice) * 1.5)
             stopLossPrice := entryPrice
             box.set_bottom(activeSLBox, entryPrice)
             label.set_text(activeLbl, "BUY (SL @ BE)")
+
+        // EMA 20 Dynamic Runner Trailing:
+        // Once the trade has surged past 2.0R, keep trailing the SL just below the 1m EMA 20 (low of trend).
+        // This keeps you in the runner to capture the ENTIRE big multi-hundred point trending move!
+        if trailRunnerWithEma and high >= (entryPrice + (entryPrice - stopLossPrice) * 2.0)
+            emaTrailLevel = math.min(ema20, low[1])
+            if emaTrailLevel > stopLossPrice
+                stopLossPrice := emaTrailLevel
+                box.set_bottom(activeSLBox, emaTrailLevel)
+                label.set_text(activeLbl, "BUY (EMA20 RUNNER)")
 
         // Fixed Invalidation SL & TP: Trade stays open until TP or SL is hit
         if high >= takeProfitPrice
@@ -922,9 +934,9 @@ if inTrade
         else if low <= stopLossPrice
             inTrade := false
             lastExitBar := bar_index
-            if trailToBE and stopLossPrice >= entryPrice
+            if stopLossPrice >= entryPrice
                 totalWins += 1
-                label.new(bar_index, low, "BE EXIT", style=label.style_label_up, color=color(na), textcolor=color.teal, size=size.small)
+                label.new(bar_index, low, "RUNNER EXIT (+" + str.tostring(((stopLossPrice - entryPrice)/(entryPrice - pendingSL)), "#.#") + "R)", style=label.style_label_up, color=color(na), textcolor=color.teal, size=size.small)
             else
                 totalLosses += 1
                 label.new(bar_index, low, "SL HIT", style=label.style_label_up, color=color(na), textcolor=color.red, size=size.small)
