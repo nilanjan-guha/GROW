@@ -112,6 +112,7 @@ discountZoneColorInput          = input.color(  GREEN,      'Discount Zone',    
 // Sniper Scalp Engine Inputs
 enableSniperEngine              = input.bool(   true,       'Enable Sniper Retest Engine', group = SNIPER_GROUP)
 tradeModeOptionBuyer            = input.bool(   true,       'Option Buyer Mode (BUY ONLY on Call/Put Charts)', group = SNIPER_GROUP, tooltip = 'When enabled, only takes BUY setups on the current chart (CALL or PUT). Shorting/Selling premium is disabled so you only BUY momentum.')
+entryExecutionType              = input.string( 'Retest Fill (At Zone Demand Bottom)', 'Entry Mode', options = ['Retest Fill (At Zone Demand Bottom)', 'Breakout Confirmation'], group = SNIPER_GROUP, tooltip = 'Retest Fill enters right inside the Demand Order Block / bottom of the pullback (catching the entire green wave shown with red checkmarks). Breakout Confirmation enters on green candle close.')
 sniperRRRatio                   = input.float(  3.0,        'Sniper Target R:R Ratio (3, 4, 5, 6+)', minval=1.5, step=0.5, group = SNIPER_GROUP)
 sniperRetraceRatio              = input.float(  0.5,        'Discount Retracement Entry (0.5 = 50%)', minval=0.2, maxval=0.79, step=0.05, group = SNIPER_GROUP)
 sniperMaxWaitBars               = input.int(    12,         'Max Wait Bars for Retest Fill', minval=3, maxval=30, group = SNIPER_GROUP)
@@ -128,7 +129,7 @@ htfTimeframe     = input.timeframe('15', 'HTF Timeframe', group = SNIPER_GROUP)
 minRiskAtr       = input.float(0.8, 'Minimum Swing Size / Risk (ATR Multiple)', minval=0.3, step=0.1, group = SNIPER_GROUP)
 trailToBE        = input.bool(false, 'Trail SL to Break-Even (Off = Fixed Invalidation SL until hit)', group = SNIPER_GROUP)
 targetOppositeSwing = input.bool(false, 'Target Opposite Swing High/Low (Major Target)', group = SNIPER_GROUP)
-cooldownBarsInput   = input.int(8, 'Trade Cooldown Bars (Prevents Chop Spam)', minval=3, maxval=20, group = SNIPER_GROUP)
+cooldownBarsInput   = input.int(15, 'Trade Cooldown Bars (Prevents Late FOMO Tops)', minval=3, maxval=30, group = SNIPER_GROUP)
 
 // HTF calculations for 15M discount/premium and sweep zones
 htfHigh  = request.security(syminfo.tickerid, htfTimeframe, high[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
@@ -762,11 +763,17 @@ htfMajorSell = useHtfConfluence and (htfSweepHigh or (not htfInDiscount and swee
 // Complete Trigger: Pullback from 15M / 1M Zone + Breakout of Structure (BOS)
 bool bosBreakAfterZonePullback = hadRecentDemandPullback and (triggeredBullShift or (inDemandObZone and close > open and close > high[1])) and (close > open)
 
-sniperBuyTrigger  = bullTrend and (bosBreakAfterZonePullback or htfMajorBuy)
+// Exactly match the red checkmarks: 
+// 1) When price tests Demand Order Block bottom or performs a liquidity sweep of low
+// 2) Avoid entering at the very top of an extended candle (avoids the red circled late breakout bar)
+bool notExtendedAboveEma = (close - ema50) <= (atr14 * 2.5)
+
+sniperBuyTrigger  = bullTrend and notExtendedAboveEma and (inDemandObZone or sweepLow or htfMajorBuy or (hadRecentDemandPullback and close > open and close > open[1]))
 sniperSellTrigger = not tradeModeOptionBuyer and bearTrend and (triggeredBearShift or (sweepHigh and close < open) or htfMajorSell)
 
-// Direct Immediate Fill on verified SMC Order Block Retest or Reversal Wick
-directSmcFill = bosBreakAfterZonePullback or (inDemandObZone and close > open)
+// Execution selection: Retest fill right inside the demand zone vs immediate breakout confirmation
+bool isRetestFillMode = entryExecutionType == 'Retest Fill (At Zone Demand Bottom)'
+directSmcFill = not isRetestFillMode and (bosBreakAfterZonePullback or (inDemandObZone and close > open))
 
 // Arm Pending Sniper Orders on Major Shift, Sweeps & OB Retests
 if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - lastExitBar >= cooldownBarsInput)
