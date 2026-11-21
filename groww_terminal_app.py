@@ -494,13 +494,13 @@ def background_screener_worker():
                 except Exception:
                     pass
 
-                # Build scanner list STRICTLY from the 5-minute Sector Watchlists + Active Signals
+                # Build scanner list STRICTLY from the Top 3 Bullish & Top 3 Bearish Sector Watchlists
+                # ONLY scan stocks belonging to the 6 detected leader/laggard sectors!
                 watchlist_stks = [x["symbol"] for x in (screener_state["bullish_momentum_watchlist"] + screener_state["bearish_momentum_watchlist"])]
-                active_db_symbols = list(get_active_signal_symbols())
                 
-                # STRICT FILTER: Scan ONLY the stocks fetched by the 5-minute sector scan and active signals!
-                # Do NOT scan outside stocks from the broader market.
-                all_stk_symbols = list(dict.fromkeys(watchlist_stks + active_db_symbols))
+                # STRICT FILTER: Scan ONLY the stocks fetched by the 5-minute sector scan!
+                # Do NOT scan outside stocks from the broader market or old DB records.
+                all_stk_symbols = list(dict.fromkeys(watchlist_stks))
                 
                 # Filter all evaluated candidates strictly to verified F&O instruments
                 valid_fno_set = set(screener_state.get("fno_universe", []))
