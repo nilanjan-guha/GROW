@@ -512,10 +512,18 @@ def background_screener_worker():
                 # Combine priority symbols (top sector stocks + active signals) with universe rotating slice
                 all_stk_symbols = list(dict.fromkeys(watchlist_stks + active_db_symbols + universe_slice))
                 
+                # Filter all evaluated candidates strictly to verified F&O instruments
+                valid_fno_set = set(screener_state.get("fno_universe", []))
+                norm_fno_set = {s.upper().replace(".NS", "") for s in valid_fno_set}
+
                 candidates_for_ranking = []
                 nifty_cached_df = screener_state.get("raw_market_cache", {}).get("^NSEI", {}).get("df")
 
                 for sym in all_stk_symbols:
+                    clean_sym = sym.replace(".NS", "").upper()
+                    # Quality Filter: Only scan and rank stocks that are verified tradeable F&O stocks
+                    if norm_fno_set and clean_sym not in norm_fno_set:
+                        continue
                     try:
                         cdf = yf.download(sym, period="5d", interval="5m", progress=False)
                         if isinstance(cdf.columns, pd.MultiIndex):
@@ -923,9 +931,15 @@ def get_ranked_opportunities_endpoint():
         nifty_cached = screener_state.get("raw_market_cache", {}).get("^NSEI", {})
         nifty_df = nifty_cached.get("df")
         
+        valid_fno_set = set(screener_state.get("fno_universe", []))
+        norm_fno_set = {s.upper().replace(".NS", "") for s in valid_fno_set}
+
         # Collect cached evaluations
         for sym, item in screener_state.get("raw_market_cache", {}).items():
             if sym == "^NSEI" or item.get("df") is None:
+                continue
+            clean_sym = sym.replace(".NS", "").upper()
+            if norm_fno_set and clean_sym not in norm_fno_set:
                 continue
             df_sym = item["df"]
             # Enforce validation

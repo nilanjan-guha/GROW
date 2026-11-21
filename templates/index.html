@@ -533,6 +533,7 @@
                 document.getElementById('activeSectorSweepText').innerText = `ANALYZING: ${name} [${sec.is_bullish ? '+' : ''}${sec.change.toFixed(2)}%]`;
                 
                 document.querySelectorAll('.sector-card').forEach(c => c.classList.remove('selected'));
+                renderStockChips();
                 const stocks = sec.top_5 || sec.top_5_stocks || [];
                 if (stocks.length > 0) {
                     userSelectedStock = stocks[0].symbol;
@@ -565,6 +566,28 @@
             currentStockSymbol = stk;
             userSelectedStock = stk;
             document.getElementById('radarStockTitle').innerText = stk;
+            
+            // Find which sector this stock belongs to from sectorsDict
+            let foundSector = null;
+            let foundSecData = null;
+            for (const [sName, sData] of Object.entries(sectorsDict)) {
+                const stks = sData.top_5 || sData.top_5_stocks || [];
+                if (stks.some(s => s.symbol === stk)) {
+                    foundSector = sName;
+                    foundSecData = sData;
+                    break;
+                }
+            }
+
+            if (foundSector && foundSecData) {
+                currentSectorName = foundSector;
+                document.getElementById('selectedSectorTitle').innerText = `${foundSector} (${foundSecData.is_bullish ? '+' : ''}${foundSecData.change.toFixed(2)}%)`;
+                document.getElementById('activeSectorSweepText').innerText = `ANALYZING: ${foundSector} [${foundSecData.is_bullish ? '+' : ''}${foundSecData.change.toFixed(2)}%]`;
+                
+                // Highlight sector card
+                document.querySelectorAll('.sector-card').forEach(c => c.classList.remove('selected'));
+            }
+
             renderStockChips();
             scanStock(stk);
         }
