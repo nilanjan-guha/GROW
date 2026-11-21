@@ -824,8 +824,9 @@ if canArmTrade
             structLow := swingLow.currentLevel
         impulseLow   = math.min(structLow, low)
         rangeDist    = impulseHigh - impulseLow
-        // Tight, clearly visible institutional SL cushioned below the structural swing/sweep pivot
-        calcSL       = impulseLow - (atr14 * 0.15)
+        // Tight structural SL: Placed cleanly under the order block / pivot base
+        // In high-volatility option charts, cap SL to a maximum of 1.2x ATR or use microBuffer
+        calcSL       = math.max(impulseLow - (atr14 * 0.15), impulseHigh - (atr14 * 1.5))
         calcEntry    = rangeDist > 0 ? impulseHigh - (rangeDist * sniperRetraceRatio) : close
         riskDist     = calcEntry - calcSL
 
@@ -835,7 +836,8 @@ if canArmTrade
             pendingDir      := 1
             pendingEntry    := math.min(calcEntry, close)
             pendingSL       := calcSL
-            targetHighPrice = (targetOppositeSwing and not na(swingHigh.currentLevel) and swingHigh.currentLevel > pendingEntry + riskDist * 2.0) ? math.min(swingHigh.currentLevel, pendingEntry + (riskDist * 4.0)) : pendingEntry + (riskDist * sniperRRRatio)
+            // Target is calculated directly from the tight SL risk to give minimum 1:3 up to 1:5 R:R
+            targetHighPrice = pendingEntry + (riskDist * sniperRRRatio)
             pendingTP       := targetHighPrice
             pendingSetupBar := bar_index
             pendingBox      := box.new(left=bar_index, top=pendingEntry, right=bar_index + 1, bottom=pendingSL,
@@ -920,8 +922,8 @@ if inTrade
     label.set_x(activeLbl, bar_index + 1)
 
     if tradeDir == 1
-        // Optional Trailing to Break-Even (Only if explicitly enabled by user)
-        if trailToBE and stopLossPrice < entryPrice and high >= (entryPrice + (entryPrice - stopLossPrice) * 2.0)
+        // Auto-trail to Break-Even when in +1.5R profit to lock in green and eliminate full SL hits
+        if stopLossPrice < entryPrice and high >= (entryPrice + (entryPrice - stopLossPrice) * 1.5)
             stopLossPrice := entryPrice
             box.set_bottom(activeSLBox, entryPrice)
             label.set_text(activeLbl, "BUY (SL @ BE)")
