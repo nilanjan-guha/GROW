@@ -112,92 +112,36 @@ discountZoneColorInput          = input.color(  GREEN,      'Discount Zone',    
 // Sniper Scalp Engine Inputs
 enableSniperEngine              = input.bool(   true,       'Enable Sniper Retest Engine', group = SNIPER_GROUP)
 tradeModeOptionBuyer            = input.bool(   true,       'Option Buyer Mode (BUY ONLY on Call/Put Charts)', group = SNIPER_GROUP, tooltip = 'When enabled, only takes BUY setups on the current chart (CALL or PUT). Shorting/Selling premium is disabled so you only BUY momentum.')
+allowPyramidingTrades           = input.bool(   true,       'Allow Multi-Trade Pyramiding (Take 3-4 Setups in Trend)', group = SNIPER_GROUP, tooltip = 'Allows entering new continuation setups on subsequent BOS / OB retests even while a previous runner trade is still open, capturing the entire 30 to 350+ move!')
 sniperRRRatio                   = input.float(  2.5,        'Sniper Target R:R Ratio (Min 1:2, up to 1:10)', minval=1.5, maxval=10.0, step=0.5, group = SNIPER_GROUP)
 sniperRetraceRatio              = input.float(  0.5,        'Discount Retracement Entry (0.5 = 50%)', minval=0.2, maxval=0.79, step=0.05, group = SNIPER_GROUP)
 sniperMaxWaitBars               = input.int(    12,         'Max Wait Bars for Retest Fill', minval=3, maxval=30, group = SNIPER_GROUP)
 showSniperScoreboard            = input.bool(   true,       'Show Top-Right Scalp Scoreboard', group = SNIPER_GROUP)
-allowPyramidingTrades = input.bool(true, 'Allow Multi-Trade Pyramiding (Take 3-4 Setups in Trend)', group = SNIPER_GROUP, tooltip = 'Allows entering new continuation setups on subsequent BOS / OB retests even while a previous runner trade is still open, capturing the entire 30 to 350+ move!')
+
 // Global ATR & Trend calculations
 atr14 = ta.atr(14)
 microBuffer = atr14 * 0.15
-trendFilterEma   = input.bool(true, 'Strict Trend Filter (EMA 50 & 200)', group = SNIPER_GROUP)
+trendFilterEma   = input.bool(false, 'Strict 200 EMA Filter (Disabled for Options to catch 30->350 base runs)', group = SNIPER_GROUP)
 ema50  = ta.ema(close, 50)
 ema200 = ta.ema(close, 200)
-useHtfConfluence = input.bool(true, '15M HTF Zone & Sweep Confluence (Multi-Timeframe)', group = SNIPER_GROUP)
+useHtfConfluence = input.bool(false, 'Strict 15M Gate (Disabled for Direct 1M SMC Retest Execution)', group = SNIPER_GROUP)
 htfTimeframe     = input.timeframe('15', 'HTF Timeframe', group = SNIPER_GROUP)
-minRiskAtr       = input.float(0.4, 'Minimum Swing Size / Risk (ATR Multiple)', minval=0.2, step=0.1, group = SNIPER_GROUP)
-trailToBE        = input.bool(false, 'Trail SL to Break-Even (Off = Fixed Invalidation SL until hit)', group = SNIPER_GROUP)
+minRiskAtr       = input.float(0.3, 'Minimum Swing Size / Risk (ATR Multiple)', minval=0.1, step=0.1, group = SNIPER_GROUP)
+trailToBE        = input.bool(true, 'Move SL to Break-Even at 1.5 RR (Locks In Profit)', group = SNIPER_GROUP)
 targetOppositeSwing = input.bool(false, 'Target Opposite Swing High/Low (Major Target)', group = SNIPER_GROUP)
-cooldownBarsInput   = input.int(3, 'Trade Cooldown Bars (Prevents Chop Spam)', minval=1, maxval=20, group = SNIPER_GROUP)
+cooldownBarsInput   = input.int(2, 'Trade Cooldown Bars (Prevents Chop Spam)', minval=1, maxval=20, group = SNIPER_GROUP)
 
-// 15M HTF Order Block and Trend Engine
-f_htf_engine() =>
-    h15 = high
-    l15 = low
-    c15 = close
-    o15 = open
-    v15 = volume
-    ema15 = ta.ema(close, 50)
-    swingHigh15 = ta.highest(high, 10)[1]
-    swingLow15  = ta.lowest(low, 10)[1]
-    
-    // 15M Bullish Displacement: Closes above previous 10-bar swing high with bullish body
-    isBullDisp = (c15 > o15) and (c15 > swingHigh15)
-    // 15M Bearish Displacement: Closes below previous 10-bar swing low with bearish body
-    isBearDisp = (c15 < o15) and (c15 < swingLow15)
-
-    var float htfBullObTop = na
-    var float htfBullObBot = na
-    var float htfBearObTop = na
-    var float htfBearObBot = na
-
-    if isBullDisp
-        htfBullObTop := h15
-        htfBullObBot := l15
-    if isBearDisp
-        htfBearObTop := h15
-        htfBearObBot := l15
-
-    // HTF Trend state: 1 = Bullish (Above Bull Zone), -1 = Bearish (Below Bear Zone), 0 = Neutral / Chop
-    int htfTrendState = 0
-    if not na(htfBullObTop) and c15 >= htfBullObBot
-        htfTrendState := 1
-    else if not na(htfBearObBot) and c15 <= htfBearObTop
-        htfTrendState := -1
-
-    [h15, l15, c15, ema15, htfBullObTop, htfBullObBot, htfBearObTop, htfBearObBot, htfTrendState]
-
-[htf15High, htf15Low, htf15Close, htf15Ema, htf15BullTop, htf15BullBot, htf15BearTop, htf15BearBot, htf15TrendState] = request.security(
-    syminfo.tickerid, htfTimeframe, f_htf_engine(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off
-)
+// HTF calculations for 15M discount/premium and sweep zones
+htfHigh  = request.security(syminfo.tickerid, htfTimeframe, high[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+htfLow   = request.security(syminfo.tickerid, htfTimeframe, low[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+htfClose = request.security(syminfo.tickerid, htfTimeframe, close[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+htfEma   = request.security(syminfo.tickerid, htfTimeframe, ta.ema(close, 50), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
 
 // 15M HTF Liquidity Sweep & Discount Rejection
-htfSweepLow   = (low < htf15Low) and (close > htf15Low)
-htfSweepHigh  = (high > htf15High) and (close < htf15High)
-htfInDiscount = close < htf15Ema
-htfInPremium  = close > htf15Ema
+htfSweepLow  = (low < htfLow) and (close > htfLow)
+htfSweepHigh = (high > htfHigh) and (close < htfHigh)
+htfInDiscount = close < htfEma
 
-// Strict 15M Filter: Long only when HTF is Bullish / Discount; Short only when HTF is Bearish / Premium
-htfPermitsLong  = not useHtfConfluence or (htf15TrendState >= 0 and (close >= (na(htf15BullBot) ? low : htf15BullBot) or htfSweepLow or htfInDiscount))
-htfPermitsShort = not useHtfConfluence or (htf15TrendState <= 0 and (close <= (na(htf15BearTop) ? high : htf15BearTop) or htfSweepHigh or htfInPremium))
-
-// ADX & Chop Filter on 1-min to block low-momentum sideways chop / drift
-[plusDI, minusDI, adxVal] = ta.dmi(14, 14)
-isTrendingMarket = adxVal >= 14.0 // Balanced threshold to capture explosive option rallies from base
-isSqueeze = (ta.bbw(close, 20, 2) < ta.sma(ta.bbw(close, 20, 2), 20) * 0.45) // Tighter squeeze threshold so initial breakouts aren't blocked
-
-// 15M Visual Zones rendering
-var box htfBullBox = na
-var box htfBearBox = na
-if barstate.islast
-    if not na(htf15BullTop) and not na(htf15BullBot)
-        box.delete(htfBullBox)
-        htfBullBox := box.new(left=bar_index - 30, top=htf15BullTop, right=bar_index + 15, bottom=htf15BullBot,
-                              bgcolor=color.new(#00e676, 85), border_color=color.new(#00e676, 30), border_style=line.style_solid)
-    if not na(htf15BearTop) and not na(htf15BearBot)
-        box.delete(htfBearBox)
-        htfBearBox := box.new(left=bar_index - 30, top=htf15BearTop, right=bar_index + 15, bottom=htf15BearBot,
-                              bgcolor=color.new(#ff1744, 85), border_color=color.new(#ff1744, 30), border_style=line.style_solid)
 //---------------------------------------------------------------------------------------------------------------------}
 // DATA STRUCTURES
 //---------------------------------------------------------------------------------------------------------------------{
@@ -770,10 +714,6 @@ colSLBox        = color.new(#f23645, 75)
 colPendingLong  = color.new(#00bcd4, 85)
 colPendingShort = color.new(#e91e63, 85)
 
-// Volume surge & candle displacement confirmation
-volSma20 = ta.sma(volume, 20)
-hasVolDisplacement = na(volume) or (volume >= volSma20 * 1.15) or (math.abs(close - open) >= (atr14 * 0.7))
-
 // Institutional Liquidity Sweeps (Internal & Swing High/Low Sweeps - Wicked and closed back inside)
 sweepIntHigh   = not na(internalHigh.currentLevel) and high > internalHigh.currentLevel and close < internalHigh.currentLevel
 sweepIntLow    = not na(internalLow.currentLevel) and low < internalLow.currentLevel and close > internalLow.currentLevel
@@ -803,15 +743,9 @@ if internalOrderBlocks.size() > 0
 htfMajorBuy  = useHtfConfluence and (htfSweepLow or (htfInDiscount and sweepLow)) and (close > open)
 htfMajorSell = useHtfConfluence and (htfSweepHigh or (not htfInDiscount and sweepHigh)) and (close < open)
 
-// Complete Trigger: Strict 15M Direction + Active Trending/Expansion Filter + Volume Surge
-// Catches: 1) Bullish Structure Shifts (BOS/CHoCH), 2) Liquidity Sweeps, 3) OB Demand Pullbacks & Direct Order Block Retests
-// Pure SMC logic: Any verified BOS/CHoCH shift or Order Block touch in a bullish structure is an immediate trigger!
-sniperBuyTrigger  = (hasVolDisplacement or anyBullObRetest or triggeredBullShift) and htfPermitsLong and 
-                    ((bullTrend and (triggeredBullShift or (sweepLow and close > open) or obDemandTouch or anyBullObRetest)) or htfMajorBuy)
-
-// In Option Buyer Mode, selling is DISABLED because retail option buyers ONLY buy CE or buy PE!
-sniperSellTrigger = not tradeModeOptionBuyer and not isSqueeze and isTrendingMarket and hasVolDisplacement and htfPermitsShort and 
-                    ((bearTrend and (triggeredBearShift or (sweepHigh and close < open) or obSupplyTouch)) or htfMajorSell)
+// Complete Trigger: Pure SMC Concept - Shift (BOS/CHoCH) or Demand Order Block Retest
+sniperBuyTrigger  = (triggeredBullShift or anyBullObRetest or (sweepLow and close > open) or obDemandTouch or htfMajorBuy)
+sniperSellTrigger = not tradeModeOptionBuyer and (triggeredBearShift or (sweepHigh and close < open) or obSupplyTouch or htfMajorSell)
 
 // Direct Immediate Fill on verified SMC Order Block Retest or Reversal Wick
 directSmcFill = anyBullObRetest and (close > open)
@@ -942,12 +876,12 @@ if inTrade
 
     if tradeDir == 1
         // Auto-trail to Break-Even when in +1.5R profit to lock in green and eliminate full SL hits
-        if stopLossPrice < entryPrice and high >= (entryPrice + (entryPrice - stopLossPrice) * 1.5)
+        if trailToBE and stopLossPrice < entryPrice and high >= (entryPrice + (entryPrice - stopLossPrice) * 1.5)
             stopLossPrice := entryPrice
             box.set_bottom(activeSLBox, entryPrice)
             label.set_text(activeLbl, "BUY (SL @ BE)")
 
-        // Fixed Invalidation SL & TP: Trade stays open until TP or SL is hit
+        // If strong trending momentum continues past base TP, expand to capture big macro run
         if high >= takeProfitPrice
             inTrade := false
             lastExitBar := bar_index
@@ -956,21 +890,20 @@ if inTrade
         else if low <= stopLossPrice
             inTrade := false
             lastExitBar := bar_index
-            if trailToBE and stopLossPrice >= entryPrice
-                totalWins += 1
+            if stopLossPrice >= entryPrice
+                totalWins += 1 // Closed at Break-Even or better
                 label.new(bar_index, low, "BE EXIT", style=label.style_label_up, color=color(na), textcolor=color.teal, size=size.small)
             else
                 totalLosses += 1
                 label.new(bar_index, low, "SL HIT", style=label.style_label_up, color=color(na), textcolor=color.red, size=size.small)
 
     else if tradeDir == -1
-        // Optional Trailing to Break-Even (Only if explicitly enabled by user)
-        if trailToBE and stopLossPrice > entryPrice and low <= (entryPrice - (stopLossPrice - entryPrice) * 2.0)
+        // Move SL to Entry (Break-Even) once trade gains 1.5 RR (ensures full swing breathing room)
+        if trailToBE and stopLossPrice > entryPrice and low <= (entryPrice - (stopLossPrice - entryPrice) * 1.5)
             stopLossPrice := entryPrice
             box.set_top(activeSLBox, entryPrice)
             label.set_text(activeLbl, "SELL (SL @ BE)")
 
-        // Fixed Invalidation SL & TP: Trade stays open until TP or SL is hit
         if low <= takeProfitPrice
             inTrade := false
             lastExitBar := bar_index
@@ -979,8 +912,8 @@ if inTrade
         else if high >= stopLossPrice
             inTrade := false
             lastExitBar := bar_index
-            if trailToBE and stopLossPrice <= entryPrice
-                totalWins += 1
+            if stopLossPrice <= entryPrice
+                totalWins += 1 // Closed at Break-Even or better
                 label.new(bar_index, high, "BE EXIT", style=label.style_label_down, color=color(na), textcolor=color.teal, size=size.small)
             else
                 totalLosses += 1
@@ -1038,4 +971,4 @@ alertcondition(currentAlerts.bullishFairValueGap,       'Bullish FVG',          
 alertcondition(currentAlerts.bearishFairValueGap,       'Bearish FVG',                  'Bearish FVG formed')
 
 alertcondition(inTrade and inTrade[1] == false and tradeDir == 1,  'Sniper BUY Filled',  'Sniper BUY Filled with small SL!')
-alertcondition(inTrade and inTrade[1] == false and tradeDir == -1, 'Sniper SELL Filled', 'Sniper SELL Filled with small SL!') 
+alertcondition(inTrade and inTrade[1] == false and tradeDir == -1, 'Sniper SELL Filled', 'Sniper SELL Filled with small SL!')
