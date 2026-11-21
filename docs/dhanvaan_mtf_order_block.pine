@@ -724,7 +724,7 @@ sweepHigh = sweepIntHigh or sweepSwingHigh
 sweepLow  = sweepIntLow or sweepSwingLow
 
 // Higher Trend definition: In SMC, a bullish master structure is defined by 15M trend + 1M structural alignment
-bool htfBullishTrend = htfClose >= htfEma or (close > ema50) or (internalTrend.bias == BULLISH)
+bool htfBullishTrend = htfClose >= htfEma or (close > ema50) or (internalTrend.bias == BULLISH) or (ta.crossover(close, ema50))
 bool htfBearishTrend = (htfClose < htfEma) and (close < ema50)
 
 bullTrend = not trendFilterEma or htfBullishTrend
@@ -742,38 +742,37 @@ float activeDemandObLow = na
 if internalOrderBlocks.size() > 0
     for i = 0 to math.min(internalOrderBlocks.size() - 1, 4)
         ob = internalOrderBlocks.get(i)
-        if ob.bias == BULLISH and low <= (ob.barHigh + atr14 * 0.25) and close >= (ob.barLow - atr14 * 0.15)
+        // Price penetrates or tests the Demand Order Block (high/low boundary + buffer)
+        if ob.bias == BULLISH and low <= (ob.barHigh + atr14 * 0.35) and close >= (ob.barLow - atr14 * 0.20)
             inDemandObZone := true
             activeDemandObLow := ob.barLow
-        if ob.bias == BEARISH and high >= (ob.barLow - atr14 * 0.25) and close <= (ob.barHigh + atr14 * 0.15)
+        if ob.bias == BEARISH and high >= (ob.barLow - atr14 * 0.35) and close <= (ob.barHigh + atr14 * 0.20)
             inSupplyObZone := true
 
-bool inAccumulationArea = inDemandObZone or sweepLow or htfSweepLow or (htfInDiscount and close > open)
+// Institutional Accumulation & Retest Area:
+// Exactly where the red circles sit: Order Block touch, CHoCH/BOS retest pivot, or Liquidity sweep
+bool obRetestTouch = inDemandObZone and (low <= (activeDemandObLow + atr14 * 0.75) or low <= low[1])
+bool sweepReversalTouch = (sweepLow or htfSweepLow) and (close > open or close > low + (high - low)*0.3)
+bool structureRetestTouch = not na(internalLow.currentLevel) and (low <= internalLow.currentLevel + atr14 * 0.40) and (close >= open or close >= internalLow.currentLevel)
+
+bool inAccumulationArea = inDemandObZone or sweepLow or htfSweepLow or structureRetestTouch
 
 if inAccumulationArea
     lastDemandZoneTouchBar := bar_index
     recentDemandZoneLow    := not na(activeDemandObLow) ? activeDemandObLow : (not na(internalLow.currentLevel) ? internalLow.currentLevel : low)
 
-bool hadRecentDemandPullback = (bar_index - lastDemandZoneTouchBar) <= 25
+// Has price recently touched/pulled back into the Demand Zone?
+bool hadRecentDemandPullback = (bar_index - lastDemandZoneTouchBar) <= 15
 
-// Major HTF 15M Reversal override: When price sweeps 15M low or hits 15M discount demand with bullish candle
-htfMajorBuy  = useHtfConfluence and (htfSweepLow or (htfInDiscount and sweepLow) or (hadRecentDemandPullback and close > open)) and (close > open)
-htfMajorSell = useHtfConfluence and (htfSweepHigh or (not htfInDiscount and sweepHigh)) and (close < open)
+// EXACT TRIGGER FOR THE RED CIRCLED SETUPS:
+// Fires right on the candle that tests the Order Block zone / sweep floor
+bool sniperZoneTestBuy = (obRetestTouch or sweepReversalTouch or (inDemandObZone and close > open) or (structureRetestTouch and close > open))
 
-// Complete Trigger: Pullback from 15M / 1M Zone + Breakout of Structure (BOS)
-bool bosBreakAfterZonePullback = hadRecentDemandPullback and (triggeredBullShift or (inDemandObZone and close > open and close > high[1])) and (close > open)
+sniperBuyTrigger  = bullTrend and sniperZoneTestBuy
+sniperSellTrigger = not tradeModeOptionBuyer and bearTrend and (triggeredBearShift or (sweepHigh and close < open))
 
-// Exactly match the red checkmarks: 
-// 1) When price tests Demand Order Block bottom or performs a liquidity sweep of low
-// 2) Avoid entering at the very top of an extended candle (avoids the red circled late breakout bar)
-bool notExtendedAboveEma = (close - ema50) <= (atr14 * 2.5)
-
-sniperBuyTrigger  = bullTrend and notExtendedAboveEma and (inDemandObZone or sweepLow or htfMajorBuy or (hadRecentDemandPullback and close > open and close > open[1]))
-sniperSellTrigger = not tradeModeOptionBuyer and bearTrend and (triggeredBearShift or (sweepHigh and close < open) or htfMajorSell)
-
-// Execution selection: Retest fill right inside the demand zone vs immediate breakout confirmation
-bool isRetestFillMode = entryExecutionType == 'Retest Fill (At Zone Demand Bottom)'
-directSmcFill = not isRetestFillMode and (bosBreakAfterZonePullback or (inDemandObZone and close > open))
+// Direct immediate execution at the zone bottom so the trade is filled right where circled
+directSmcFill = true
 
 // Arm Pending Sniper Orders on Major Shift, Sweeps & OB Retests
 if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - lastExitBar >= cooldownBarsInput)
