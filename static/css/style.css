@@ -43,7 +43,6 @@ body {
     flex-direction: column;
     overflow: hidden;
     position: relative;
-    perspective: 1200px;
 }
 
 /* Background Animated Canvas & Holographic HUD Grid */
@@ -182,7 +181,7 @@ header {
     box-shadow: var(--glow-green);
 }
 
-/* 3D Glass Command Workspace Layout */
+/* Glass Command Workspace Layout (Static & Stable) */
 .workspace-grid {
     position: relative;
     z-index: 10;
@@ -191,7 +190,6 @@ header {
     gap: 12px;
     flex: 1;
     min-height: 0;
-    transform-style: preserve-3d;
 }
 
 .panel {
@@ -205,8 +203,7 @@ header {
     min-height: 0;
     overflow: hidden;
     box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6), inset 0 0 15px rgba(0, 240, 255, 0.04);
-    transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.25s ease;
-    transform-style: preserve-3d;
+    transition: border-color 0.25s ease, box-shadow 0.25s ease;
 }
 
 .panel:hover {
