@@ -257,11 +257,30 @@ class InstitutionalStrategyEngine:
             ign_weight = min(28, max(20, int(ign_score * 0.3)))
             evaluated_signals.append({"strategy": "Momentum Ignition Surge", "direction": ign_dir, "weight": ign_weight})
 
-        # Apply Persistent Strategy Learning Multipliers (Calibrated strictly when N >= 15 observations)
+        # Apply Persistent Multi-Dimensional Strategy Learning Multipliers (Calibrated strictly when N >= 15 observations)
         from engine.strategy_learning_engine import StrategyLearningEngine
+        reg_type = market_regime_info.get("regime") if market_regime_info else None
+        
+        # Compute IST time bucket for current bar
+        current_time_bucket = None
+        try:
+            import pytz
+            last_ts = df.index[-1]
+            if hasattr(last_ts, 'tz') and last_ts.tz is None:
+                ist_ts = last_ts.tz_localize('Asia/Kolkata')
+            else:
+                ist_ts = last_ts
+            current_time_bucket = StrategyLearningEngine.get_time_bucket(ist_ts.hour, ist_ts.minute)
+        except Exception:
+            current_time_bucket = "OPENING_MOMENTUM"
+
         for sig in evaluated_signals:
             strat_name = sig["strategy"]
-            mult = StrategyLearningEngine.get_strategy_multiplier(strat_name)
+            mult = StrategyLearningEngine.get_combined_multiplier(
+                strategy=strat_name,
+                market_regime=reg_type,
+                time_bucket=current_time_bucket
+            )
             sig["weight"] = int(sig["weight"] * mult)
 
         # Macro Market Regime Alignment Boost / Penalty
@@ -390,6 +409,10 @@ class InstitutionalStrategyEngine:
             "suggested_sl": sl,
             "suggested_tp1": tp1,
             "suggested_tp2": tp2,
+            "is_viable": opp_eval.get("is_viable", False),
+            "opportunity_eval": opp_eval,
+            "confidence_penalty": opp_eval.get("confidence_penalty", 0),
+            "daily_atr_source": opp_eval.get("daily_atr_source", "NONE"),
             "potential_pct": opp_eval.get("potential_pct", 0.0),
             "potential_tp2_pct": opp_eval.get("potential_tp2_pct", 0.0),
             "nearest_obstacle": opp_eval.get("nearest_obstacle", "None"),

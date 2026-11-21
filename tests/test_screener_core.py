@@ -291,6 +291,35 @@ class TestIntradayScreenerCore(unittest.TestCase):
         # Without 15 trades, multiplier must remain 1.0
         mult = StrategyLearningEngine.get_strategy_multiplier("Gap-and-Go")
         self.assertEqual(mult, 1.0)
+        combined = StrategyLearningEngine.get_combined_multiplier("Gap-and-Go", "BULLISH", "OPENING_MOMENTUM")
+        self.assertEqual(combined, 1.0)
+
+    def test_indian_market_costs(self):
+        from engine.cost_engine import IndianMarketCosts
+        eq_costs = IndianMarketCosts.calculate_equity_costs(entry_price=1000.0, exit_price=1010.0, quantity=100)
+        self.assertEqual(eq_costs["instrument"], "EQUITY_INTRADAY")
+        self.assertGreater(eq_costs["total_costs"], 0.0)
+        self.assertGreater(eq_costs["brokerage"], 0.0)
+        self.assertGreater(eq_costs["stt"], 0.0)
+
+        opt_costs = IndianMarketCosts.calculate_options_costs(entry_premium=50.0, exit_premium=70.0, lot_size=500)
+        self.assertEqual(opt_costs["instrument"], "OPTIONS")
+        self.assertGreater(opt_costs["stt"], 0.0)
+
+    def test_pre_momentum_prediction_engine(self):
+        from engine.pre_momentum_engine import PreMomentumEngine
+        # Test stage classification with viable opportunity
+        opp_viable = {"is_viable": True, "risk_reward_ratio": 2.1}
+        res_confirmed = PreMomentumEngine.classify_stage(
+            df=self.df_5m,
+            sector_bias="BULLISH",
+            vwap=1000.0,
+            rvol=1.5,
+            composite_score=75,
+            opp_eval=opp_viable
+        )
+        self.assertEqual(res_confirmed["stage"], "CONFIRMED")
+        self.assertTrue(res_confirmed["is_tradeable"])
 
 if __name__ == '__main__':
     unittest.main()

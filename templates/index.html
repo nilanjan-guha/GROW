@@ -96,6 +96,10 @@
                             <div class="m-val green" id="valQuantScore">--</div>
                         </div>
                         <div class="metric-cell">
+                            <div class="m-lbl">Early Momentum Stage</div>
+                            <div class="m-val yellow" id="valPreMomentum">INACTIVE</div>
+                        </div>
+                        <div class="metric-cell">
                             <div class="m-lbl">Triggered Strategies</div>
                             <div class="m-val blue" id="valStrategies">--</div>
                         </div>
@@ -515,6 +519,23 @@
             const score = smc.composite_score || 0;
             const prob = smc.probability_pct || 50;
             document.getElementById('valQuantScore').innerText = `Score: ${score}/100 (${prob}% Prob)`;
+            
+            // Early Pre-Momentum Stage Rendering
+            const stage = smc.pre_momentum_stage || 'INACTIVE';
+            const stageEl = document.getElementById('valPreMomentum');
+            if (stageEl) {
+                stageEl.innerText = `${stage} (${smc.pre_momentum_score || 0} pts)`;
+                if (stage === 'CONFIRMED') {
+                    stageEl.style.color = 'var(--accent-green)';
+                } else if (stage === 'IGNITION') {
+                    stageEl.style.color = '#38bdf8';
+                } else if (stage === 'PREPARING') {
+                    stageEl.style.color = '#f59e0b';
+                } else {
+                    stageEl.style.color = '#94a3b8';
+                }
+            }
+
             const strats = (smc.triggered_strategies && smc.triggered_strategies.length > 0) ? smc.triggered_strategies.join(', ') : 'Price Action';
             document.getElementById('valStrategies').innerText = strats;
 

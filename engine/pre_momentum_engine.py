@@ -37,9 +37,17 @@ class PreMomentumEngine:
         curr_h = float(h.iloc[-1])
         curr_l = float(l.iloc[-1])
 
-        # 1. 14-period ATR
-        tr = pd.concat([h - l, (h - c.shift(1)).abs(), (l - c.shift(1)).abs()], axis=1).max(axis=1)
-        atr14 = float(tr.rolling(14).mean().iloc[-1]) or (curr_c * 0.01)
+        # 1. 14-period Wilder-smoothed ATR
+        tr = pd.concat([h - l, (h - c.shift(1)).abs(), (l - c.shift(1)).abs()], axis=1).max(axis=1).dropna()
+        if len(tr) >= 14:
+            tr_vals = tr.values
+            atr14 = float(np.mean(tr_vals[:14]))
+            for t_val in tr_vals[14:]:
+                atr14 = (atr14 * 13 + float(t_val)) / 14
+        else:
+            atr14 = float(tr.mean()) if not tr.empty else (curr_c * 0.01)
+        if pd.isna(atr14) or atr14 <= 0:
+            atr14 = curr_c * 0.01
 
         # 2. Volatility Compression (Bollinger Bandwidth / NR4 / NR7)
         sma20 = c.rolling(20).mean()
@@ -82,7 +90,8 @@ class PreMomentumEngine:
 
         # Determine Stage
         # Stage 3: CONFIRMED
-        if opp_eval and opp_eval.get("is_viable") and composite_score >= 50:
+        is_viable_opportunity = opp_eval.get("is_viable", False) if opp_eval else False
+        if is_viable_opportunity and composite_score >= 50:
             return {
                 "stage": "CONFIRMED",
                 "stage_score": composite_score,

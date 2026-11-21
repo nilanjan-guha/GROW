@@ -77,11 +77,11 @@ class MarketValidator:
         return 555 <= minute <= 930
 
     @staticmethod
-    def validate_feed_freshness(df, max_delay_seconds=900, max_allowed_missing_gaps=2):
+    def validate_feed_freshness(df, max_delay_seconds=900, max_allowed_missing_gaps=2, candle_duration_seconds=300):
         """
         Validates OHLCV DataFrame integrity and freshness as single source of truth:
         - Rejects empty feeds or feeds with insufficient candle history (< 5 candles).
-        - Enforces candle completion (`now >= last_ts + 300`).
+        - Enforces candle completion (`now >= last_ts + candle_duration_seconds`).
         - Rejects stale previous session feeds during active market hours.
         - Rejects stalled feeds (> max_delay_seconds delay).
         - Rejects feeds with excessive missing candle gaps (> max_allowed_missing_gaps).
@@ -112,7 +112,7 @@ class MarketValidator:
 
         last_dt = df_eval.index[-1]
         last_ts = last_dt.timestamp() if hasattr(last_dt, 'timestamp') else float(last_dt)
-        candle_end = last_ts + 300  # 5-minute candle closes after 300 seconds
+        candle_end = last_ts + candle_duration_seconds  # Candle closes after configured duration
 
         is_completed = (now_ts >= candle_end)
 

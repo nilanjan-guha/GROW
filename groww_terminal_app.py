@@ -703,6 +703,12 @@ def smc_scan():
             market_regime_info=nifty_regime
         )
 
+        # Apply Daily ATR Fallback Confidence Penalty (15 pts if unmeasured baseline 1.8% was used)
+        atr_penalty = inst_res.get("confidence_penalty", 0)
+        if atr_penalty > 0:
+            inst_res["composite_score"] = max(0, inst_res["composite_score"] - atr_penalty)
+            inst_res["probability_pct"] = max(35.0, round(inst_res["probability_pct"] - (atr_penalty * 0.5), 1))
+
         # 6b. Audit for Unsignaled Explosive Moves (Missed Move Detection)
         MissedMoveDetector.audit_stock_move(
             symbol=symbol,
@@ -750,6 +756,8 @@ def smc_scan():
         res["nearest_obstacle"] = inst_res.get("nearest_obstacle", "None")
         res["exhaustion_risk"] = inst_res.get("exhaustion_risk", "LOW")
         res["risk_reward_ratio"] = inst_res.get("risk_reward_ratio", 0.0)
+        res["daily_atr_source"] = inst_res.get("daily_atr_source", "DEDICATED_DAILY_WILDER_ATR14")
+        res["confidence_penalty"] = atr_penalty
         
         # Enforce strict institutional action: if institutional engine is NEUTRAL, action MUST be NO TRADE
         if inst_res["direction"] != "NEUTRAL":

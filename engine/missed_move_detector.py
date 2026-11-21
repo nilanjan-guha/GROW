@@ -34,26 +34,31 @@ class MissedMoveDetector:
         )
         """)
         # Migration: Ensure unique index exists on existing databases
-        # Clean duplicates safely first by keeping the row with highest move_pct
+        # Clean duplicates safely first by keeping the row with highest move_pct and max id
         try:
             c.execute("""
             DELETE FROM missed_moves 
             WHERE id NOT IN (
-                SELECT id FROM (
-                    SELECT id, MAX(move_pct) 
-                    FROM missed_moves 
-                    GROUP BY symbol, direction, candle_end_time
-                )
+                SELECT MAX(id) 
+                FROM missed_moves 
+                GROUP BY symbol, direction, COALESCE(candle_end_time, 0)
             )
             """)
             c.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_missed_moves_unique 
             ON missed_moves (symbol, direction, candle_end_time)
             """)
+            conn.commit()
+            
+            # Verify index creation
+            c.execute("PRAGMA index_list(missed_moves)")
+            indexes = [r[1] for r in c.fetchall()]
+            if "idx_missed_moves_unique" not in indexes:
+                print("[MISSED MOVE MIGRATION ERROR] idx_missed_moves_unique could not be verified in schema.")
         except Exception as e:
-            print("[MISSED MOVE MIGRATION] Warning:", e)
-        conn.commit()
-        conn.close()
+            print("[MISSED MOVE MIGRATION CRITICAL ERROR] Failed to create unique index:", e)
+        finally:
+            conn.close()
 
     @staticmethod
     def audit_stock_move(symbol, df, active_signal_id=None, opp_eval=None):

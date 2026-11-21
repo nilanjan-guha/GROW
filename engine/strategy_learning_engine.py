@@ -139,7 +139,9 @@ class StrategyLearningEngine:
             # Time of day dimension
             trade_ts = float(t["timestamp"] or now)
             import datetime
-            dt = datetime.datetime.fromtimestamp(trade_ts)
+            import pytz
+            ist = pytz.timezone('Asia/Kolkata')
+            dt = datetime.datetime.fromtimestamp(trade_ts, tz=ist)
             t_bucket = StrategyLearningEngine.get_time_bucket(dt.hour, dt.minute)
             if t_bucket not in time_stats:
                 time_stats[t_bucket] = {"wins": 0, "losses": 0, "net_profit": 0.0, "net_loss": 0.0}
@@ -206,3 +208,48 @@ class StrategyLearningEngine:
         except Exception:
             pass
         return 1.0
+
+    @staticmethod
+    def get_combined_multiplier(strategy: str, market_regime: str = None, time_bucket: str = None) -> float:
+        """
+        Combines learned multipliers across dimensions safely:
+        - Primary Strategy (0.50x to 1.50x)
+        - Market Regime (0.70x to 1.30x)
+        - Time of Day (0.70x to 1.30x)
+        Only applies dimensions with statistically validated sample size.
+        Bounds overall multiplier between 0.40x and 1.60x to prevent uncontrolled compounding.
+        """
+        try:
+            conn = get_db_connection()
+            c = conn.cursor()
+            keys = [strategy]
+            if market_regime:
+                keys.append(f"REGIME_{market_regime}")
+            if time_bucket:
+                keys.append(f"TIME_{time_bucket}")
+
+            placeholders = ",".join("?" for _ in keys)
+            c.execute(f"SELECT dimension_key, weight_multiplier, sample_size FROM strategy_calibrations WHERE dimension_key IN ({placeholders})", keys)
+            rows = {r["dimension_key"]: (float(r["weight_multiplier"]), int(r["sample_size"])) for r in c.fetchall()}
+            conn.close()
+
+            # Start at base 1.0
+            strat_mult = 1.0
+            if strategy in rows and rows[strategy][1] >= StrategyLearningEngine.MIN_OBSERVATIONS:
+                strat_mult = rows[strategy][0]
+
+            regime_mult = 1.0
+            reg_key = f"REGIME_{market_regime}" if market_regime else None
+            if reg_key and reg_key in rows and rows[reg_key][1] >= StrategyLearningEngine.MIN_OBSERVATIONS:
+                regime_mult = rows[reg_key][0]
+
+            time_mult = 1.0
+            time_key = f"TIME_{time_bucket}" if time_bucket else None
+            if time_key and time_key in rows and rows[time_key][1] >= StrategyLearningEngine.MIN_OBSERVATIONS:
+                time_mult = rows[time_key][0]
+
+            # Weighted combination rather than blind multiplication
+            combined = strat_mult * (1.0 + (regime_mult - 1.0) * 0.5) * (1.0 + (time_mult - 1.0) * 0.5)
+            return round(min(1.60, max(0.40, combined)), 2)
+        except Exception:
+            return 1.0
