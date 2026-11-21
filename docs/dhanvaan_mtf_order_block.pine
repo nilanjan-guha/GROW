@@ -112,7 +112,7 @@ discountZoneColorInput          = input.color(  GREEN,      'Discount Zone',    
 // Sniper Scalp Engine Inputs
 enableSniperEngine              = input.bool(   true,       'Enable Sniper Retest Engine', group = SNIPER_GROUP)
 tradeModeOptionBuyer            = input.bool(   true,       'Option Buyer Mode (BUY ONLY on Call/Put Charts)', group = SNIPER_GROUP, tooltip = 'When enabled, only takes BUY setups on the current chart (CALL or PUT). Shorting/Selling premium is disabled so you only BUY momentum.')
-sniperRRRatio                   = input.float(  3.0,        'Sniper Target R:R Ratio (3, 4, 5, 6+)', minval=1.5, step=0.5, group = SNIPER_GROUP)
+sniperRRRatio                   = input.float(  2.5,        'Sniper Target R:R Ratio (Min 1:2, up to 1:10)', minval=1.5, maxval=10.0, step=0.5, group = SNIPER_GROUP)
 sniperRetraceRatio              = input.float(  0.5,        'Discount Retracement Entry (0.5 = 50%)', minval=0.2, maxval=0.79, step=0.05, group = SNIPER_GROUP)
 sniperMaxWaitBars               = input.int(    12,         'Max Wait Bars for Retest Fill', minval=3, maxval=30, group = SNIPER_GROUP)
 showSniperScoreboard            = input.bool(   true,       'Show Top-Right Scalp Scoreboard', group = SNIPER_GROUP)
@@ -125,7 +125,7 @@ ema50  = ta.ema(close, 50)
 ema200 = ta.ema(close, 200)
 useHtfConfluence = input.bool(true, '15M HTF Zone & Sweep Confluence (Multi-Timeframe)', group = SNIPER_GROUP)
 htfTimeframe     = input.timeframe('15', 'HTF Timeframe', group = SNIPER_GROUP)
-minRiskAtr       = input.float(0.8, 'Minimum Swing Size / Risk (ATR Multiple)', minval=0.3, step=0.1, group = SNIPER_GROUP)
+minRiskAtr       = input.float(0.4, 'Minimum Swing Size / Risk (ATR Multiple)', minval=0.2, step=0.1, group = SNIPER_GROUP)
 trailToBE        = input.bool(false, 'Trail SL to Break-Even (Off = Fixed Invalidation SL until hit)', group = SNIPER_GROUP)
 targetOppositeSwing = input.bool(false, 'Target Opposite Swing High/Low (Major Target)', group = SNIPER_GROUP)
 cooldownBarsInput   = input.int(3, 'Trade Cooldown Bars (Prevents Chop Spam)', minval=1, maxval=20, group = SNIPER_GROUP)
@@ -813,6 +813,9 @@ sniperBuyTrigger  = (hasVolDisplacement or anyBullObRetest or triggeredBullShift
 sniperSellTrigger = not tradeModeOptionBuyer and not isSqueeze and isTrendingMarket and hasVolDisplacement and htfPermitsShort and 
                     ((bearTrend and (triggeredBearShift or (sweepHigh and close < open) or obSupplyTouch)) or htfMajorSell)
 
+// Direct Immediate Fill on verified SMC Order Block Retest or Reversal Wick
+directSmcFill = anyBullObRetest and (close > open)
+
 // Arm Pending Sniper Orders on Major Shift, Sweeps & OB Retests
 canArmTrade = enableSniperEngine and not pendingOrder and (allowPyramidingTrades or not inTrade) and (bar_index - lastExitBar >= cooldownBarsInput)
 if canArmTrade
@@ -827,21 +830,37 @@ if canArmTrade
         // Tight structural SL: Placed cleanly under the order block / pivot base
         // In high-volatility option charts, cap SL to a maximum of 1.2x ATR or use microBuffer
         calcSL       = math.max(impulseLow - (atr14 * 0.15), impulseHigh - (atr14 * 1.5))
-        calcEntry    = rangeDist > 0 ? impulseHigh - (rangeDist * sniperRetraceRatio) : close
+        calcEntry    = directSmcFill ? close : (rangeDist > 0 ? impulseHigh - (rangeDist * sniperRetraceRatio) : close)
         riskDist     = calcEntry - calcSL
 
         // Filter out microscopic fakeouts: require meaningful risk distance >= minRiskAtr * ATR
         if riskDist >= (atr14 * minRiskAtr)
-            pendingOrder    := true
-            pendingDir      := 1
-            pendingEntry    := math.min(calcEntry, close)
-            pendingSL       := calcSL
-            // Target is calculated directly from the tight SL risk to give minimum 1:3 up to 1:5 R:R
-            targetHighPrice = pendingEntry + (riskDist * sniperRRRatio)
-            pendingTP       := targetHighPrice
-            pendingSetupBar := bar_index
-            pendingBox      := box.new(left=bar_index, top=pendingEntry, right=bar_index + 1, bottom=pendingSL,
-                                       bgcolor=colPendingLong, border_color=color.teal, border_style=line.style_dotted)
+            if directSmcFill
+                // Immediate Execution on pure SMC OB touch + green rejection wick
+                inTrade         := true
+                tradeDir        := 1
+                entryBarIdx     := bar_index
+                entryPrice      := close
+                stopLossPrice   := calcSL
+                takeProfitPrice := close + (riskDist * sniperRRRatio)
+
+                activeTPBox := box.new(left=entryBarIdx, top=takeProfitPrice, right=entryBarIdx + 1, bottom=entryPrice, 
+                                       bgcolor=colTPBox, border_color=color.teal, border_style=line.style_solid)
+                activeSLBox := box.new(left=entryBarIdx, top=entryPrice, right=entryBarIdx + 1, bottom=stopLossPrice, 
+                                       bgcolor=colSLBox, border_color=color.maroon, border_style=line.style_solid)
+                activeLbl   := label.new(entryBarIdx + 1, entryPrice, 
+                                         "BUY " + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
+                                         style=label.style_label_left, color=color(na), textcolor=color.teal, size=size.tiny)
+            else
+                pendingOrder    := true
+                pendingDir      := 1
+                pendingEntry    := math.min(calcEntry, close)
+                pendingSL       := calcSL
+                targetHighPrice = pendingEntry + (riskDist * sniperRRRatio)
+                pendingTP       := targetHighPrice
+                pendingSetupBar := bar_index
+                pendingBox      := box.new(left=bar_index, top=pendingEntry, right=bar_index + 1, bottom=pendingSL,
+                                           bgcolor=colPendingLong, border_color=color.teal, border_style=line.style_dotted)
 
     else if sniperSellTrigger
         // Pick best structural high: internalHigh, swingHigh, or local pivot high
