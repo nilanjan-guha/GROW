@@ -112,8 +112,8 @@ discountZoneColorInput          = input.color(  GREEN,      'Discount Zone',    
 // Sniper Scalp Engine Inputs
 enableSniperEngine              = input.bool(   true,       'Enable Sniper Retest Engine', group = SNIPER_GROUP)
 tradeModeOptionBuyer            = input.bool(   true,       'Option Buyer Mode (BUY ONLY on Call/Put Charts)', group = SNIPER_GROUP, tooltip = 'When enabled, only takes BUY setups on the current chart (CALL or PUT). Shorting/Selling premium is disabled so you only BUY momentum.')
-allowPyramidingTrades           = input.bool(   true,       'Allow Multi-Trade Pyramiding (Take 3-4 Setups in Trend)', group = SNIPER_GROUP, tooltip = 'Allows entering new continuation setups on subsequent BOS / OB retests even while a previous runner trade is still open, capturing the entire 30 to 350+ move!')
-sniperRRRatio                   = input.float(  2.5,        'Sniper Target R:R Ratio (Min 1:2, up to 1:10)', minval=1.5, maxval=10.0, step=0.5, group = SNIPER_GROUP)
+allowPyramidingTrades           = input.bool(   false,      'Single Trade Mode (Hold Full Move, No Mid-Chop Re-entries)', group = SNIPER_GROUP, tooltip = 'When disabled, waits until the active runner finishes its full target before looking for another setup. Prevents taking 10-20 choppy trades during consolidation.')
+sniperRRRatio                   = input.float(  3.0,        'Sniper Target R:R Ratio (Min 1:3 for Big Moves)', minval=2.0, maxval=10.0, step=0.5, group = SNIPER_GROUP, tooltip = 'Rides the big move (e.g. 30 -> 80+) instead of exiting for small scalps.')
 sniperRetraceRatio              = input.float(  0.5,        'Discount Retracement Entry (0.5 = 50%)', minval=0.2, maxval=0.79, step=0.05, group = SNIPER_GROUP)
 sniperMaxWaitBars               = input.int(    12,         'Max Wait Bars for Retest Fill', minval=3, maxval=30, group = SNIPER_GROUP)
 showSniperScoreboard            = input.bool(   true,       'Show Top-Right Scalp Scoreboard', group = SNIPER_GROUP)
@@ -736,28 +736,35 @@ masterBearTrend = not useHtfConfluence or htfBearishTrend
 bullTrend = masterBullTrend and (not trendFilterEma or (close >= ema50) or (internalTrend.bias == BULLISH))
 bearTrend = masterBearTrend and (not trendFilterEma or (close <= ema50) or (internalTrend.bias == BEARISH))
 
-// 1M Pullback & Reversal Confirmation: Price tests 1M/15M Demand Order Block or pulls back into discount after BOS
-obDemandTouch = not na(internalLow.currentLevel) and (low <= internalLow.currentLevel + (atr14 * 0.75)) and (close > open)
-obSupplyTouch = not na(internalHigh.currentLevel) and (high >= internalHigh.currentLevel - (atr14 * 0.75)) and (close < open)
-
-// Structural Order Block Retest: Price tests the high of the most recent internal/swing bullish order block
-bool anyBullObRetest = false
+// 1M Pullback & Reversal Confirmation into Institutional Zones:
+// Only triggers when price is IN a Demand Order Block zone or sweeping a key structural low
+bool inDemandObZone = false
 if internalOrderBlocks.size() > 0
-    recentOb = internalOrderBlocks.get(0)
-    if recentOb.bias == BULLISH and low <= recentOb.barHigh and close >= recentOb.barLow and close > open
-        anyBullObRetest := true
+    for i = 0 to math.min(internalOrderBlocks.size() - 1, 4)
+        ob = internalOrderBlocks.get(i)
+        if ob.bias == BULLISH and low <= ob.barHigh and close >= ob.barLow
+            inDemandObZone := true
+            break
+
+// Confirmed Demand Order Block Reversal: price dips into OB zone and closes green
+obDemandTouch = inDemandObZone and (close > open)
+
+// Structural Order Block Retest with rejection
+bool anyBullObRetest = inDemandObZone and (close > open) and (close >= high[1] or close >= (high + low)/2.0)
 
 // Major HTF 15M Reversal / Pullback: 15M Demand Discount or Liquidity Sweep turning green
-htfMajorBuy  = useHtfConfluence and masterBullTrend and (htfSweepLow or (htfInDiscount and sweepLow) or anyBullObRetest) and (close > open)
+htfMajorBuy  = useHtfConfluence and masterBullTrend and (htfSweepLow or (htfInDiscount and (sweepLow or inDemandObZone))) and (close > open)
 htfMajorSell = useHtfConfluence and masterBearTrend and (htfSweepHigh or (not htfInDiscount and sweepHigh)) and (close < open)
 
-// 1M Reversal / Continuation Trigger Aligned with 15M Trend:
-// Takes trade ONLY when 15M trend is bullish AND 1M produces a confirmed reversal pullback (sweepLow, OB tap, or BOS continuation)
-sniperBuyTrigger  = masterBullTrend and (triggeredBullShift or anyBullObRetest or (sweepLow and close > open) or obDemandTouch or htfMajorBuy)
-sniperSellTrigger = not tradeModeOptionBuyer and masterBearTrend and (triggeredBearShift or (sweepHigh and close < open) or obSupplyTouch or htfMajorSell)
+// 1M Quality Entry Condition: 
+// 1) 15M trend must be BULLISH
+// 2) Price MUST be testing an institutional Demand Order Block OR performing a 1M liquidity sweep of low
+// 3) Clean bullish reversal rejection (close > open)
+sniperBuyTrigger  = masterBullTrend and ((inDemandObZone and close > open) or (sweepLow and close > open) or htfMajorBuy)
+sniperSellTrigger = not tradeModeOptionBuyer and masterBearTrend and ((sweepHigh and close < open) or obSupplyTouch or htfMajorSell)
 
 // Direct Immediate Fill on verified SMC Order Block Retest or Reversal Wick
-directSmcFill = anyBullObRetest and (close > open)
+directSmcFill = (inDemandObZone or sweepLow) and (close > open)
 
 // Arm Pending Sniper Orders on Major Shift, Sweeps & OB Retests
 canArmTrade = enableSniperEngine and not pendingOrder and (allowPyramidingTrades or not inTrade) and (bar_index - lastExitBar >= cooldownBarsInput)
