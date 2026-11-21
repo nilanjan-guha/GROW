@@ -90,6 +90,7 @@ class GrowwSectorEngine:
                     new_stock_to_sector_map[stk["symbol"]] = {
                         "sector": s_name,
                         "bias": "BULLISH",
+                        "sector_change": change_pct,
                         "relative_strength": stk.get("relative_strength", 0.0)
                     }
                 if bull_count >= 3:
@@ -119,6 +120,7 @@ class GrowwSectorEngine:
                     new_stock_to_sector_map[stk["symbol"]] = {
                         "sector": s_name,
                         "bias": "BEARISH",
+                        "sector_change": change_pct,
                         "relative_strength": stk.get("relative_strength", 0.0)
                     }
                 if bear_count >= 3:

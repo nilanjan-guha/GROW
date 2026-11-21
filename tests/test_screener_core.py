@@ -337,6 +337,18 @@ class TestIntradayScreenerCore(unittest.TestCase):
         self.assertIn("conviction_score", res)
         self.assertIn("reasons", res)
         self.assertIn("rs_nifty", res)
+        self.assertIn("rs_accel", res)
+
+        # Test true RS acceleration calculation with distinct stock vs nifty returns
+        rs_calc = OpportunityRankingEngine.calculate_relative_strength_acceleration(
+            stock_df=self.df_5m,
+            nifty_df=self.df_5m,
+            sector_change_pct=1.0
+        )
+        self.assertIn("rs_accel_3", rs_calc)
+        self.assertIn("rs_accel_6", rs_calc)
+        # Since stock and nifty are identical in this synthetic check, RS acceleration against benchmark is 0.0
+        self.assertEqual(rs_calc["rs_accel_3"], 0.0)
 
         ranked = OpportunityRankingEngine.rank_top_opportunities([res], top_n=3)
         self.assertIn("top_bullish", ranked)

@@ -67,17 +67,40 @@ class OpportunityRankingEngine:
         rs_nifty = round(stock_change_pct - nifty_change_pct, 2)
         rs_sector = round(stock_change_pct - sector_change_pct, 2)
 
-        # Multi-window RS acceleration: 3-candle and 6-candle delta
+        # Multi-window RS acceleration: 3-candle and 6-candle delta relative to NIFTY
         rs_accel_3 = 0.0
         rs_accel_6 = 0.0
+        
+        # Calculate stock return over last 3 and 6 candles
+        stock_ret_3 = 0.0
         if len(sc) >= 4:
             c_3 = float(sc.iloc[-3])
-            pct_3 = float(((sc.iloc[-1] - c_3) / c_3) * 100) if c_3 > 0 else 0.0
-            rs_accel_3 = round(pct_3, 2)
+            stock_ret_3 = float(((sc.iloc[-1] - c_3) / c_3) * 100) if c_3 > 0 else 0.0
+            
+        stock_ret_6 = 0.0
         if len(sc) >= 7:
             c_6 = float(sc.iloc[-6])
-            pct_6 = float(((sc.iloc[-1] - c_6) / c_6) * 100) if c_6 > 0 else 0.0
-            rs_accel_6 = round(pct_6, 2)
+            stock_ret_6 = float(((sc.iloc[-1] - c_6) / c_6) * 100) if c_6 > 0 else 0.0
+
+        # Calculate NIFTY return over matching 3 and 6 candles if available
+        nifty_ret_3 = 0.0
+        nifty_ret_6 = 0.0
+        if nifty_df is not None and not nifty_df.empty:
+            n_df = nifty_df.copy()
+            if not pd.api.types.is_datetime64_any_dtype(n_df.index):
+                n_df.index = pd.to_datetime(n_df.index)
+            today_nifty = n_df[n_df.index.date == today_date] if today_date else n_df
+            if not today_nifty.empty:
+                nc = today_nifty['Close']
+                if len(nc) >= 4:
+                    nc_3 = float(nc.iloc[-3])
+                    nifty_ret_3 = float(((nc.iloc[-1] - nc_3) / nc_3) * 100) if nc_3 > 0 else 0.0
+                if len(nc) >= 7:
+                    nc_6 = float(nc.iloc[-6])
+                    nifty_ret_6 = float(((nc.iloc[-1] - nc_6) / nc_6) * 100) if nc_6 > 0 else 0.0
+
+        rs_accel_3 = round(stock_ret_3 - nifty_ret_3, 2)
+        rs_accel_6 = round(stock_ret_6 - nifty_ret_6, 2)
 
         return {
             "stock_change_pct": round(stock_change_pct, 2),

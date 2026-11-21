@@ -436,6 +436,7 @@ def background_screener_worker():
     last_outcome_check = 0
     last_market_poll = 0
     latest_dfs = {}
+    fno_universe_index = 0
     while True:
         try:
             now = time.time()
@@ -493,9 +494,23 @@ def background_screener_worker():
                 except Exception:
                     pass
 
+                # Build Priority Queue + Rotating Slice across full 219 F&O Universe
                 watchlist_stks = [x["symbol"] for x in (screener_state["bullish_momentum_watchlist"] + screener_state["bearish_momentum_watchlist"])]
                 active_db_symbols = list(get_active_signal_symbols())
-                all_stk_symbols = list(dict.fromkeys(watchlist_stks + active_db_symbols))
+                
+                # Full universe rotation
+                fno_list = screener_state.get("fno_universe", [])
+                universe_batch_size = 25
+                if fno_list:
+                    if fno_universe_index >= len(fno_list):
+                        fno_universe_index = 0
+                    universe_slice = [f"{s}.NS" if not s.endswith(".NS") else s for s in fno_list[fno_universe_index : fno_universe_index + universe_batch_size]]
+                    fno_universe_index += universe_batch_size
+                else:
+                    universe_slice = []
+
+                # Combine priority symbols (top sector stocks + active signals) with universe rotating slice
+                all_stk_symbols = list(dict.fromkeys(watchlist_stks + active_db_symbols + universe_slice))
                 
                 candidates_for_ranking = []
                 nifty_cached_df = screener_state.get("raw_market_cache", {}).get("^NSEI", {}).get("df")
@@ -514,10 +529,15 @@ def background_screener_worker():
                             }
                             latest_dfs[sym] = cdf
 
+                            # Enforce completed candle validation
+                            feed_val = MarketValidator.validate_feed_freshness(cdf, max_delay_seconds=300, candle_duration_seconds=300)
+                            is_comp = feed_val.get("is_completed_candle", True)
+                            eval_cdf = cdf if is_comp else cdf.iloc[:-1]
+
                             # Execute OpportunityRankingEngine live across candidate
                             sec_info = groww_sector_engine.stock_to_sector_map.get(sym, {})
                             sec_name = sec_info.get("sector", "GENERAL")
-                            sec_chg = sec_info.get("relative_strength", 0.0)
+                            sec_chg = sec_info.get("sector_change", 0.0)
                             
                             # Retrieve enriched cache if present
                             enriched = screener_state.get("enriched_signals_cache", {}).get(sym, {}).get("data", {})
@@ -531,7 +551,7 @@ def background_screener_worker():
                                 "exhaustion_risk": enriched.get("exhaustion_risk", "LOW")
                             }
                             eval_res = OpportunityRankingEngine.evaluate_stock_opportunity(
-                                stock_df=cdf,
+                                stock_df=eval_cdf,
                                 symbol=sym,
                                 sector_name=sec_name,
                                 sector_change=sec_chg,
@@ -543,7 +563,7 @@ def background_screener_worker():
                                 candidates_for_ranking.append(eval_res)
                     except Exception:
                         pass
-                    time.sleep(0.3)
+                    time.sleep(0.15)
 
                 # Rank and update top opportunities globally
                 if candidates_for_ranking:
@@ -811,11 +831,15 @@ def smc_scan():
         res["catalyst_impact"] = ai_intel.get("catalyst_impact", "")
         res["risk_rating"] = ai_intel.get("risk_rating", "MODERATE")
         res["anomaly_info"] = anomaly_info
+        res["is_viable"] = inst_res.get("is_viable", False)
+        res["suggested_sl"] = inst_res.get("suggested_sl")
+        res["suggested_tp1"] = inst_res.get("suggested_tp1")
+        res["suggested_tp2"] = inst_res.get("suggested_tp2")
         res["potential_pct"] = inst_res.get("potential_pct", 0.0)
         res["potential_tp2_pct"] = inst_res.get("potential_tp2_pct", 0.0)
+        res["risk_reward_ratio"] = inst_res.get("risk_reward_ratio", 0.0)
         res["nearest_obstacle"] = inst_res.get("nearest_obstacle", "None")
         res["exhaustion_risk"] = inst_res.get("exhaustion_risk", "LOW")
-        res["risk_reward_ratio"] = inst_res.get("risk_reward_ratio", 0.0)
         res["daily_atr_source"] = inst_res.get("daily_atr_source", "DEDICATED_DAILY_WILDER_ATR14")
         res["confidence_penalty"] = atr_penalty
         
@@ -896,6 +920,7 @@ def get_ranked_opportunities_endpoint():
             df_sym = item["df"]
             sec_info = groww_sector_engine.stock_to_sector_map.get(sym, {})
             sec_name = sec_info.get("sector", "GENERAL")
+            sec_chg = sec_info.get("sector_change", 0.0)
             
             # Retrieve enriched cache if present
             enriched = screener_state.get("enriched_signals_cache", {}).get(sym, {}).get("data", {})
@@ -912,7 +937,7 @@ def get_ranked_opportunities_endpoint():
                 stock_df=df_sym,
                 symbol=sym,
                 sector_name=sec_name,
-                sector_change=0.0,
+                sector_change=sec_chg,
                 nifty_df=nifty_df,
                 vwap=enriched.get("vwap"),
                 opp_eval=opp_eval
