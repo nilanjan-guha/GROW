@@ -483,6 +483,26 @@
                 if (data.success && data.ranked) {
                     renderRankedOpportunitiesUI(data.ranked);
                     document.getElementById('rankSyncTime').innerText = 'Updated ' + new Date().toLocaleTimeString();
+
+                    // Auto-scan top ranked opportunities to detect any confirmed trade setups
+                    const topAll = [...(data.ranked.top_bullish || []), ...(data.ranked.top_bearish || [])];
+                    for (const cand of topAll) {
+                        if (cand && cand.symbol && !activeConfirmedTrades[cand.symbol]) {
+                            // Check SMC status in background without overriding user's radar
+                            fetch(`/api/market/smc-scan?symbol=${encodeURIComponent(cand.symbol)}`)
+                                .then(r => r.json())
+                                .then(d => {
+                                    if (d && d.success && d.smc) {
+                                        const smc = d.smc;
+                                        if (smc.action && (smc.action.includes('BUY') || smc.action.includes('SELL'))) {
+                                            log(`🎯 [EXACT ENTRY FROM RANKINGS] ${cand.symbol} => ${smc.action} | SL: ₹${smc.suggested_sl} | TP1: ₹${smc.suggested_tp1}`, 'ENTRY');
+                                            addOrUpdateConfirmedTrade(cand.symbol, smc);
+                                        }
+                                    }
+                                })
+                                .catch(() => {});
+                        }
+                    }
                 }
             } catch (e) {}
         }
