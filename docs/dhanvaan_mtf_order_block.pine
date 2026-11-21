@@ -764,9 +764,20 @@ if inAccumulationArea
 // Has price recently touched/pulled back into the Demand Zone?
 bool hadRecentDemandPullback = (bar_index - lastDemandZoneTouchBar) <= 15
 
-// EXACT TRIGGER FOR THE RED CIRCLED SETUPS:
-// Fires right on the candle that tests the Order Block zone / sweep floor
-bool sniperZoneTestBuy = (obRetestTouch or sweepReversalTouch or (inDemandObZone and close > open) or (structureRetestTouch and close > open))
+// Reversal Wick & Confirmation Filter:
+// In a downtrend pullback, NEVER catch a falling red knife without a bottom rejection candle.
+// Valid reversal signature:
+// 1) Bullish Green Candle (close > open)
+// 2) Bottom rejection wick (close is in the upper half of the bar range: close >= (high + low)/2.0)
+// 3) Reclaiming above previous bar close or high (close >= close[1])
+bool bullishReversalCandle = (close > open) and (close >= (high + low) / 2.0) and (close >= close[1])
+
+// In addition, ensure price is not deep inside a continuous series of red waterfall candles
+bool notFallingKnife = (close > low[1]) or (close > open)
+
+// EXACT TRIGGER FOR THE CLEAN RUNNER TRADES:
+// Only fires when price is in an accumulation area AND confirms with a green reversal rejection
+bool sniperZoneTestBuy = inAccumulationArea and bullishReversalCandle and notFallingKnife
 
 sniperBuyTrigger  = bullTrend and sniperZoneTestBuy
 sniperSellTrigger = not tradeModeOptionBuyer and bearTrend and (triggeredBearShift or (sweepHigh and close < open))
