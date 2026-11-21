@@ -143,7 +143,7 @@
         let activeWatchlist = [];
         let watchlistIndex = 0;
         let sectorCountdown = 300; // 5 minutes
-        let bestActiveSignal = null; // Holds the single best confirmed BUY/SELL signal across all scanned stocks
+        let activeConfirmedTrades = {}; // Map of all confirmed trades: symbol -> { signal_id, symbol, smc, time }
 
         function log(msg, type='INFO') {
             const feed = document.getElementById('terminalFeed');
@@ -351,32 +351,60 @@
             scanStock(stk);
         }
 
-        function updateConfirmedBanner(symbol, smc) {
+        function renderConfirmedBanner() {
             const alertBox = document.getElementById('confirmedTradeAlert');
             const alertDetails = document.getElementById('alertDetails');
             const alertTime = document.getElementById('alertTime');
-            if (!smc || !smc.action || (!smc.action.includes('BUY') && !smc.action.includes('SELL'))) {
+
+            const tradeList = Object.values(activeConfirmedTrades);
+            if (tradeList.length === 0) {
                 alertBox.style.display = 'none';
                 return;
             }
-            const isBuy = smc.action.includes('BUY');
-            alertBox.style.display = 'block';
-            alertBox.style.borderColor = isBuy ? 'var(--accent-green)' : 'var(--accent-red)';
-            alertBox.style.background = isBuy 
-                ? 'linear-gradient(90deg, rgba(0,208,156,0.18), rgba(15,23,42,0.95))' 
-                : 'linear-gradient(90deg, rgba(235,90,90,0.18), rgba(15,23,42,0.95))';
-            
-            const statusText = smc.signal_status || 'CONFIRMED (Completed Candle)';
-            const isProv = statusText.includes('PROVISIONAL');
-            const badgeColor = isProv ? '#f59e0b' : (isBuy ? 'var(--accent-green)' : 'var(--accent-red)');
-            const confBadge = `<span style="background:rgba(255,255,255,0.06); border:1px solid ${badgeColor}; color:${badgeColor}; padding:1px 6px; border-radius:3px; font-size:0.62rem; margin-right:6px;">${statusText}</span>`;
-            if (alertTime) alertTime.innerHTML = `${confBadge} READY TO EXECUTE`;
 
-            const sign = isBuy ? '+' : '-';
-            const pot1 = smc.potential_pct ? `(${sign}${smc.potential_pct}% room)` : '';
-            const pot2 = smc.potential_tp2_pct ? `(${sign}${smc.potential_tp2_pct}%)` : '';
-            const rrText = smc.risk_reward_ratio ? `&nbsp;|&nbsp; RR: <span style="color:#a855f7;">1:${smc.risk_reward_ratio}</span>` : '';
-            alertDetails.innerHTML = `<span style="color:${isBuy ? 'var(--accent-green)' : 'var(--accent-red)'}">🔥 BEST CONFIRMED TRADE: ${isBuy ? 'BUY / CALL (CE)' : 'SELL / PUT (PE)'}</span> <strong>${symbol.replace('.NS', '')}</strong> @ ₹${Number(smc.current_price).toFixed(1)} &nbsp;|&nbsp; SL: <span style="color:#f59e0b;">₹${smc.suggested_sl}</span> &nbsp;|&nbsp; Target 1: <span style="color:#38bdf8;">₹${smc.suggested_tp1} ${pot1}</span> ${smc.suggested_tp2 ? '&nbsp;|&nbsp; Target 2: ₹' + smc.suggested_tp2 + ' ' + pot2 : ''} ${rrText}`;
+            alertBox.style.display = 'block';
+            alertBox.style.borderColor = 'var(--accent-green)';
+            alertBox.style.background = 'linear-gradient(90deg, rgba(0,208,156,0.12), rgba(15,23,42,0.95))';
+            alertTime.innerHTML = `<span style="background:rgba(255,255,255,0.06); border:1px solid var(--accent-green); color:var(--accent-green); padding:1px 6px; border-radius:3px; font-size:0.62rem; margin-right:6px;">${tradeList.length} CONFIRMED ACTIVE</span> READY TO EXECUTE`;
+
+            // Sort trades by highest score descending
+            const sortedTrades = [...tradeList].sort((a, b) => (b.smc.composite_score || 0) - (a.smc.composite_score || 0));
+
+            let html = '';
+            sortedTrades.forEach((t, idx) => {
+                const s = t.symbol;
+                const smc = t.smc;
+                const isBuy = smc.action.includes('BUY');
+                const sign = isBuy ? '+' : '-';
+                const pot1 = smc.potential_pct ? `(${sign}${smc.potential_pct}% room)` : '';
+                const pot2 = smc.potential_tp2_pct ? `(${sign}${smc.potential_tp2_pct}%)` : '';
+                const rrText = smc.risk_reward_ratio ? `&nbsp;|&nbsp; RR: <span style="color:#a855f7;">1:${smc.risk_reward_ratio}</span>` : '';
+                const borderBottom = idx < sortedTrades.length - 1 ? 'border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 6px; margin-bottom: 6px;' : '';
+
+                html += `
+                <div style="${borderBottom}">
+                    <span style="color:${isBuy ? 'var(--accent-green)' : 'var(--accent-red)'}">🔥 #${idx + 1} ${isBuy ? 'BUY / CALL (CE)' : 'SELL / PUT (PE)'}</span> 
+                    <strong>${s.replace('.NS', '')}</strong> @ ₹${Number(smc.current_price).toFixed(1)} 
+                    &nbsp;|&nbsp; SL: <span style="color:#f59e0b;">₹${smc.suggested_sl}</span> 
+                    &nbsp;|&nbsp; Target 1: <span style="color:#38bdf8;">₹${smc.suggested_tp1} ${pot1}</span> 
+                    ${smc.suggested_tp2 ? '&nbsp;|&nbsp; Target 2: ₹' + smc.suggested_tp2 + ' ' + pot2 : ''} 
+                    ${rrText}
+                </div>`;
+            });
+            alertDetails.innerHTML = html;
+        }
+
+        function addOrUpdateConfirmedTrade(symbol, smc) {
+            if (!smc || !smc.action || (!smc.action.includes('BUY') && !smc.action.includes('SELL'))) {
+                return;
+            }
+            activeConfirmedTrades[symbol] = {
+                signal_id: smc.signal_id || null,
+                symbol: symbol,
+                smc: smc,
+                time: Date.now()
+            };
+            renderConfirmedBanner();
         }
 
         async function syncActiveTradeBanner() {
@@ -384,65 +412,42 @@
                 const res = await fetch('/api/signals/active');
                 const data = await res.json();
                 if (data.success && data.active_signals) {
-                    const activeList = data.active_signals;
-                    
-                    // Hydrate banner on initial load if bestActiveSignal is null
-                    if (!bestActiveSignal && activeList.length > 0) {
-                        // Pick the active signal with highest composite score
-                        const sortedActive = [...activeList].sort((a, b) => (b.score || 0) - (a.score || 0));
-                        const top = sortedActive[0];
-                        bestActiveSignal = {
-                            signal_id: top.id,
-                            symbol: top.symbol,
-                            smc: {
-                                action: top.direction,
-                                current_price: top.entry_price,
-                                suggested_sl: top.stop_loss,
-                                suggested_tp1: top.target_1,
-                                suggested_tp2: top.target_2,
-                                composite_score: top.score,
-                                signal_status: 'CONFIRMED (Completed Candle)'
-                            },
-                            time: Date.now()
-                        };
-                        updateConfirmedBanner(top.symbol, bestActiveSignal.smc);
-                        return;
-                    }
+                    const activeDbList = data.active_signals;
+                    const activeDbIds = new Set(activeDbList.map(s => s.id));
+                    const activeDbSymbols = new Set(activeDbList.map(s => s.symbol));
 
-                    // Synchronize existing banner by exact signal_id
-                    if (bestActiveSignal) {
-                        const targetId = bestActiveSignal.signal_id;
-                        const stillActive = targetId 
-                            ? activeList.some(s => s.id === targetId && s.outcome === 'ACTIVE')
-                            : activeList.some(s => s.symbol === bestActiveSignal.symbol && s.outcome === 'ACTIVE');
-
-                        if (!stillActive) {
-                            // Current trade resolved (hit TP/SL or closed) - advance to next highest score active trade
-                            if (activeList.length > 0) {
-                                const sortedActive = [...activeList].sort((a, b) => (b.score || 0) - (a.score || 0));
-                                const nextBest = sortedActive[0];
-                                bestActiveSignal = {
-                                    signal_id: nextBest.id,
-                                    symbol: nextBest.symbol,
-                                    smc: {
-                                        action: nextBest.direction,
-                                        current_price: nextBest.entry_price,
-                                        suggested_sl: nextBest.stop_loss,
-                                        suggested_tp1: nextBest.target_1,
-                                        suggested_tp2: nextBest.target_2,
-                                        composite_score: nextBest.score,
-                                        signal_status: 'CONFIRMED (Completed Candle)'
-                                    },
-                                    time: Date.now()
-                                };
-                                updateConfirmedBanner(nextBest.symbol, bestActiveSignal.smc);
-                            } else {
-                                bestActiveSignal = null;
-                                const alertBox = document.getElementById('confirmedTradeAlert');
-                                if (alertBox) alertBox.style.display = 'none';
-                            }
+                    // Hydrate all active signals from DB into activeConfirmedTrades
+                    activeDbList.forEach(item => {
+                        const sym = item.symbol;
+                        if (!activeConfirmedTrades[sym]) {
+                            activeConfirmedTrades[sym] = {
+                                signal_id: item.id,
+                                symbol: sym,
+                                smc: {
+                                    action: item.direction,
+                                    current_price: item.entry_price,
+                                    suggested_sl: item.stop_loss,
+                                    suggested_tp1: item.target_1,
+                                    suggested_tp2: item.target_2,
+                                    composite_score: item.score,
+                                    signal_status: 'CONFIRMED (Completed Candle)'
+                                },
+                                time: Date.now()
+                            };
                         }
-                    }
+                    });
+
+                    // Remove trades that hit SL/TP and are no longer ACTIVE in SQLite
+                    Object.keys(activeConfirmedTrades).forEach(sym => {
+                        const tr = activeConfirmedTrades[sym];
+                        if (tr.signal_id && !activeDbIds.has(tr.signal_id)) {
+                            delete activeConfirmedTrades[sym];
+                        } else if (!tr.signal_id && !activeDbSymbols.has(sym)) {
+                            delete activeConfirmedTrades[sym];
+                        }
+                    });
+
+                    renderConfirmedBanner();
                 }
             } catch (e) {}
         }
@@ -459,13 +464,7 @@
                         const smc = d.smc;
                         if (smc.action.includes('BUY') || smc.action.includes('SELL')) {
                             log(`🎯 [EXACT ENTRY FOUND] ${item.symbol} (${item.bias}) => ${smc.action} | SL: ₹${smc.suggested_sl} | TP1: ₹${smc.suggested_tp1}`, 'ENTRY');
-                            
-                            // Update Top Banner with highest composite score confirmed trade
-                            const curScore = smc.composite_score || 0;
-                            if (!bestActiveSignal || curScore >= (bestActiveSignal.smc.composite_score || 0)) {
-                                bestActiveSignal = { signal_id: smc.signal_id || null, symbol: item.symbol, smc: smc, time: Date.now() };
-                                updateConfirmedBanner(item.symbol, smc);
-                            }
+                            addOrUpdateConfirmedTrade(item.symbol, smc);
                         }
                     }
                 } catch (e) {}
@@ -486,13 +485,7 @@
                     const smc = data.smc;
                     if (smc.action.includes('BUY') || smc.action.includes('SELL')) {
                         log(`🎯 [LIVE SIGNAL DETECTED] ${target.symbol} => ${smc.action} | SL: ₹${smc.suggested_sl} | TP1: ₹${smc.suggested_tp1}`, 'ENTRY');
-                        
-                        // Update Top Banner only if this has highest conviction/score or prior trade completed
-                        const newScore = smc.composite_score || 0;
-                        if (!bestActiveSignal || newScore >= (bestActiveSignal.smc.composite_score || 0) || (Date.now() - bestActiveSignal.time > 300000)) {
-                            bestActiveSignal = { signal_id: smc.signal_id || null, symbol: target.symbol, smc: smc, time: Date.now() };
-                            updateConfirmedBanner(target.symbol, smc);
-                        }
+                        addOrUpdateConfirmedTrade(target.symbol, smc);
                     } else {
                         log(`[Scan: ${target.symbol}] Price: ₹${smc.current_price.toFixed(1)} - Waiting for OB or Breakout trigger.`, 'NO_ENTRY');
                     }
@@ -500,12 +493,6 @@
                     // Only refresh radar numbers if user is actively looking at this stock
                     if (target.symbol === currentStockSymbol) {
                         renderRadarData(target.symbol, smc);
-                        // If current on-screen stock is NO TRADE and matches top banner, invalidate stale banner
-                        if ((!smc.action.includes('BUY') && !smc.action.includes('SELL')) && bestActiveSignal && bestActiveSignal.symbol === target.symbol) {
-                            bestActiveSignal = null;
-                            const alertBox = document.getElementById('confirmedTradeAlert');
-                            if (alertBox) alertBox.style.display = 'none';
-                        }
                     }
                 }
             } catch (e) {}
@@ -575,14 +562,9 @@
 
                     if (smc.action.includes('BUY') || smc.action.includes('SELL')) {
                         log(`🎯 [EXACT ENTRY ACTIVE] ${symbol} => ${smc.action} | Stop Loss: ₹${smc.suggested_sl} | TP: ₹${smc.suggested_tp1}`, 'ENTRY');
+                        addOrUpdateConfirmedTrade(symbol, smc);
                     } else {
                         log(`[${symbol} Verdict] ${smc.action} - ${smc.reasoning}`, 'NO_ENTRY');
-                        // Invalidate stale banner if user clicked this stock and it evaluates to NO TRADE
-                        if (bestActiveSignal && (bestActiveSignal.symbol === symbol || bestActiveSignal.symbol === symbol.replace('.NS', '') || `${bestActiveSignal.symbol}.NS` === symbol)) {
-                            bestActiveSignal = null;
-                            const alertBox = document.getElementById('confirmedTradeAlert');
-                            if (alertBox) alertBox.style.display = 'none';
-                        }
                     }
                 }
             } catch (e) {
