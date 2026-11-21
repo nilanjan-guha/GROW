@@ -91,16 +91,19 @@ INDEX_TICKER_MAP = {
 }
 
 def auto_connect_groww():
-    """Auto connect to Groww API using token + secret in .env and fetch all F&O stocks dynamically"""
+    """Auto connect to Groww API using token in .env and fetch all F&O stocks dynamically"""
     api_token = os.getenv("GROWW_API_TOKEN")
     api_secret = os.getenv("GROWW_API_SECRET")
     if not api_token:
         return False
     try:
+        token = api_token
+        # Try exchange for access token if api_secret is provided; fallback to api_token if already a JWT
         if api_secret:
-            token = GrowwAPI.get_access_token(api_key=api_token, secret=api_secret)
-        else:
-            token = api_token
+            try:
+                token = GrowwAPI.get_access_token(api_key=api_token, secret=api_secret)
+            except Exception:
+                token = api_token
         client = GrowwAPI(token)
 
         try:
@@ -874,7 +877,7 @@ if __name__ == "__main__":
         sorted_sectors = calculate_dynamic_sectors()
         screener_state["sectors"] = sorted_sectors
 
-        valid_sectors = [s for s in sorted_sectors.values() if (s.get("top_5") and len(s.get("top_5")) >= 3)]
+        valid_sectors = [s for s in sorted_sectors.values() if (s.get("top_5") and len(s.get("top_5")) >= 1)]
         bull_sectors = [s for s in valid_sectors if s["is_bullish"]][:3]
         bear_sectors = sorted([s for s in valid_sectors if not s["is_bullish"]], key=lambda x: x["change"])[:3]
 
