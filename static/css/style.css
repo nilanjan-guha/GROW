@@ -370,12 +370,37 @@ header {
 }
 
 .wheel-ring {
-    width: 18px;
-    height: 18px;
-    border: 2px solid var(--neon-cyan);
-    border-top-color: transparent;
+    width: 20px;
+    height: 20px;
+    border: 2px solid rgba(0, 240, 255, 0.25);
+    border-top: 2px solid var(--neon-cyan);
+    border-right: 2px solid var(--neon-cyan);
     border-radius: 50%;
-    animation: spinRing 2s linear infinite;
+    animation: spinRing 1.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+    box-shadow: 0 0 10px rgba(0, 240, 255, 0.6);
+    flex-shrink: 0;
+}
+
+.sector-radar-telemetry {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.radar-ping-dot {
+    width: 8px;
+    height: 8px;
+    background: var(--neon-cyan);
+    border-radius: 50%;
+    box-shadow: 0 0 8px var(--neon-cyan);
+    animation: pulseRing 1.6s infinite;
+}
+
+.hologram-coords-text {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.68rem;
+    color: var(--neon-cyan);
+    letter-spacing: 0.5px;
 }
 
 @keyframes spinRing {

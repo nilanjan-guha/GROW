@@ -70,8 +70,11 @@
                         <div class="wheel-ring"></div>
                         <span id="activeSectorSweepText">AUTONOMOUS SECTOR SCANNER: ACTIVE</span>
                     </div>
-                    <div style="font-family:'JetBrains Mono', monospace; font-size:0.68rem; color:var(--neon-cyan);" id="hologramCoords">
-                        HOLO-ENGINE: 60 FPS // LATENCY &lt; 15MS
+                    <div class="sector-radar-telemetry">
+                        <span class="radar-ping-dot"></span>
+                        <div class="hologram-coords-text" id="hologramCoords">
+                            HOLO-ENGINE: 60 FPS // LATENCY &lt; 15MS
+                        </div>
                     </div>
                 </div>
 
@@ -79,7 +82,7 @@
                 <div class="order-flow-hud-container">
                     <div class="order-flow-header">
                         <span style="display:flex; align-items:center; gap:6px;">
-                            <span>⚡</span> LIVE ORDER FLOW STREAM & LIQUIDITY WAVES
+                            <span class="order-flow-icon">⚡</span> LIVE ORDER FLOW STREAM & LIQUIDITY WAVES
                         </span>
                         <div class="order-flow-pulse-indicator">
                             <span class="dot"></span>
@@ -87,7 +90,7 @@
                         </div>
                     </div>
                     <div class="order-flow-canvas-wrapper">
-                        <canvas id="orderFlowCanvas"></canvas>
+                        <canvas id="orderFlowCanvas" width="800" height="60"></canvas>
                     </div>
                     <div class="order-flow-telemetry-row">
                         <span>OB PRESSURE: <b id="telemetryObPressure">DEMAND 64%</b></span>
@@ -314,11 +317,16 @@
             const ctx = canvas.getContext('2d');
 
             function resize() {
-                canvas.width = canvas.parentElement.clientWidth;
-                canvas.height = canvas.parentElement.clientHeight;
+                const rect = canvas.parentElement ? canvas.parentElement.getBoundingClientRect() : null;
+                const parentW = (rect && rect.width > 0) ? rect.width : (canvas.parentElement ? canvas.parentElement.clientWidth : 0);
+                const parentH = (rect && rect.height > 0) ? rect.height : (canvas.parentElement ? canvas.parentElement.clientHeight : 0);
+                canvas.width = Math.max(parentW || 0, 400);
+                canvas.height = Math.max(parentH || 0, 60);
             }
             resize();
             window.addEventListener('resize', resize);
+            setTimeout(resize, 200);
+            setTimeout(resize, 1000);
 
             let step = 0;
             const packets = [];
