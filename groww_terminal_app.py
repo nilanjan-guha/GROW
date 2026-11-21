@@ -480,10 +480,26 @@ def background_screener_worker():
                 except Exception:
                     pass
 
+                # Poll market data across all active watchlist and active signals
+                # Plus fetch NIFTY 50 benchmark synchronously for unified relative-strength calculations
+                try:
+                    nifty_df_raw = yf.download("^NSEI", period="2d", interval="5m", progress=False)
+                    if nifty_df_raw is not None and not nifty_df_raw.empty:
+                        nifty_df_clean = clean_dataframe(nifty_df_raw, "^NSEI")
+                        screener_state.setdefault("raw_market_cache", {})["^NSEI"] = {
+                            "timestamp": time.time(),
+                            "df": nifty_df_clean
+                        }
+                except Exception:
+                    pass
+
                 watchlist_stks = [x["symbol"] for x in (screener_state["bullish_momentum_watchlist"] + screener_state["bearish_momentum_watchlist"])]
                 active_db_symbols = list(get_active_signal_symbols())
                 all_stk_symbols = list(dict.fromkeys(watchlist_stks + active_db_symbols))
                 
+                candidates_for_ranking = []
+                nifty_cached_df = screener_state.get("raw_market_cache", {}).get("^NSEI", {}).get("df")
+
                 for sym in all_stk_symbols:
                     try:
                         cdf = yf.download(sym, period="5d", interval="5m", progress=False)
@@ -497,9 +513,44 @@ def background_screener_worker():
                                 "df": cdf
                             }
                             latest_dfs[sym] = cdf
+
+                            # Execute OpportunityRankingEngine live across candidate
+                            sec_info = groww_sector_engine.stock_to_sector_map.get(sym, {})
+                            sec_name = sec_info.get("sector", "GENERAL")
+                            sec_chg = sec_info.get("relative_strength", 0.0)
+                            
+                            # Retrieve enriched cache if present
+                            enriched = screener_state.get("enriched_signals_cache", {}).get(sym, {}).get("data", {})
+                            opp_eval = {
+                                "is_viable": enriched.get("is_viable", False),
+                                "potential_pct": enriched.get("potential_pct", 0.0),
+                                "risk_reward_ratio": enriched.get("risk_reward_ratio", 0.0),
+                                "stop_loss": enriched.get("suggested_sl"),
+                                "tp1": enriched.get("suggested_tp1"),
+                                "tp2": enriched.get("suggested_tp2"),
+                                "exhaustion_risk": enriched.get("exhaustion_risk", "LOW")
+                            }
+                            eval_res = OpportunityRankingEngine.evaluate_stock_opportunity(
+                                stock_df=cdf,
+                                symbol=sym,
+                                sector_name=sec_name,
+                                sector_change=sec_chg,
+                                nifty_df=nifty_cached_df,
+                                vwap=res.get("vwap"),
+                                opp_eval=opp_eval
+                            )
+                            if eval_res:
+                                candidates_for_ranking.append(eval_res)
                     except Exception:
                         pass
                     time.sleep(0.3)
+
+                # Rank and update top opportunities globally
+                if candidates_for_ranking:
+                    screener_state["ranked_opportunities"] = OpportunityRankingEngine.rank_top_opportunities(
+                        candidates_for_ranking, top_n=3
+                    )
+
                 last_market_poll = now
 
             # 3. Evaluate open signal outcomes every 60 seconds with full historical/subsequent candles
@@ -828,16 +879,19 @@ def smc_scan():
 def get_ranked_opportunities_endpoint():
     """
     Returns dynamically computed Top 3 Bullish and Top 3 Bearish F&O opportunities 
-    across the active watchlist using multi-factor RS acceleration and early stages.
+    across the active watchlist using multi-factor RS acceleration, breakout proximity and early stages.
     """
     try:
+        if screener_state.get("ranked_opportunities"):
+            return jsonify({"success": True, "ranked": screener_state["ranked_opportunities"]})
+
         candidates = []
         nifty_cached = screener_state.get("raw_market_cache", {}).get("^NSEI", {})
         nifty_df = nifty_cached.get("df")
         
         # Collect cached evaluations
         for sym, item in screener_state.get("raw_market_cache", {}).items():
-            if sym == "^NSEI" or not item.get("df") is not None:
+            if sym == "^NSEI" or item.get("df") is None:
                 continue
             df_sym = item["df"]
             sec_info = groww_sector_engine.stock_to_sector_map.get(sym, {})
@@ -849,7 +903,10 @@ def get_ranked_opportunities_endpoint():
                 "is_viable": enriched.get("is_viable", False),
                 "potential_pct": enriched.get("potential_pct", 0.0),
                 "risk_reward_ratio": enriched.get("risk_reward_ratio", 0.0),
-                "tp1": enriched.get("suggested_tp1")
+                "stop_loss": enriched.get("suggested_sl"),
+                "tp1": enriched.get("suggested_tp1"),
+                "tp2": enriched.get("suggested_tp2"),
+                "exhaustion_risk": enriched.get("exhaustion_risk", "LOW")
             }
             eval_res = OpportunityRankingEngine.evaluate_stock_opportunity(
                 stock_df=df_sym,
@@ -864,6 +921,7 @@ def get_ranked_opportunities_endpoint():
                 candidates.append(eval_res)
 
         ranked = OpportunityRankingEngine.rank_top_opportunities(candidates, top_n=3)
+        screener_state["ranked_opportunities"] = ranked
         return jsonify({"success": True, "ranked": ranked})
     except Exception as e:
         return jsonify({"success": False, "error": str(e), "ranked": {"top_bullish": [], "top_bearish": []}})
