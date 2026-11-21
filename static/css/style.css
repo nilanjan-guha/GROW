@@ -1,113 +1,227 @@
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@500;600;700&family=JetBrains+Mono:wght@400;600;700;800&display=swap');
+
 :root {
-    --bg-color: #060911;
-    --panel-bg: #0c1220;
-    --card-bg: #111a2d;
-    --border-color: #1e293b;
-    --text-color: #f8fafc;
-    --text-muted: #94a3b8;
-    --accent-green: #00d09c;
-    --accent-red: #eb5757;
-    --accent-blue: #38bdf8;
-    --accent-yellow: #f59e0b;
-    --term-bg: #03060d;
+    --bg-deep: #02040a;
+    --bg-space: radial-gradient(circle at 50% 20%, #0a1128 0%, #030714 55%, #010206 100%);
+    --panel-glass: rgba(10, 18, 36, 0.65);
+    --card-glass: rgba(13, 24, 48, 0.55);
+    --border-glow: rgba(56, 189, 248, 0.25);
+    --border-subtle: rgba(255, 255, 255, 0.08);
+    --text-primary: #f0f6fc;
+    --text-muted: #8b9bb4;
+    
+    /* Cyber & Sci-Fi Accents */
+    --neon-cyan: #00f0ff;
+    --neon-blue: #0088ff;
+    --neon-green: #00ffaa;
+    --neon-magenta: #ff007f;
+    --neon-red: #ff3366;
+    --neon-amber: #ffaa00;
+    
+    /* Glow filters */
+    --glow-cyan: 0 0 15px rgba(0, 240, 255, 0.45);
+    --glow-green: 0 0 15px rgba(0, 255, 170, 0.45);
+    --glow-red: 0 0 15px rgba(255, 51, 102, 0.45);
+    --glow-amber: 0 0 15px rgba(255, 170, 0, 0.45);
 }
 
 * {
     box-sizing: border-box;
     margin: 0;
     padding: 0;
-    font-family: 'JetBrains Mono', 'Fira Code', 'Segoe UI', monospace;
+    font-family: 'Rajdhani', -apple-system, sans-serif;
+    user-select: none;
 }
 
 body {
-    background-color: var(--bg-color);
-    color: var(--text-color);
-    padding: 10px;
+    background: var(--bg-space);
+    background-color: var(--bg-deep);
+    color: var(--text-primary);
+    padding: 10px 14px;
     height: 100vh;
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    position: relative;
+    perspective: 1200px;
 }
 
+/* Background Animated Canvas & Holographic HUD Grid */
+#threeCanvas {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0.85;
+}
+
+.hud-grid-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background-image: 
+        linear-gradient(rgba(0, 240, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 240, 255, 0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    z-index: 1;
+    pointer-events: none;
+}
+
+.scan-laser-line {
+    position: fixed;
+    top: -100px;
+    left: 0;
+    width: 100vw;
+    height: 3px;
+    background: linear-gradient(90deg, transparent, rgba(0, 240, 255, 0.8), rgba(0, 255, 170, 0.8), transparent);
+    box-shadow: 0 0 20px rgba(0, 240, 255, 0.7);
+    z-index: 2;
+    pointer-events: none;
+    animation: scanVertical 8s linear infinite;
+}
+
+@keyframes scanVertical {
+    0% { top: -10px; opacity: 0; }
+    5% { opacity: 1; }
+    95% { opacity: 1; }
+    100% { top: 102vh; opacity: 0; }
+}
+
+/* Header: Command Center HUD Top Bar */
 header {
+    position: relative;
+    z-index: 10;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 16px;
-    background: var(--panel-bg);
-    border-radius: 6px;
-    border: 1px solid var(--border-color);
+    padding: 8px 18px;
+    background: var(--panel-glass);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-radius: 8px;
+    border: 1px solid var(--border-glow);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), inset 0 0 12px rgba(0, 240, 255, 0.06);
     margin-bottom: 8px;
     flex-shrink: 0;
 }
 
 .header-title {
-    font-size: 1.05rem;
-    font-weight: 800;
+    font-family: 'Orbitron', monospace;
+    font-size: 0.95rem;
+    font-weight: 900;
     color: #fff;
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 12px;
+    letter-spacing: 1.2px;
+    text-shadow: 0 0 10px rgba(0, 240, 255, 0.6);
+}
+
+.pulse-circle {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--neon-cyan);
+    box-shadow: 0 0 12px var(--neon-cyan);
+    animation: pulseRing 1.8s infinite;
+}
+
+@keyframes pulseRing {
+    0% { transform: scale(0.9); opacity: 0.7; }
+    50% { transform: scale(1.25); opacity: 1; }
+    100% { transform: scale(0.9); opacity: 0.7; }
 }
 
 .badge {
-    font-size: 0.72rem;
-    background: #1e293b;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    font-weight: 700;
+    background: rgba(13, 24, 48, 0.7);
     color: var(--text-muted);
-    padding: 3px 8px;
+    padding: 3px 10px;
     border-radius: 4px;
-    border: 1px solid #334155;
-}
-
-.countdown-badge {
-    background: rgba(245, 158, 11, 0.15);
-    color: var(--accent-yellow);
-    border: 1px solid var(--accent-yellow);
-    padding: 4px 12px;
-    border-radius: 12px;
-    font-size: 0.75rem;
-    font-weight: bold;
-}
-
-.status-badge {
-    padding: 4px 12px;
-    border-radius: 20px;
-    font-size: 0.75rem;
-    font-weight: bold;
+    border: 1px solid var(--border-subtle);
     display: inline-flex;
     align-items: center;
     gap: 6px;
     text-transform: uppercase;
-    background: rgba(0, 208, 156, 0.15);
-    color: var(--accent-green);
-    border: 1px solid var(--accent-green);
 }
 
-/* 3 Clean Columns: Top 3 Bullish | Active Scanner & Sniper Radar | Top 3 Bearish */
+.countdown-badge {
+    font-family: 'Orbitron', monospace;
+    background: rgba(255, 170, 0, 0.12);
+    color: var(--neon-amber);
+    border: 1px solid rgba(255, 170, 0, 0.5);
+    padding: 4px 14px;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 1px;
+    box-shadow: 0 0 10px rgba(255, 170, 0, 0.25);
+}
+
+.status-badge {
+    font-family: 'Orbitron', monospace;
+    padding: 4px 14px;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 800;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    letter-spacing: 1px;
+    background: rgba(0, 255, 170, 0.12);
+    color: var(--neon-green);
+    border: 1px solid var(--neon-green);
+    box-shadow: var(--glow-green);
+}
+
+/* 3D Glass Command Workspace Layout */
 .workspace-grid {
+    position: relative;
+    z-index: 10;
     display: grid;
     grid-template-columns: 340px 1fr 340px;
-    gap: 10px;
+    gap: 12px;
     flex: 1;
     min-height: 0;
+    transform-style: preserve-3d;
 }
 
 .panel {
-    background: var(--panel-bg);
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
+    background: var(--panel-glass);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid var(--border-glow);
+    border-radius: 8px;
     display: flex;
     flex-direction: column;
     min-height: 0;
     overflow: hidden;
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6), inset 0 0 15px rgba(0, 240, 255, 0.04);
+    transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.25s ease;
+    transform-style: preserve-3d;
+}
+
+.panel:hover {
+    border-color: rgba(0, 240, 255, 0.5);
+    box-shadow: 0 16px 42px rgba(0, 0, 0, 0.7), 0 0 20px rgba(0, 240, 255, 0.15);
 }
 
 .panel-header {
-    padding: 10px 14px;
-    background: rgba(255, 255, 255, 0.02);
-    border-bottom: 1px solid var(--border-color);
+    padding: 10px 16px;
+    background: linear-gradient(90deg, rgba(255, 255, 255, 0.04), transparent);
+    border-bottom: 1px solid var(--border-subtle);
+    font-family: 'Orbitron', monospace;
     font-size: 0.78rem;
-    font-weight: 700;
+    font-weight: 800;
+    letter-spacing: 1px;
     text-transform: uppercase;
     display: flex;
     justify-content: space-between;
@@ -116,165 +230,248 @@ header {
 }
 
 .panel-body {
-    padding: 10px;
+    padding: 12px;
     overflow-y: auto;
     flex: 1;
+    display: flex;
+    flex-direction: column;
 }
 
-/* Sector Cards */
+/* Custom Scrollbar */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.3); }
+::-webkit-scrollbar-thumb { background: rgba(0, 240, 255, 0.3); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(0, 240, 255, 0.6); }
+
+/* Sector Cards: Holographic Elevation & 3D Tilt */
 .sector-card {
-    background: var(--card-bg);
-    border: 1px solid var(--border-color);
+    position: relative;
+    background: var(--card-glass);
+    border: 1px solid var(--border-subtle);
     border-radius: 6px;
     padding: 12px;
     margin-bottom: 10px;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    overflow: hidden;
+    transform-style: preserve-3d;
+}
+
+.sector-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 60%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(0, 240, 255, 0.12), transparent);
+    transform: skewX(-25deg);
+    transition: none;
+    pointer-events: none;
+}
+
+.sector-card:hover::before {
+    left: 200%;
+    transition: all 0.8s ease-in-out;
 }
 
 .sector-card:hover {
-    border-color: var(--accent-blue);
-    background: #15223b;
+    transform: translateY(-3px) scale(1.01);
+    border-color: var(--neon-cyan);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5), 0 0 15px rgba(0, 240, 255, 0.25);
 }
 
 .sector-card.selected {
-    border-color: #38bdf8;
-    background: #192a4a;
-    box-shadow: 0 0 10px rgba(56, 189, 248, 0.25);
+    border-color: var(--neon-cyan);
+    background: rgba(0, 240, 255, 0.08);
+    box-shadow: 0 0 20px rgba(0, 240, 255, 0.35), inset 0 0 15px rgba(0, 240, 255, 0.15);
 }
 
 .sec-header-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    font-family: 'Orbitron', monospace;
     font-size: 0.82rem;
     font-weight: 800;
     margin-bottom: 6px;
 }
 
 .fno-tag {
-    font-size: 0.65rem;
-    background: rgba(56, 189, 248, 0.15);
-    color: var(--accent-blue);
-    border: 1px solid rgba(56, 189, 248, 0.3);
-    padding: 1px 5px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.62rem;
+    background: rgba(0, 240, 255, 0.15);
+    color: var(--neon-cyan);
+    border: 1px solid rgba(0, 240, 255, 0.4);
+    padding: 1px 6px;
     border-radius: 3px;
-    margin-left: 4px;
+    margin-left: 6px;
+    letter-spacing: 0.5px;
 }
 
 .ratio-bar {
-    height: 5px;
-    border-radius: 3px;
+    height: 4px;
+    border-radius: 2px;
     display: flex;
     overflow: hidden;
     margin: 6px 0;
+    background: rgba(255, 255, 255, 0.05);
 }
 
-.bar-green { background: var(--accent-green); height: 100%; }
-.bar-red { background: var(--accent-red); height: 100%; }
+.bar-green { 
+    background: var(--neon-green); 
+    box-shadow: 0 0 8px var(--neon-green);
+    height: 100%; 
+}
+
+.bar-red { 
+    background: var(--neon-red); 
+    box-shadow: 0 0 8px var(--neon-red);
+    height: 100%; 
+}
 
 .ratio-label {
     display: flex;
     justify-content: space-between;
+    font-family: 'JetBrains Mono', monospace;
     font-size: 0.68rem;
     color: var(--text-muted);
 }
 
 .top-stocks-preview {
     margin-top: 8px;
+    font-family: 'JetBrains Mono', monospace;
     font-size: 0.7rem;
     color: #94a3b8;
-    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
     padding-top: 6px;
     line-height: 1.4;
 }
 
-/* Middle Column: Stock Chips & SMC Radar */
+/* 3D Rotating Sector Wheel & Holographic Navigation Bar */
+.sector-wheel-container {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: rgba(4, 9, 22, 0.85);
+    border: 1px solid var(--border-glow);
+    border-radius: 6px;
+    padding: 6px 12px;
+    margin-bottom: 10px;
+    flex-shrink: 0;
+    box-shadow: inset 0 0 15px rgba(0, 240, 255, 0.08);
+}
+
+.wheel-indicator {
+    font-family: 'Orbitron', monospace;
+    font-size: 0.75rem;
+    color: var(--neon-cyan);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    text-transform: uppercase;
+}
+
+.wheel-ring {
+    width: 18px;
+    height: 18px;
+    border: 2px solid var(--neon-cyan);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spinRing 2s linear infinite;
+}
+
+@keyframes spinRing {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Stock Selector Chips Bar */
 .stock-chips-bar {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
     margin-bottom: 10px;
-    padding: 8px;
-    background: #02050b;
+    padding: 6px 8px;
+    background: rgba(3, 7, 16, 0.7);
     border-radius: 6px;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--border-subtle);
     flex-shrink: 0;
 }
 
 .stock-chip {
     cursor: pointer;
-    padding: 5px 12px;
+    padding: 4px 10px;
     border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: bold;
-    background: #1e293b;
+    font-family: 'Orbitron', monospace;
+    font-size: 0.72rem;
+    font-weight: 700;
+    background: rgba(255, 255, 255, 0.04);
     color: #cbd5e1;
-    border: 1px solid #334155;
-    transition: all 0.15s;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .stock-chip:hover {
-    background: #334155;
+    background: rgba(0, 240, 255, 0.15);
     color: #fff;
+    border-color: var(--neon-cyan);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 240, 255, 0.2);
 }
 
 .stock-chip.active {
-    background: var(--accent-blue);
-    color: #040711;
-    border-color: var(--accent-blue);
+    background: var(--neon-cyan);
+    color: #02040a;
+    border-color: var(--neon-cyan);
+    font-weight: 900;
+    box-shadow: 0 0 15px var(--neon-cyan);
 }
 
-.stock-chip.signal-long {
-    border-color: var(--accent-green);
-    background: rgba(0, 208, 156, 0.2);
-    color: #fff;
-}
-
-.stock-chip.signal-short {
-    border-color: var(--accent-red);
-    background: rgba(235, 87, 87, 0.2);
-    color: #fff;
-}
-
-/* Radar Card */
+/* Middle Screen Radar Box */
 .radar-box {
-    background: var(--card-bg);
-    border: 1px solid #334155;
+    background: var(--card-glass);
+    border: 1px solid var(--border-glow);
     border-radius: 6px;
-    padding: 14px;
+    padding: 12px 14px;
     margin-bottom: 10px;
     flex-shrink: 0;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5), inset 0 0 15px rgba(0, 240, 255, 0.05);
 }
 
 .trade-decision-banner {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    background: #040711;
-    padding: 12px 16px;
+    background: rgba(2, 6, 16, 0.85);
+    padding: 10px 14px;
     border-radius: 6px;
-    border-left: 6px solid #64748b;
+    border-left: 4px solid var(--neon-cyan);
     margin-bottom: 10px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
 }
 
 .decision-action {
-    font-size: 1.3rem;
+    font-family: 'Orbitron', monospace;
+    font-size: 1.15rem;
     font-weight: 900;
     letter-spacing: 0.5px;
+    text-shadow: 0 0 10px rgba(0, 240, 255, 0.5);
 }
 
 .decision-setup {
-    font-size: 0.8rem;
-    font-weight: bold;
+    font-family: 'Orbitron', monospace;
+    font-size: 0.78rem;
+    font-weight: 700;
     color: #cbd5e1;
 }
 
 .decision-reason {
-    font-size: 0.78rem;
-    color: #cbd5e1;
-    margin-top: 6px;
-    line-height: 1.45;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.76rem;
+    color: #94a3b8;
+    margin-top: 4px;
+    line-height: 1.4;
 }
 
 .radar-metrics {
@@ -285,42 +482,100 @@ header {
 }
 
 .metric-cell {
-    background: rgba(0, 0, 0, 0.4);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    padding: 8px 10px;
+    background: rgba(2, 6, 18, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    padding: 7px 10px;
     border-radius: 4px;
+    transition: border-color 0.2s;
 }
 
-.m-lbl { font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; }
-.m-val { font-size: 0.9rem; font-weight: bold; margin-top: 3px; }
+.metric-cell:hover {
+    border-color: rgba(0, 240, 255, 0.4);
+}
 
-/* Live Scanner Terminal Feed */
-.terminal-feed {
-    background: var(--term-bg);
-    border: 1px solid var(--border-color);
+.m-lbl { 
+    font-family: 'Orbitron', monospace;
+    font-size: 0.62rem; 
+    color: var(--text-muted); 
+    text-transform: uppercase; 
+    letter-spacing: 0.5px;
+}
+
+.m-val { 
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.88rem; 
+    font-weight: 700; 
+    margin-top: 2px; 
+}
+
+/* Confirmed Trade Alert Banner */
+#confirmedTradeAlert {
+    border: 1px solid var(--neon-green) !important;
+    background: linear-gradient(90deg, rgba(0, 255, 170, 0.15), rgba(4, 10, 24, 0.95)) !important;
+    box-shadow: 0 0 25px rgba(0, 255, 170, 0.3), inset 0 0 15px rgba(0, 255, 170, 0.1) !important;
+    animation: alertGlow 3s infinite alternate;
+}
+
+@keyframes alertGlow {
+    0% { border-color: rgba(0, 255, 170, 0.6); box-shadow: 0 0 15px rgba(0, 255, 170, 0.2); }
+    100% { border-color: rgba(0, 255, 170, 1.0); box-shadow: 0 0 28px rgba(0, 255, 170, 0.45); }
+}
+
+/* Ranked Opportunities Bar */
+#rankedOpportunitiesSection {
+    background: var(--card-glass);
+    border: 1px solid var(--border-glow);
     border-radius: 6px;
     padding: 10px;
-    flex: 1;
-    overflow-y: auto;
-    font-size: 0.75rem;
-    line-height: 1.45;
-    min-height: 160px;
+    margin-bottom: 10px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
 }
 
-.feed-line { margin-bottom: 3px; }
+/* Live Terminal Activity Console */
+.terminal-feed {
+    background: rgba(1, 3, 8, 0.9);
+    border: 1px solid var(--border-glow);
+    border-radius: 6px;
+    padding: 8px 12px;
+    flex: 1;
+    overflow-y: auto;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    line-height: 1.45;
+    min-height: 140px;
+    box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.8);
+}
 
-.green { color: var(--accent-green) !important; }
-.red { color: var(--accent-red) !important; }
-.yellow { color: var(--accent-yellow) !important; }
+.feed-line {
+    margin-bottom: 3px;
+    animation: feedSlideIn 0.25s ease-out;
+}
+
+@keyframes feedSlideIn {
+    0% { opacity: 0; transform: translateX(-6px); }
+    100% { opacity: 1; transform: translateX(0); }
+}
+
+.green { color: var(--neon-green) !important; text-shadow: 0 0 6px var(--neon-green); }
+.red { color: var(--neon-red) !important; text-shadow: 0 0 6px var(--neon-red); }
+.yellow { color: var(--neon-amber) !important; text-shadow: 0 0 6px var(--neon-amber); }
+.cyan { color: var(--neon-cyan) !important; text-shadow: 0 0 6px var(--neon-cyan); }
+.blue { color: var(--neon-blue) !important; text-shadow: 0 0 6px var(--neon-blue); }
 
 .btn-action {
     cursor: pointer;
-    padding: 3px 8px;
-    background: #1e293b;
-    color: #cbd5e1;
-    border: 1px solid var(--border-color);
+    padding: 3px 10px;
+    font-family: 'Orbitron', monospace;
+    background: rgba(0, 240, 255, 0.1);
+    color: var(--neon-cyan);
+    border: 1px solid rgba(0, 240, 255, 0.4);
     border-radius: 4px;
-    font-size: 0.7rem;
+    font-size: 0.65rem;
+    transition: all 0.2s;
 }
 
-.btn-action:hover { background: #334155; }
+.btn-action:hover {
+    background: var(--neon-cyan);
+    color: #02040a;
+    box-shadow: 0 0 10px var(--neon-cyan);
+}
