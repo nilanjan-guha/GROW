@@ -139,14 +139,6 @@ htfClose = request.security(syminfo.tickerid, htfTimeframe, close[1], gaps=barme
 htfEma50 = request.security(syminfo.tickerid, htfTimeframe, ta.ema(close, 50), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
 htfEma20 = request.security(syminfo.tickerid, htfTimeframe, ta.ema(close, 20), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
 
-// In option charts, 15M candles can lag early 1M momentum moves.
-// A Bullish trend is active if:
-// 1) 15M close >= EMA50 or 15M EMA20 >= EMA50 or 15M Close >= Open
-// 2) OR 1M price is in strong uptrend (close > EMA50 and EMA50 > EMA200)
-// 3) OR 1M has confirmed bullish structure (internalTrend.bias == BULLISH)
-bool htfBullishTrend = htfClose >= htfEma50 or htfEma20 >= htfEma50 or htfClose >= htfOpen or (close > ema50) or (internalTrend.bias == BULLISH)
-bool htfBearishTrend = (htfClose < htfEma50 or htfEma20 < htfEma50) and (close < ema50)
-
 // 15M HTF Liquidity Sweep & Discount Rejection
 htfSweepLow   = (low < htfLow) and (close > htfLow)
 htfSweepHigh  = (high > htfHigh) and (close < htfHigh)
@@ -734,6 +726,9 @@ sweepHigh = sweepIntHigh or sweepSwingHigh
 sweepLow  = sweepIntLow or sweepSwingLow
 
 // Higher Trend definition: In SMC, a bullish master structure is defined by 15M trend + 1M structural alignment
+bool htfBullishTrend = htfClose >= htfEma50 or htfEma20 >= htfEma50 or htfClose >= htfOpen or (close > ema50) or (internalTrend.bias == BULLISH)
+bool htfBearishTrend = (htfClose < htfEma50 or htfEma20 < htfEma50) and (close < ema50)
+
 masterBullTrend = not useHtfConfluence or htfBullishTrend
 masterBearTrend = not useHtfConfluence or htfBearishTrend
 
