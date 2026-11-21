@@ -68,6 +68,28 @@
                     </div>
                 </div>
 
+                <!-- Sci-Fi Hologram Order Flow Wave & Packet Stream Indicator -->
+                <div class="order-flow-hud-container">
+                    <div class="order-flow-header">
+                        <span style="display:flex; align-items:center; gap:6px;">
+                            <span>⚡</span> LIVE ORDER FLOW STREAM & LIQUIDITY WAVES
+                        </span>
+                        <div class="order-flow-pulse-indicator">
+                            <span class="dot"></span>
+                            <span id="orderFlowScanLabel">INTRADAY ORDER FLOW: SCANNING</span>
+                        </div>
+                    </div>
+                    <div class="order-flow-canvas-wrapper">
+                        <canvas id="orderFlowCanvas"></canvas>
+                    </div>
+                    <div class="order-flow-telemetry-row">
+                        <span>OB PRESSURE: <b id="telemetryObPressure">DEMAND 64%</b></span>
+                        <span>DELTA FLOW: <b id="telemetryDeltaFlow">+1.82M</b></span>
+                        <span>LIQUIDITY VELOCITY: <b id="telemetryVelocity">1.48x</b></span>
+                        <span>SWEEP DEPTH: <b id="telemetryDepth">₹12.4</b></span>
+                    </div>
+                </div>
+
                 <!-- Confirmed Intraday Trade Alert Banner -->
                 <div id="confirmedTradeAlert" style="display:none; margin-bottom:10px; padding:10px 14px; border-radius:6px;">
                     <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -278,8 +300,88 @@
             document.getElementById('terminalFeed').innerHTML = '';
         }
 
+        // Sci-Fi Oscillating Order Flow Sine Waves & Flowing Liquidity Packets
+        function initOrderFlowVisualizer() {
+            const canvas = document.getElementById('orderFlowCanvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+
+            function resize() {
+                canvas.width = canvas.parentElement.clientWidth;
+                canvas.height = canvas.parentElement.clientHeight;
+            }
+            resize();
+            window.addEventListener('resize', resize);
+
+            let step = 0;
+            const packets = [];
+            for (let i = 0; i < 16; i++) {
+                packets.push({
+                    x: Math.random() * 800,
+                    y: 30,
+                    speed: 1.5 + Math.random() * 2.5,
+                    size: 2 + Math.random() * 2.5,
+                    color: Math.random() > 0.4 ? '#00f0ff' : '#00ffaa'
+                });
+            }
+
+            function draw() {
+                requestAnimationFrame(draw);
+                const w = canvas.width;
+                const h = canvas.height;
+                ctx.clearRect(0, 0, w, h);
+
+                step += 0.04;
+
+                // 1. Draw glowing oscillating sine wave 1 (Institutional Order Flow Delta)
+                ctx.beginPath();
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = 'rgba(0, 240, 255, 0.7)';
+                ctx.shadowColor = '#00f0ff';
+                ctx.shadowBlur = 8;
+
+                for (let x = 0; x < w; x += 3) {
+                    const y = (h / 2) + Math.sin((x * 0.02) + step) * 14 + Math.sin((x * 0.01) - step * 0.5) * 6;
+                    if (x === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
+                ctx.stroke();
+
+                // 2. Draw glowing oscillating sine wave 2 (Liquidity Sweep Velocity)
+                ctx.beginPath();
+                ctx.lineWidth = 1.5;
+                ctx.strokeStyle = 'rgba(0, 255, 170, 0.5)';
+                ctx.shadowColor = '#00ffaa';
+                ctx.shadowBlur = 6;
+
+                for (let x = 0; x < w; x += 4) {
+                    const y = (h / 2) + Math.cos((x * 0.015) - step * 1.2) * 16;
+                    if (x === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
+                ctx.stroke();
+
+                // 3. Draw moving order flow data packets along the wave
+                ctx.shadowBlur = 10;
+                for (let i = 0; i < packets.length; i++) {
+                    const p = packets[i];
+                    p.x += p.speed;
+                    if (p.x > w) p.x = 0;
+                    const py = (h / 2) + Math.sin((p.x * 0.02) + step) * 14;
+
+                    ctx.fillStyle = p.color;
+                    ctx.shadowColor = p.color;
+                    ctx.beginPath();
+                    ctx.arc(p.x, py, p.size, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+            draw();
+        }
+
         async function init() {
             initThreeCanvas();
+            initOrderFlowVisualizer();
             setup3DTilt();
             log('NEURAL AI CORE INITIALIZED: Groww Engine Real-Time Handshake active...', 'SUCCESS');
 
@@ -704,6 +806,20 @@
             document.getElementById('valRsi').innerText = `RSI: ${smc.rsi} | VOL: ${smc.vol_multiplier}x`;
             document.getElementById('valEma').innerText = `EMA9: ${smc.ema9} | EMA21: ${smc.ema21}`;
             
+            // Dynamic Order Flow HUD Telemetry updates based on live stock metrics
+            const isBull = smc.action && smc.action.includes('BUY');
+            const obPress = isBull ? `DEMAND ${Math.min(95, 50 + Math.round((smc.vol_multiplier || 1.2) * 15))}%` : `SUPPLY ${Math.min(95, 50 + Math.round((smc.vol_multiplier || 1.2) * 15))}%`;
+            document.getElementById('telemetryObPressure').innerText = obPress;
+            document.getElementById('telemetryObPressure').style.color = isBull ? 'var(--neon-green)' : 'var(--neon-red)';
+            
+            const deltaSign = isBull ? '+' : '-';
+            document.getElementById('telemetryDeltaFlow').innerText = `${deltaSign}${((smc.composite_score || 50) * 0.045).toFixed(2)}M`;
+            document.getElementById('telemetryVelocity').innerText = `${smc.vol_multiplier || 1.2}x`;
+            
+            const sweepDist = smc.nearest_demand_ob ? Math.abs(smc.current_price - smc.nearest_demand_ob.top).toFixed(1) : (smc.current_price * 0.004).toFixed(1);
+            document.getElementById('telemetryDepth').innerText = `₹${sweepDist}`;
+            document.getElementById('orderFlowScanLabel').innerText = `ORDER FLOW: ${symbol} (${smc.pre_momentum_stage || 'ANALYZING'})`;
+
             const score = smc.composite_score || 0;
             const prob = smc.probability_pct || 50;
             document.getElementById('valQuantScore').innerText = `SCORE: ${score}/100 (${prob}% PROB)`;
