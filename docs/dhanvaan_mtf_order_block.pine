@@ -1,0 +1,183 @@
+//@version=6
+indicator("Dhanvaan MTF Order Block Strategy", "Dhanvaan MTF OB", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+
+// ==================================================
+// INPUT SETTINGS
+// ==================================================
+grp_mtf         = "1. Higher Timeframe (HTF) Trend & Zone"
+htfTimeframe    = input.timeframe("15", "Higher Timeframe", group=grp_mtf)
+obLookback      = input.int(50, "Order Block Lookback (Bars)", minval=5, maxval=200, group=grp_mtf)
+showHTFZones    = input.bool(true, "Show 15M Zones on Chart", group=grp_mtf)
+zoneExtendBars  = input.int(20, "Zone Extend Bars Right", minval=1, maxval=200, group=grp_mtf)
+showNeutralZone = input.bool(true, "Show Neutral Zone Label", group=grp_mtf)
+
+grp_colors      = "2. Styling & Zone Colors"
+bullZoneColor   = input.color(color.new(#00ffaa, 80), "15M Bullish Zone (Demand)", group=grp_colors)
+bullBorderColor = input.color(color.new(#00ffaa, 20), "Bullish Zone Border", group=grp_colors)
+bearZoneColor   = input.color(color.new(#ff3366, 80), "15M Bearish Zone (Supply)", group=grp_colors)
+bearBorderColor = input.color(color.new(#ff3366, 20), "Bearish Zone Border", group=grp_colors)
+
+// ==================================================
+// 1. HIGHER TIMEFRAME (15 MIN) LOGIC: TREND & ZONES
+// ==================================================
+// Calculate displacement and order blocks directly on HTF (15 min)
+f_calc_htf_obs(int lookback) =>
+    float htf_high  = high
+    float htf_low   = low
+    float htf_close = close
+    float htf_open  = open
+
+    // Lookback swing highs and lows on HTF
+    float prev_swing_high = ta.highest(htf_high, lookback)[1]
+    float prev_swing_low  = ta.lowest(htf_low, lookback)[1]
+
+    // Bullish Displacement Candle breaking previous swing high
+    bool is_bull_displacement = (htf_close > htf_open) and (htf_close > prev_swing_high)
+    // Bearish Displacement Candle breaking previous swing low
+    bool is_bear_displacement = (htf_close < htf_open) and (htf_close < prev_swing_low)
+
+    // Store Order Block Low to High
+    var float bull_ob_top = na
+    var float bull_ob_bot = na
+    var float bear_ob_top = na
+    var float bear_ob_bot = na
+    var float last_htf_high = na
+    var float last_htf_low = na
+
+    if is_bull_displacement
+        bull_ob_top := htf_high
+        bull_ob_bot := htf_low
+        last_htf_high := prev_swing_high
+
+    if is_bear_displacement
+        bear_ob_top := htf_high
+        bear_ob_bot := htf_low
+        last_htf_low := prev_swing_low
+
+    [bull_ob_top, bull_ob_bot, bear_ob_top, bear_ob_bot, last_htf_high, last_htf_low]
+
+[htf_bull_top, htf_bull_bot, htf_bear_top, htf_bear_bot, htf_prev_h, htf_prev_l] = request.security(syminfo.tickerid, htfTimeframe, f_calc_htf_obs(obLookback), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+
+// 15M Trend Determination:
+// Price > Bullish Zone = UPTREND ONLY
+// Price < Bearish Zone = DOWNTREND ONLY
+// Between zones = NEUTRAL ZONE (NO TRADE)
+string htf_trend = "NEUTRAL"
+color trend_color = color.yellow
+
+if not na(htf_bull_top) and close > htf_bull_top
+    htf_trend := "BULLISH"
+    trend_color := color.green
+else if not na(htf_bear_bot) and close < htf_bear_bot
+    htf_trend := "BEARISH"
+    trend_color := color.red
+else
+    htf_trend := "NEUTRAL"
+    trend_color := color.orange
+
+// Render 15M Trend Dashboard Label on top
+var table trendTable = table.new(position.top_center, 1, 1, bgcolor=color.new(#0c1220, 10), border_color=color.new(#1e293b, 40), border_width=1)
+if barstate.islast
+    table.cell(trendTable, 0, 0, "15M TREND: " + htf_trend, text_color=trend_color, text_size=size.normal, bgcolor=color.new(trend_color, 85))
+
+// Plot 15M Zones dynamically on current chart (Extending to the right)
+var box bullZoneBox = na
+var box bearZoneBox = na
+
+if showHTFZones and barstate.islast
+    if not na(htf_bull_top) and not na(htf_bull_bot)
+        if not na(bullZoneBox)
+            box.delete(bullZoneBox)
+        bullZoneBox := box.new(left=bar_index - 30, top=htf_bull_top, right=bar_index + zoneExtendBars, bottom=htf_bull_bot,
+                               border_color=bullBorderColor, border_width=1, border_style=line.style_dashed,
+                               bgcolor=bullZoneColor, text="15M BULLISH DEMAND ZONE", text_color=color.new(#00ffaa, 0), text_size=size.small)
+
+    if not na(htf_bear_top) and not na(htf_bear_bot)
+        if not na(bearZoneBox)
+            box.delete(bearZoneBox)
+        bearZoneBox := box.new(left=bar_index - 30, top=htf_bear_top, right=bar_index + zoneExtendBars, bottom=htf_bear_bot,
+                               border_color=bearBorderColor, border_width=1, border_style=line.style_dashed,
+                               bgcolor=bearZoneColor, text="15M BEARISH SUPPLY ZONE", text_color=color.new(#ff3366, 0), text_size=size.small)
+
+// ==================================================
+// 2. LOWER TIMEFRAME (1 MIN) ENTRY & CONFIRMATION
+// ==================================================
+// Check if 1min price touches/retests the 15M zone and closes in direction
+bool touch_bull_zone = not na(htf_bull_top) and not na(htf_bull_bot) and (low <= htf_bull_top) and (close >= htf_bull_bot)
+bool bull_retest_close = (close > open) and touch_bull_zone
+
+bool touch_bear_zone = not na(htf_bear_top) and not na(htf_bear_bot) and (high >= htf_bear_bot) and (close <= htf_bear_top)
+bool bear_retest_close = (close < open) and touch_bear_zone
+
+// Signals: ONLY valid when aligned with 15M Trend
+bool buy_signal  = (htf_trend == "BULLISH") and bull_retest_close and ta.crossover(close, open)
+bool sell_signal = (htf_trend == "BEARISH") and bear_retest_close and ta.crossunder(close, open)
+
+// Plot Entry Arrows and Labels
+plotshape(buy_signal, title="BUY Entry Arrow", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.normal)
+plotshape(sell_signal, title="SELL Entry Arrow", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.normal)
+
+// Trade Level State Management
+var float entry_price = na
+var float sl_price = na
+var float tp1_price = na
+var float tp2_price = na
+var line sl_line = na
+var line tp1_line = na
+var line tp2_line = na
+
+if buy_signal
+    entry_price := close
+    sl_price    := htf_bull_bot
+    float risk  = entry_price - sl_price
+    tp1_price   := not na(htf_prev_h) ? htf_prev_h : (entry_price + risk * 1.5)
+    tp2_price   := entry_price + (risk * 2.0)
+
+    label.new(bar_index, low - (ta.tr * 0.5), "BUY @ " + str.tostring(entry_price, "#.##") + "\nSL: " + str.tostring(sl_price, "#.##") + "\nTP1: " + str.tostring(tp1_price, "#.##") + "\nTP2: " + str.tostring(tp2_price, "#.##"), 
+              color=color.green, textcolor=color.white, style=label.style_label_up, size=size.small)
+
+    if not na(sl_line)
+        line.delete(sl_line)
+    if not na(tp1_line)
+        line.delete(tp1_line)
+    if not na(tp2_line)
+        line.delete(tp2_line)
+
+    sl_line  := line.new(bar_index, sl_price, bar_index + 20, sl_price, color=color.red, style=line.style_dashed, width=2)
+    tp1_line := line.new(bar_index, tp1_price, bar_index + 20, tp1_price, color=color.green, style=line.style_dashed, width=2)
+    tp2_line := line.new(bar_index, tp2_price, bar_index + 20, tp2_price, color=color.teal, style=line.style_dashed, width=2)
+
+if sell_signal
+    entry_price := close
+    sl_price    := htf_bear_top
+    float risk  = sl_price - entry_price
+    tp1_price   := not na(htf_prev_l) ? htf_prev_l : (entry_price - risk * 1.5)
+    tp2_price   := entry_price - (risk * 2.0)
+
+    label.new(bar_index, high + (ta.tr * 0.5), "SELL @ " + str.tostring(entry_price, "#.##") + "\nSL: " + str.tostring(sl_price, "#.##") + "\nTP1: " + str.tostring(tp1_price, "#.##") + "\nTP2: " + str.tostring(tp2_price, "#.##"), 
+              color=color.red, textcolor=color.white, style=label.style_label_down, size=size.small)
+
+    if not na(sl_line)
+        line.delete(sl_line)
+    if not na(tp1_line)
+        line.delete(tp1_line)
+    if not na(tp2_line)
+        line.delete(tp2_line)
+
+    sl_line  := line.new(bar_index, sl_price, bar_index + 20, sl_price, color=color.red, style=line.style_dashed, width=2)
+    tp1_line := line.new(bar_index, tp1_price, bar_index + 20, tp1_price, color=color.green, style=line.style_dashed, width=2)
+    tp2_line := line.new(bar_index, tp2_price, bar_index + 20, tp2_price, color=color.teal, style=line.style_dashed, width=2)
+
+// Extend active lines to latest candle
+if not na(sl_line)
+    line.set_x2(sl_line, bar_index + 10)
+if not na(tp1_line)
+    line.set_x2(tp1_line, bar_index + 10)
+if not na(tp2_line)
+    line.set_x2(tp2_line, bar_index + 10)
+
+// ==================================================
+// 4. ALERTS
+// ==================================================
+alertcondition(buy_signal, title="Dhanvaan BUY Alert (1M Retest 15M OB)", message="Dhanvaan BUY Signal: 1M Retest on 15M Bullish Zone at {{close}}! SL: {{plot_0}}")
+alertcondition(sell_signal, title="Dhanvaan SELL Alert (1M Retest 15M OB)", message="Dhanvaan SELL Signal: 1M Retest on 15M Bearish Zone at {{close}}! SL: {{plot_0}}")
