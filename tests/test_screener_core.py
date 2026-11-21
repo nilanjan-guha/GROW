@@ -321,5 +321,32 @@ class TestIntradayScreenerCore(unittest.TestCase):
         self.assertEqual(res_confirmed["stage"], "CONFIRMED")
         self.assertTrue(res_confirmed["is_tradeable"])
 
+    def test_opportunity_ranking_engine(self):
+        from engine.opportunity_ranking_engine import OpportunityRankingEngine
+        res = OpportunityRankingEngine.evaluate_stock_opportunity(
+            stock_df=self.df_5m,
+            symbol="TESTSTOCK.NS",
+            sector_name="TEST_SECTOR",
+            sector_change=1.5,
+            nifty_df=self.df_5m,
+            vwap=1000.0,
+            opp_eval={"is_viable": True, "potential_pct": 2.2, "risk_reward_ratio": 1.8}
+        )
+        self.assertIsNotNone(res)
+        self.assertIn("stage", res)
+        self.assertIn("conviction_score", res)
+        self.assertIn("reasons", res)
+        self.assertIn("rs_nifty", res)
+
+        ranked = OpportunityRankingEngine.rank_top_opportunities([res], top_n=3)
+        self.assertIn("top_bullish", ranked)
+        self.assertIn("top_bearish", ranked)
+
+    def test_early_warning_preparation_mode(self):
+        from engine.momentum_ignition_engine import MomentumIgnitionEngine
+        prep = MomentumIgnitionEngine.detect_early_warning_preparation(self.df_5m, vwap=1000.0)
+        self.assertIn("is_preparing", prep)
+        self.assertIn("preparation_score", prep)
+
 if __name__ == '__main__':
     unittest.main()

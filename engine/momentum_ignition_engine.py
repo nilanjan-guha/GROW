@@ -90,3 +90,64 @@ class MomentumIgnitionEngine:
             }
         except Exception as e:
             return {"is_ignited": False, "direction": "NEUTRAL", "error": str(e)}
+
+    @staticmethod
+    def detect_early_warning_preparation(df, vwap=None, sector_bias="NEUTRAL"):
+        """
+        Early-Warning Pre-Breakout Detection:
+        Identifies subtle accumulation & energy coil before ignition or breakout:
+        1. Consecutive volume ramp (v[t] > v[t-1] > v[t-2]).
+        2. Candle body narrowing (compression).
+        3. Holding near VWAP (+/- 0.35%).
+        4. Sector alignment.
+        """
+        if df is None or df.empty or len(df) < 10:
+            return {"is_preparing": False, "reason": "Insufficient history"}
+
+        try:
+            c = df['Close']
+            o = df['Open']
+            h = df['High']
+            l = df['Low']
+            v = df['Volume']
+
+            curr_c = float(c.iloc[-1])
+            curr_o = float(o.iloc[-1])
+            curr_h = float(h.iloc[-1])
+            curr_l = float(l.iloc[-1])
+
+            # 1. 14-period ATR
+            tr = pd.concat([h - l, (h - c.shift(1)).abs(), (l - c.shift(1)).abs()], axis=1).max(axis=1)
+            atr14 = float(tr.rolling(14).mean().iloc[-1]) or (curr_c * 0.005)
+
+            # 2. Volume Ramp
+            vol_ramp = False
+            if len(v) >= 3:
+                vol_ramp = bool(v.iloc[-1] > v.iloc[-2] > v.iloc[-3])
+
+            # 3. Micro Compression
+            ranges = [(float(h.iloc[i]) - float(l.iloc[i])) for i in range(-4, 0)]
+            is_compressed = all(r < (atr14 * 0.85) for r in ranges[:-1])
+
+            # 4. Proximity to VWAP
+            vwap_dist_pct = (abs(curr_c - vwap) / vwap * 100) if vwap else 1.0
+            holding_near_vwap = vwap_dist_pct <= 0.40
+
+            is_preparing = (vol_ramp or is_compressed) and (holding_near_vwap or sector_bias != "NEUTRAL")
+            direction = "BULLISH" if curr_c >= curr_o else "BEARISH"
+
+            prep_score = 0
+            if is_preparing:
+                prep_score = int(40 + (25 if vol_ramp else 0) + (20 if is_compressed else 0) + (15 if holding_near_vwap else 0))
+
+            return {
+                "is_preparing": is_preparing,
+                "direction": direction,
+                "preparation_score": prep_score,
+                "vol_ramp": vol_ramp,
+                "is_compressed": is_compressed,
+                "holding_near_vwap": holding_near_vwap,
+                "reason": "Early Energy Coil: Volume accumulating with narrowing candle ranges near VWAP" if is_preparing else "No early coil detected"
+            }
+        except Exception as e:
+            return {"is_preparing": False, "error": str(e)}

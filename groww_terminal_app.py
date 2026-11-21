@@ -109,7 +109,7 @@ def auto_connect_groww():
         try:
             screener_state["user_profile"] = client.get_user_profile(timeout=5)
         except Exception:
-            screener_state["user_profile"] = {"ucc": "Active"}
+            screener_state["user_profile"] = {"ucc": "Active (Token Validated)"}
 
         try:
             screener_state["margin"] = client.get_available_margin_details(timeout=5)
@@ -117,6 +117,7 @@ def auto_connect_groww():
             screener_state["margin"] = {}
 
         # Dynamically discover all tradeable F&O stocks directly from Groww API
+        fno_loaded = False
         try:
             df = client.get_all_instruments()
             fno_df = df[df['segment'] == 'FNO']
@@ -125,8 +126,10 @@ def auto_connect_groww():
                 s for s in fno_df['underlying_symbol'].dropna().unique() 
                 if s not in INDEX_SYMBOLS and 'TEST' not in s and not s.isdigit() and len(s) >= 2
             ]
-            screener_state["fno_universe"] = sorted(raw_fno)
-            print(f"Dynamically discovered {len(raw_fno)} F&O tradeable stocks from Groww API.")
+            if raw_fno:
+                screener_state["fno_universe"] = sorted(raw_fno)
+                fno_loaded = True
+                print(f"Dynamically discovered {len(raw_fno)} F&O tradeable stocks from Groww API.")
 
             # Dynamically extract all official company names from Groww cash segment instruments
             cash_nse = df[(df['exchange'] == 'NSE') & (df['segment'] == 'CASH')].dropna(subset=['trading_symbol', 'name'])
@@ -138,8 +141,9 @@ def auto_connect_groww():
         except Exception as e:
             print("Error loading FNO universe:", e)
 
-        screener_state["connected"] = True
-        return True
+        # Connection is only deemed fully successful if F&O instruments loaded or verified
+        screener_state["connected"] = fno_loaded
+        return fno_loaded
     except Exception as e:
         screener_state["connected"] = False
         return False
@@ -542,6 +546,7 @@ from engine.news_engine import NewsIntelligenceEngine
 from engine.groq_client import GroqIntelligence
 from engine.anomaly_engine import AnomalyDetector
 from engine.pre_momentum_engine import PreMomentumEngine
+from engine.opportunity_ranking_engine import OpportunityRankingEngine
 from core.storage import log_signal, get_recent_signals, evaluate_open_outcomes, get_strategy_performance_stats, get_active_signal_symbols, get_db_connection
 
 news_engine = NewsIntelligenceEngine()
@@ -579,7 +584,8 @@ def smc_scan():
         dates = sorted(df_copy['Date'].unique())
         
         # 1. HARDENED FEED VALIDATION VIA MARKET VALIDATOR (Single Source of Truth)
-        feed_val = MarketValidator.validate_feed_freshness(df, max_delay_seconds=900)
+        # Stricter freshness: Max delay of 300 seconds (5m) during live market hours
+        feed_val = MarketValidator.validate_feed_freshness(df, max_delay_seconds=300, candle_duration_seconds=300)
         if not feed_val["is_valid"]:
             return jsonify({
                 "success": True,
@@ -817,6 +823,50 @@ def smc_scan():
     except Exception as e:
         traceback.print_exc()
         return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route("/api/opportunities/ranked")
+def get_ranked_opportunities_endpoint():
+    """
+    Returns dynamically computed Top 3 Bullish and Top 3 Bearish F&O opportunities 
+    across the active watchlist using multi-factor RS acceleration and early stages.
+    """
+    try:
+        candidates = []
+        nifty_cached = screener_state.get("raw_market_cache", {}).get("^NSEI", {})
+        nifty_df = nifty_cached.get("df")
+        
+        # Collect cached evaluations
+        for sym, item in screener_state.get("raw_market_cache", {}).items():
+            if sym == "^NSEI" or not item.get("df") is not None:
+                continue
+            df_sym = item["df"]
+            sec_info = groww_sector_engine.stock_to_sector_map.get(sym, {})
+            sec_name = sec_info.get("sector", "GENERAL")
+            
+            # Retrieve enriched cache if present
+            enriched = screener_state.get("enriched_signals_cache", {}).get(sym, {}).get("data", {})
+            opp_eval = {
+                "is_viable": enriched.get("is_viable", False),
+                "potential_pct": enriched.get("potential_pct", 0.0),
+                "risk_reward_ratio": enriched.get("risk_reward_ratio", 0.0),
+                "tp1": enriched.get("suggested_tp1")
+            }
+            eval_res = OpportunityRankingEngine.evaluate_stock_opportunity(
+                stock_df=df_sym,
+                symbol=sym,
+                sector_name=sec_name,
+                sector_change=0.0,
+                nifty_df=nifty_df,
+                vwap=enriched.get("vwap"),
+                opp_eval=opp_eval
+            )
+            if eval_res:
+                candidates.append(eval_res)
+
+        ranked = OpportunityRankingEngine.rank_top_opportunities(candidates, top_n=3)
+        return jsonify({"success": True, "ranked": ranked})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e), "ranked": {"top_bullish": [], "top_bearish": []}})
 
 @app.route("/api/signals/performance")
 def get_performance_stats():

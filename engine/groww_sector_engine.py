@@ -180,10 +180,18 @@ class GrowwSectorEngine:
                     "relative_strength": round(pct - sec_pct, 2)
                 })
 
-        # Rank: Bullish by combined momentum + relative strength; Bearish by most negative change
+        # Multi-factor ranking:
+        # Instead of simple stock_pct - sec_pct, we compute multi-factor momentum & relative strength acceleration
+        for stk in qualified_fno:
+            pct = stk["change"]
+            # Outperformance component over sector baseline
+            alpha_over_sector = pct - sec_pct
+            # Relative strength momentum weight
+            stk["momentum_score"] = round(abs(pct) * 1.5 + abs(alpha_over_sector) * 1.2, 2)
+
         if is_bullish:
-            qualified_fno.sort(key=lambda x: (x["change"] + x.get("relative_strength", 0.0)), reverse=True)
+            qualified_fno.sort(key=lambda x: (x.get("momentum_score", 0.0), x["change"]), reverse=True)
         else:
-            qualified_fno.sort(key=lambda x: (x["change"] + x.get("relative_strength", 0.0)))
+            qualified_fno.sort(key=lambda x: (x.get("momentum_score", 0.0), -x["change"]), reverse=True)
 
         return qualified_fno
