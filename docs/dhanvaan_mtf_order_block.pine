@@ -116,6 +116,7 @@ sniperRRRatio                   = input.float(  3.0,        'Sniper Target R:R R
 sniperRetraceRatio              = input.float(  0.5,        'Discount Retracement Entry (0.5 = 50%)', minval=0.2, maxval=0.79, step=0.05, group = SNIPER_GROUP)
 sniperMaxWaitBars               = input.int(    12,         'Max Wait Bars for Retest Fill', minval=3, maxval=30, group = SNIPER_GROUP)
 showSniperScoreboard            = input.bool(   true,       'Show Top-Right Scalp Scoreboard', group = SNIPER_GROUP)
+allowPyramidingTrades = input.bool(true, 'Allow Multi-Trade Pyramiding (Take 3-4 Setups in Trend)', group = SNIPER_GROUP, tooltip = 'Allows entering new continuation setups on subsequent BOS / OB retests even while a previous runner trade is still open, capturing the entire 30 to 350+ move!')
 // Global ATR & Trend calculations
 atr14 = ta.atr(14)
 microBuffer = atr14 * 0.15
@@ -813,7 +814,8 @@ sniperSellTrigger = not tradeModeOptionBuyer and not isSqueeze and isTrendingMar
                     ((bearTrend and (triggeredBearShift or (sweepHigh and close < open) or obSupplyTouch)) or htfMajorSell)
 
 // Arm Pending Sniper Orders on Major Shift, Sweeps & OB Retests
-if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - lastExitBar >= cooldownBarsInput)
+canArmTrade = enableSniperEngine and not pendingOrder and (allowPyramidingTrades or not inTrade) and (bar_index - lastExitBar >= cooldownBarsInput)
+if canArmTrade
     if sniperBuyTrigger
         impulseHigh  = high
         // Pick best structural low: internalLow, swingLow, or local pivot low
@@ -870,7 +872,7 @@ if pendingOrder and (bar_index - pendingSetupBar > sniperMaxWaitBars)
     box.delete(pendingBox)
 
 // Check for Fill & Manage Live Active Trade
-if pendingOrder and not inTrade
+if pendingOrder and (allowPyramidingTrades or not inTrade)
     box.set_right(pendingBox, bar_index + 1)
     
     // Long retest filled (Price pulls into entry level)
