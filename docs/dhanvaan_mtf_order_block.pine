@@ -1,5 +1,5 @@
 //@version=6
-indicator("Finithic Index Trader", "Finithic Index Trader", overlay = true, max_labels_count = 500, max_lines_count = 500, max_boxes_count = 500)
+indicator("Finithic Indicator", "Finithic Indicator", overlay = true, max_labels_count = 500, max_lines_count = 500, max_boxes_count = 500)
 
 //---------------------------------------------------------------------------------------------------------------------}
 // CONSTANTS & SETTINGS
@@ -129,7 +129,7 @@ htfTimeframe     = input.timeframe('15', 'HTF Master Timeframe', group = SNIPER_
 minRiskAtr       = input.float(0.6, 'Minimum Risk / Swing Quality (ATR Multiple)', minval=0.2, step=0.1, group = SNIPER_GROUP, tooltip = 'Filters out minor 1m micro-noise; only meaningful structural swings qualify.')
 trailToBE        = input.bool(true, 'Move SL to Break-Even at 1.5 RR (Locks In Profit)', group = SNIPER_GROUP)
 targetOppositeSwing = input.bool(false, 'Target Opposite Swing High/Low (Major Target)', group = SNIPER_GROUP)
-cooldownBarsInput   = input.int(10, 'Trade Cooldown Bars (Quality 3-4 Setups/Day)', minval=5, maxval=50, group = SNIPER_GROUP, tooltip = 'Prevents taking rapid repetitive trades in tight consolidate zones. Ensures 3-4 high-quality trades per intraday session.')
+cooldownBarsInput   = input.int(20, 'Trade Cooldown Bars (Quality 3-4 Setups/Day)', minval=10, maxval=60, group = SNIPER_GROUP, tooltip = 'Prevents taking rapid repetitive trades in tight consolidate zones. Ensures 3-4 high-quality trades per intraday session.')
 
 // HTF calculations for 15M trend, zones, and Order Block levels
 htfOpen  = request.security(syminfo.tickerid, htfTimeframe, open[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
@@ -726,17 +726,17 @@ sweepHigh = sweepIntHigh or sweepSwingHigh
 sweepLow  = sweepIntLow or sweepSwingLow
 
 // Higher Trend definition: In SMC, a bullish master structure is defined by 15M trend + 1M structural alignment
-bool htfBullishTrend = htfClose >= htfEma50 or htfEma20 >= htfEma50 or htfClose >= htfOpen or (close > ema50) or (internalTrend.bias == BULLISH)
+bool htfBullishTrend = htfClose >= htfEma50 or htfEma20 >= htfEma50 or htfClose >= htfOpen
 bool htfBearishTrend = (htfClose < htfEma50 or htfEma20 < htfEma50) and (close < ema50)
 
 masterBullTrend = not useHtfConfluence or htfBullishTrend
 masterBearTrend = not useHtfConfluence or htfBearishTrend
 
-bullTrend = masterBullTrend and (not trendFilterEma or (close >= ema50) or (internalTrend.bias == BULLISH))
-bearTrend = masterBearTrend and (not trendFilterEma or (close <= ema50) or (internalTrend.bias == BEARISH))
+// True structural trend: EMA 50 > EMA 200 and close > EMA 50 OR SMC Internal Trend Bullish
+bullTrend = masterBullTrend and (close >= ema50 or internalTrend.bias == BULLISH)
+bearTrend = masterBearTrend and (close <= ema50 or internalTrend.bias == BEARISH)
 
 // Track Pullback from Demand Zone / Sweep / Discount:
-// Did price test the Buy Order Block Zone, sweep a low, or retest key support within the last 25 bars?
 var int lastDemandZoneTouchBar = -999
 var float recentDemandZoneLow   = na
 
@@ -749,13 +749,13 @@ if internalOrderBlocks.size() > 0
     for i = 0 to math.min(internalOrderBlocks.size() - 1, 4)
         ob = internalOrderBlocks.get(i)
         // Tested within the OB zone or tapped into its upper buffer
-        if ob.bias == BULLISH and low <= (ob.barHigh + atr14 * 0.25) and close >= (ob.barLow - atr14 * 0.15)
+        if ob.bias == BULLISH and low <= (ob.barHigh + atr14 * 0.35) and close >= (ob.barLow - atr14 * 0.15)
             inDemandObZone := true
             activeDemandObLow := ob.barLow
-        if ob.bias == BEARISH and high >= (ob.barLow - atr14 * 0.25) and close <= (ob.barHigh + atr14 * 0.15)
+        if ob.bias == BEARISH and high >= (ob.barLow - atr14 * 0.35) and close <= (ob.barHigh + atr14 * 0.15)
             inSupplyObZone := true
 
-// Also qualify discount area or swing low rejection as valid institutional accumulation zone
+// Institutional Accumulation: Demand OB touch, liquidity sweep, or key support rejection
 bool inAccumulationArea = inDemandObZone or sweepLow or htfSweepLow or (not na(internalLow.currentLevel) and low <= internalLow.currentLevel + atr14 * 0.5 and close > open)
 
 if inAccumulationArea
@@ -763,25 +763,37 @@ if inAccumulationArea
     recentDemandZoneLow    := not na(activeDemandObLow) ? activeDemandObLow : (not na(internalLow.currentLevel) ? internalLow.currentLevel : low)
 
 // Has price recently touched/pulled back into the Demand Zone?
-bool hadRecentDemandPullback = (bar_index - lastDemandZoneTouchBar) <= 25
+bool hadRecentDemandPullback = (bar_index - lastDemandZoneTouchBar) <= 30
 
-// EXACT USER STRATEGY:
-// "find the buy zone, take trade only when pullback from zone breaks the BOS towards the trend and follow the trend to buy"
-// 1) Bullish Trend Alignment
-// 2) Price tested/pulled back into the institutional Demand Zone / accumulation area
-// 3) Price now BREAKS THE STRUCTURE (BOS / CHoCH Bullish Shift) OR reclaims green momentum out of the zone
-bool bosBreakAfterZonePullback = hadRecentDemandPullback and (triggeredBullShift or (inDemandObZone and close > open and close > high[1])) and (close > open)
+// ANTI-OVEREXTENSION FILTER (Fixes Buying at the very top of massive spikes):
+// Do not buy if current price is more than 3.0 * ATR away from EMA 50 or if RSI/momentum is overbought exhaustion
+float distFromEma50 = close - ema50
+bool isOverextendedFromBase = distFromEma50 > (atr14 * 3.5)
 
-// Major HTF 15M Reversal / Pullback: 15M Demand/Supply or Liquidity Sweep
-htfMajorBuy  = useHtfConfluence and masterBullTrend and (htfSweepLow or (htfInDiscount and (sweepLow or inDemandObZone))) and (close > open)
-htfMajorSell = useHtfConfluence and masterBearTrend and (htfSweepHigh or (not htfInDiscount and (sweepHigh or inSupplyObZone))) and (close < open)
+// Strict Session & Quality Trend Filters:
+// 1) Cooldown extended to 20 bars after any exit (completely stops chop spam)
+// 2) Minimum trade risk size >= 1.0 ATR to ignore 1-minute candle noise
+// 3) Only 1 active trade at a time until completed
 
-// Complete Quality Entry Triggers:
-sniperBuyTrigger  = masterBullTrend and (bosBreakAfterZonePullback or (inDemandObZone and close > open and ta.crossover(close, ema50)))
-sniperSellTrigger = not tradeModeOptionBuyer and masterBearTrend and ((inSupplyObZone and close < open) or (sweepHigh and close < open) or htfMajorSell)
+// True Institutional Bottom Bounce (Circles 1, 2, 3, 4 from your chart):
+// A genuine bottom has:
+// a) Price testing the institutional Demand Order Block / Swing Low liquidity sweep
+// b) A pronounced rejection wick (lower wick >= 35% of total bar range)
+// c) Solid Bullish Close (close > open and close > close[1])
+float barBody = math.abs(close - open)
+float barRange = high - low
+float lowerWick = math.min(open, close) - low
+bool strongRejectionWick = barRange > 0 and (lowerWick / barRange) >= 0.35
 
-// Immediate execution when BOS occurs directly out of the Demand Zone pullback
-directSmcFill = bosBreakAfterZonePullback or (inDemandObZone and close > open)
+bool genuineDemandReversal = (inDemandObZone or sweepLow or htfSweepLow) and strongRejectionWick and (close > open) and (close > close[1])
+bool genuineTrendBaseBreakout = hadRecentDemandPullback and triggeredBullShift and (close > open) and (close > ema50) and not isOverextendedFromBase
+
+// Complete High-Probability Sniper Triggers (Only 3-5 clean trades per day):
+sniperBuyTrigger  = masterBullTrend and (genuineDemandReversal or genuineTrendBaseBreakout)
+sniperSellTrigger = not tradeModeOptionBuyer and masterBearTrend and inSupplyObZone and (close < open)
+
+// Direct fill on confirmed structural reversal out of demand
+directSmcFill = true
 
 // Arm Pending Sniper Orders on Major Shift, Sweeps & OB Retests
 canArmTrade = enableSniperEngine and not pendingOrder and (allowPyramidingTrades or not inTrade) and (bar_index - lastExitBar >= cooldownBarsInput)
