@@ -769,6 +769,10 @@ bool hadRecentDemandPullback = (bar_index - lastDemandZoneTouchBar) <= 15
 // 3) Price now BREAKS THE STRUCTURE (BOS / CHoCH Bullish Shift) towards the trend
 bool bosBreakAfterZonePullback = hadRecentDemandPullback and triggeredBullShift and (close > open)
 
+// Major HTF 15M Reversal / Pullback: 15M Demand/Supply or Liquidity Sweep
+htfMajorBuy  = useHtfConfluence and masterBullTrend and (htfSweepLow or (htfInDiscount and (sweepLow or inDemandObZone))) and (close > open)
+htfMajorSell = useHtfConfluence and masterBearTrend and (htfSweepHigh or (not htfInDiscount and (sweepHigh or inSupplyObZone))) and (close < open)
+
 // Complete Quality Entry Triggers:
 sniperBuyTrigger  = masterBullTrend and bosBreakAfterZonePullback
 sniperSellTrigger = not tradeModeOptionBuyer and masterBearTrend and ((inSupplyObZone and close < open) or (sweepHigh and close < open) or htfMajorSell)
