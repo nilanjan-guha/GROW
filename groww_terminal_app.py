@@ -494,23 +494,13 @@ def background_screener_worker():
                 except Exception:
                     pass
 
-                # Build Priority Queue + Rotating Slice across full 219 F&O Universe
+                # Build scanner list STRICTLY from the 5-minute Sector Watchlists + Active Signals
                 watchlist_stks = [x["symbol"] for x in (screener_state["bullish_momentum_watchlist"] + screener_state["bearish_momentum_watchlist"])]
                 active_db_symbols = list(get_active_signal_symbols())
                 
-                # Full universe rotation
-                fno_list = screener_state.get("fno_universe", [])
-                universe_batch_size = 25
-                if fno_list:
-                    if fno_universe_index >= len(fno_list):
-                        fno_universe_index = 0
-                    universe_slice = [f"{s}.NS" if not s.endswith(".NS") else s for s in fno_list[fno_universe_index : fno_universe_index + universe_batch_size]]
-                    fno_universe_index += universe_batch_size
-                else:
-                    universe_slice = []
-
-                # Combine priority symbols (top sector stocks + active signals) with universe rotating slice
-                all_stk_symbols = list(dict.fromkeys(watchlist_stks + active_db_symbols + universe_slice))
+                # STRICT FILTER: Scan ONLY the stocks fetched by the 5-minute sector scan and active signals!
+                # Do NOT scan outside stocks from the broader market.
+                all_stk_symbols = list(dict.fromkeys(watchlist_stks + active_db_symbols))
                 
                 # Filter all evaluated candidates strictly to verified F&O instruments
                 valid_fno_set = set(screener_state.get("fno_universe", []))
@@ -934,9 +924,14 @@ def get_ranked_opportunities_endpoint():
         valid_fno_set = set(screener_state.get("fno_universe", []))
         norm_fno_set = {s.upper().replace(".NS", "") for s in valid_fno_set}
 
+        # Restrict strictly to stocks fetched in the 5-minute sector watchlists
+        allowed_sector_symbols = set([x["symbol"] for x in (screener_state["bullish_momentum_watchlist"] + screener_state["bearish_momentum_watchlist"])])
+
         # Collect cached evaluations
         for sym, item in screener_state.get("raw_market_cache", {}).items():
             if sym == "^NSEI" or item.get("df") is None:
+                continue
+            if allowed_sector_symbols and sym not in allowed_sector_symbols:
                 continue
             clean_sym = sym.replace(".NS", "").upper()
             if norm_fno_set and clean_sym not in norm_fno_set:
