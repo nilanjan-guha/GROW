@@ -736,53 +736,58 @@ masterBearTrend = not useHtfConfluence or htfBearishTrend
 bullTrend = masterBullTrend and (not trendFilterEma or (close >= ema50) or (internalTrend.bias == BULLISH))
 bearTrend = masterBearTrend and (not trendFilterEma or (close <= ema50) or (internalTrend.bias == BEARISH))
 
+// Track Pullback from Demand Zone / Sweep:
+// Did price test the Buy Order Block Zone or sweep a swing low within the last 15 bars?
+var int lastDemandZoneTouchBar = -999
+var float recentDemandZoneLow   = na
+
 // 1M Pullback & Reversal Confirmation into Institutional Zones:
-// Only triggers when price is IN a Demand/Supply Order Block zone or sweeping a key structural level
 bool inDemandObZone = false
 bool inSupplyObZone = false
+float activeDemandObLow = na
+
 if internalOrderBlocks.size() > 0
     for i = 0 to math.min(internalOrderBlocks.size() - 1, 4)
         ob = internalOrderBlocks.get(i)
         if ob.bias == BULLISH and low <= ob.barHigh and close >= ob.barLow
             inDemandObZone := true
+            activeDemandObLow := ob.barLow
         if ob.bias == BEARISH and high >= ob.barLow and close <= ob.barHigh
             inSupplyObZone := true
 
-// Confirmed Demand/Supply Order Block Reversal: price dips into OB zone and produces rejection
-obDemandTouch = inDemandObZone and (close > open)
-obSupplyTouch = inSupplyObZone and (close < open)
+if inDemandObZone or sweepLow or htfSweepLow
+    lastDemandZoneTouchBar := bar_index
+    recentDemandZoneLow    := not na(activeDemandObLow) ? activeDemandObLow : (not na(internalLow.currentLevel) ? internalLow.currentLevel : low)
 
-// Structural Order Block Retest with rejection
-bool anyBullObRetest = inDemandObZone and (close > open) and (close >= high[1] or close >= (high + low)/2.0)
-bool anyBearObRetest = inSupplyObZone and (close < open) and (close <= low[1] or close <= (high + low)/2.0)
+// Has price recently touched/pulled back into the Demand Zone?
+bool hadRecentDemandPullback = (bar_index - lastDemandZoneTouchBar) <= 15
 
-// Major HTF 15M Reversal / Pullback: 15M Demand/Supply or Liquidity Sweep
-htfMajorBuy  = useHtfConfluence and masterBullTrend and (htfSweepLow or (htfInDiscount and (sweepLow or inDemandObZone))) and (close > open)
-htfMajorSell = useHtfConfluence and masterBearTrend and (htfSweepHigh or (not htfInDiscount and (sweepHigh or inSupplyObZone))) and (close < open)
+// EXACT USER STRATEGY:
+// "find the buy zone, take trade only when pullback from zone breaks the BOS towards the trend and follow the trend to buy"
+// 1) Master 15M trend is BULLISH
+// 2) Price tested/pulled back into the institutional Demand Zone within the last 15 bars
+// 3) Price now BREAKS THE STRUCTURE (BOS / CHoCH Bullish Shift) towards the trend
+bool bosBreakAfterZonePullback = hadRecentDemandPullback and triggeredBullShift and (close > open)
 
-// 1M Quality Entry Condition: 
-// 1) 15M trend must be aligned (BULLISH for Call options, BEARISH for Put shorting)
-// 2) Price MUST be testing an institutional Order Block OR performing a liquidity sweep
-// 3) Clean reversal rejection (close > open for BUY, close < open for SELL)
-sniperBuyTrigger  = masterBullTrend and ((inDemandObZone and close > open) or (sweepLow and close > open) or htfMajorBuy)
+// Complete Quality Entry Triggers:
+sniperBuyTrigger  = masterBullTrend and bosBreakAfterZonePullback
 sniperSellTrigger = not tradeModeOptionBuyer and masterBearTrend and ((inSupplyObZone and close < open) or (sweepHigh and close < open) or htfMajorSell)
 
-// Direct Immediate Fill on verified SMC Order Block Retest or Reversal Wick
-directSmcFill = (inDemandObZone or sweepLow) and (close > open)
+// Immediate execution when BOS occurs directly out of the Demand Zone pullback
+directSmcFill = bosBreakAfterZonePullback
 
 // Arm Pending Sniper Orders on Major Shift, Sweeps & OB Retests
 canArmTrade = enableSniperEngine and not pendingOrder and (allowPyramidingTrades or not inTrade) and (bar_index - lastExitBar >= cooldownBarsInput)
 if canArmTrade
     if sniperBuyTrigger
         impulseHigh  = high
-        // Pick best structural low: internalLow, swingLow, or local pivot low
-        float structLow = not na(internalLow.currentLevel) ? internalLow.currentLevel : low[1]
+        // Tight structural SL: Placed cleanly under the Demand Zone / low from which price pulled back
+        float structLow = not na(recentDemandZoneLow) ? recentDemandZoneLow : (not na(internalLow.currentLevel) ? internalLow.currentLevel : low[1])
         if sweepLow and not na(swingLow.currentLevel) and swingLow.currentLevel < structLow
             structLow := swingLow.currentLevel
         impulseLow   = math.min(structLow, low)
         rangeDist    = impulseHigh - impulseLow
         // Tight structural SL: Placed cleanly under the order block / pivot base
-        // In high-volatility option charts, cap SL to a maximum of 1.2x ATR or use microBuffer
         calcSL       = math.max(impulseLow - (atr14 * 0.15), impulseHigh - (atr14 * 1.5))
         calcEntry    = directSmcFill ? close : (rangeDist > 0 ? impulseHigh - (rangeDist * sniperRetraceRatio) : close)
         riskDist     = calcEntry - calcSL
