@@ -338,6 +338,9 @@ class TestIntradayScreenerCore(unittest.TestCase):
         self.assertIn("reasons", res)
         self.assertIn("rs_nifty", res)
         self.assertIn("rs_accel", res)
+        self.assertIn("early_opportunity_score", res)
+        self.assertIn("confirmation_score", res)
+        self.assertIn("entry_trigger", res)
 
         # Test true RS acceleration calculation with distinct stock vs nifty returns
         rs_calc = OpportunityRankingEngine.calculate_relative_strength_acceleration(

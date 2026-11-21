@@ -32,15 +32,25 @@ class OpportunityRankingEngine:
     def calculate_relative_strength_acceleration(stock_df, nifty_df=None, sector_change_pct=0.0):
         """
         Calculates multi-window relative strength against NIFTY and Sector
-        strictly synchronized to the current trading session.
+        strictly synchronized to matching candle timestamps over today's trading session.
         """
         if stock_df is None or stock_df.empty or len(stock_df) < 2:
-            return {"rs_nifty": 0.0, "rs_sector": 0.0, "rs_accel_3": 0.0, "rs_accel_6": 0.0, "stock_change_pct": 0.0}
+            return {"rs_nifty": 0.0, "rs_sector": 0.0, "rs_accel_3": 0.0, "rs_accel_6": 0.0, "rs_accel": 0.0, "stock_change_pct": 0.0}
 
         # Date isolation for current session synchronization
         s_df = stock_df.copy()
         if not pd.api.types.is_datetime64_any_dtype(s_df.index):
             s_df.index = pd.to_datetime(s_df.index)
+        
+        # If timezone-aware, normalize to Asia/Kolkata
+        try:
+            if s_df.index.tz is None:
+                s_df.index = s_df.index.tz_localize("Asia/Kolkata")
+            else:
+                s_df.index = s_df.index.tz_convert("Asia/Kolkata")
+        except Exception:
+            pass
+
         s_dates = sorted(s_df.index.date)
         today_date = s_dates[-1] if s_dates else None
 
@@ -52,55 +62,63 @@ class OpportunityRankingEngine:
         stock_open = float(today_stock['Open'].iloc[0])
         stock_change_pct = float(((sc.iloc[-1] - stock_open) / stock_open) * 100) if stock_open > 0 else 0.0
 
-        # Synchronize NIFTY strictly to today's session
+        # Synchronize NIFTY strictly to matching timestamps in today's session
         nifty_change_pct = 0.0
+        rs_accel_3 = 0.0
+        rs_accel_6 = 0.0
+
         if nifty_df is not None and not nifty_df.empty:
             n_df = nifty_df.copy()
             if not pd.api.types.is_datetime64_any_dtype(n_df.index):
                 n_df.index = pd.to_datetime(n_df.index)
+            try:
+                if n_df.index.tz is None:
+                    n_df.index = n_df.index.tz_localize("Asia/Kolkata")
+                else:
+                    n_df.index = n_df.index.tz_convert("Asia/Kolkata")
+            except Exception:
+                pass
+
             today_nifty = n_df[n_df.index.date == today_date] if today_date else n_df
             if not today_nifty.empty and len(today_nifty) >= 2:
                 n_open = float(today_nifty['Open'].iloc[0])
                 n_close = float(today_nifty['Close'].iloc[-1])
                 nifty_change_pct = float(((n_close - n_open) / n_open) * 100) if n_open > 0 else 0.0
 
+                # Strict timestamp inner alignment to avoid row-shift distortions
+                joined = pd.DataFrame({"stock_c": today_stock['Close']}).join(
+                    pd.DataFrame({"nifty_c": today_nifty['Close']}), how="inner"
+                ).dropna()
+
+                if len(joined) >= 4:
+                    s_last = float(joined['stock_c'].iloc[-1])
+                    s_prev3 = float(joined['stock_c'].iloc[-3])
+                    n_last = float(joined['nifty_c'].iloc[-1])
+                    n_prev3 = float(joined['nifty_c'].iloc[-3])
+
+                    s_ret3 = ((s_last - s_prev3) / s_prev3) * 100 if s_prev3 > 0 else 0.0
+                    n_ret3 = ((n_last - n_prev3) / n_prev3) * 100 if n_prev3 > 0 else 0.0
+                    rs_accel_3 = round(s_ret3 - n_ret3, 2)
+
+                if len(joined) >= 7:
+                    s_last = float(joined['stock_c'].iloc[-1])
+                    s_prev6 = float(joined['stock_c'].iloc[-6])
+                    n_last = float(joined['nifty_c'].iloc[-1])
+                    n_prev6 = float(joined['nifty_c'].iloc[-6])
+
+                    s_ret6 = ((s_last - s_prev6) / s_prev6) * 100 if s_prev6 > 0 else 0.0
+                    n_ret6 = ((n_last - n_prev6) / n_prev6) * 100 if n_prev6 > 0 else 0.0
+                    rs_accel_6 = round(s_ret6 - n_ret6, 2)
+        else:
+            if len(sc) >= 4:
+                c_3 = float(sc.iloc[-3])
+                rs_accel_3 = round(((sc.iloc[-1] - c_3) / c_3) * 100, 2) if c_3 > 0 else 0.0
+            if len(sc) >= 7:
+                c_6 = float(sc.iloc[-6])
+                rs_accel_6 = round(((sc.iloc[-1] - c_6) / c_6) * 100, 2) if c_6 > 0 else 0.0
+
         rs_nifty = round(stock_change_pct - nifty_change_pct, 2)
         rs_sector = round(stock_change_pct - sector_change_pct, 2)
-
-        # Multi-window RS acceleration: 3-candle and 6-candle delta relative to NIFTY
-        rs_accel_3 = 0.0
-        rs_accel_6 = 0.0
-        
-        # Calculate stock return over last 3 and 6 candles
-        stock_ret_3 = 0.0
-        if len(sc) >= 4:
-            c_3 = float(sc.iloc[-3])
-            stock_ret_3 = float(((sc.iloc[-1] - c_3) / c_3) * 100) if c_3 > 0 else 0.0
-            
-        stock_ret_6 = 0.0
-        if len(sc) >= 7:
-            c_6 = float(sc.iloc[-6])
-            stock_ret_6 = float(((sc.iloc[-1] - c_6) / c_6) * 100) if c_6 > 0 else 0.0
-
-        # Calculate NIFTY return over matching 3 and 6 candles if available
-        nifty_ret_3 = 0.0
-        nifty_ret_6 = 0.0
-        if nifty_df is not None and not nifty_df.empty:
-            n_df = nifty_df.copy()
-            if not pd.api.types.is_datetime64_any_dtype(n_df.index):
-                n_df.index = pd.to_datetime(n_df.index)
-            today_nifty = n_df[n_df.index.date == today_date] if today_date else n_df
-            if not today_nifty.empty:
-                nc = today_nifty['Close']
-                if len(nc) >= 4:
-                    nc_3 = float(nc.iloc[-3])
-                    nifty_ret_3 = float(((nc.iloc[-1] - nc_3) / nc_3) * 100) if nc_3 > 0 else 0.0
-                if len(nc) >= 7:
-                    nc_6 = float(nc.iloc[-6])
-                    nifty_ret_6 = float(((nc.iloc[-1] - nc_6) / nc_6) * 100) if nc_6 > 0 else 0.0
-
-        rs_accel_3 = round(stock_ret_3 - nifty_ret_3, 2)
-        rs_accel_6 = round(stock_ret_6 - nifty_ret_6, 2)
 
         return {
             "stock_change_pct": round(stock_change_pct, 2),
@@ -199,43 +217,89 @@ class OpportunityRankingEngine:
         rs_data = OpportunityRankingEngine.calculate_relative_strength_acceleration(stock_df, nifty_df, sector_change)
         rs_nifty = rs_data["rs_nifty"]
         rs_sector = rs_data["rs_sector"]
-        rs_accel = rs_data["rs_accel"]
+        rs_accel_3 = rs_data.get("rs_accel_3", 0.0)
+        rs_accel_6 = rs_data.get("rs_accel_6", 0.0)
+        rs_accel = rs_accel_3
 
         # 6. VWAP Relationship
         above_vwap = (curr_c > vwap) if vwap else False
         below_vwap = (curr_c < vwap) if vwap else False
 
-        # Directional Tendency & Scoring
-        bull_score = 0
-        bear_score = 0
+        # 7. Specialized Pattern Detectors: Gap-Up / Gap-Down, Flat-Open Ignition, Index Shock
+        open_gap_pct = 0.0
+        is_gap_up = False
+        is_gap_down = False
+        is_flat_open = False
+        is_flat_open_ignition = False
 
-        # Bullish factors
-        if rs_nifty > 0: bull_score += min(20, int(rs_nifty * 5))
-        if rs_sector > 0: bull_score += min(20, int(rs_sector * 5))
-        if rs_accel > 0: bull_score += 15
-        if above_vwap: bull_score += 20
-        if rvol >= 1.5: bull_score += 15
-        if vol_consecutive_rise and curr_c > curr_o: bull_score += 15
-        if is_range_squeezed and curr_c > curr_o: bull_score += 15
-        if is_coiling_near_orh: bull_score += 20
-        if is_broken_above_orh: bull_score += 20
-        if is_expanding_now and curr_c > curr_o: bull_score += 15
+        if prev_date is not None:
+            prev_day_df = df_copy[df_copy.index.date == prev_date]
+            if not prev_day_df.empty:
+                prev_day_close = float(prev_day_df['Close'].iloc[-1])
+                today_first_open = float(today_df['Open'].iloc[0])
+                if prev_day_close > 0:
+                    open_gap_pct = round(((today_first_open - prev_day_close) / prev_day_close) * 100, 2)
+                    is_gap_up = (open_gap_pct >= 0.75)
+                    is_gap_down = (open_gap_pct <= -0.75)
+                    is_flat_open = (abs(open_gap_pct) <= 0.30)
+                    if is_flat_open and (curr_c > today_first_open) and (rvol >= 1.5 or is_expanding_now):
+                        is_flat_open_ignition = True
 
-        # Bearish factors
-        if rs_nifty < 0: bear_score += min(20, int(abs(rs_nifty) * 5))
-        if rs_sector < 0: bear_score += min(20, int(abs(rs_sector) * 5))
-        if rs_accel < 0: bear_score += 15
-        if below_vwap: bear_score += 20
-        if rvol >= 1.5: bear_score += 15
-        if vol_consecutive_rise and curr_c < curr_o: bear_score += 15
-        if is_range_squeezed and curr_c < curr_o: bear_score += 15
-        if is_coiling_near_orl: bear_score += 20
-        if is_broken_below_orl: bear_score += 20
-        if is_expanding_now and curr_c < curr_o: bear_score += 15
+        # Gap Hold Confirmation (Holding above gap open)
+        is_gap_up_holding = is_gap_up and (curr_c >= float(today_df['Open'].iloc[0]))
+        is_gap_down_holding = is_gap_down and (curr_c <= float(today_df['Open'].iloc[0]))
 
-        direction = "BULLISH" if (bull_score >= bear_score and bull_score >= 40) else ("BEARISH" if bear_score >= 40 else "NEUTRAL")
-        raw_score = bull_score if direction == "BULLISH" else (bear_score if direction == "BEARISH" else max(bull_score, bear_score))
-        conviction_score = min(100, raw_score)
+        # Dual Scoring Architecture:
+        # A. Early Opportunity Score (Pre-Breakout, Energy Coil, Volume Accumulation, RS Lead)
+        # B. Confirmation Score (Completed Expansion, Broken Level, High RVOL, Institutional OB)
+        early_bull_score = 0
+        early_bear_score = 0
+        conf_bull_score = 0
+        conf_bear_score = 0
+
+        # Bullish Early Opportunity Factors:
+        if is_coiling_near_orh: early_bull_score += 25
+        if is_range_squeezed and curr_c > curr_o: early_bull_score += 20
+        if vol_consecutive_rise and curr_c > curr_o: early_bull_score += 20
+        if rs_accel_3 > 0.3: early_bull_score += 15
+        if is_flat_open_ignition: early_bull_score += 20
+        if is_gap_up_holding: early_bull_score += 15
+        if above_vwap: early_bull_score += 10
+
+        # Bullish Confirmation Factors:
+        if is_broken_above_orh: conf_bull_score += 25
+        if is_expanding_now and curr_c > curr_o: conf_bull_score += 20
+        if rvol >= 1.5: conf_bull_score += 20
+        if above_vwap: conf_bull_score += 15
+        if rs_nifty > 0.5: conf_bull_score += 15
+        if rs_accel_6 > 0.3: conf_bull_score += 15
+
+        # Bearish Early Opportunity Factors:
+        if is_coiling_near_orl: early_bear_score += 25
+        if is_range_squeezed and curr_c < curr_o: early_bear_score += 20
+        if vol_consecutive_rise and curr_c < curr_o: early_bear_score += 20
+        if rs_accel_3 < -0.3: early_bear_score += 15
+        if is_gap_down_holding: early_bear_score += 15
+        if below_vwap: early_bear_score += 10
+
+        # Bearish Confirmation Factors:
+        if is_broken_below_orl: conf_bear_score += 25
+        if is_expanding_now and curr_c < curr_o: conf_bear_score += 20
+        if rvol >= 1.5: conf_bear_score += 20
+        if below_vwap: conf_bear_score += 15
+        if rs_nifty < -0.5: conf_bear_score += 15
+        if rs_accel_6 < -0.3: conf_bear_score += 15
+
+        early_bull_score = min(100, early_bull_score)
+        conf_bull_score = min(100, conf_bull_score)
+        early_bear_score = min(100, early_bear_score)
+        conf_bear_score = min(100, conf_bear_score)
+
+        total_bull = max(early_bull_score, conf_bull_score)
+        total_bear = max(early_bear_score, conf_bear_score)
+
+        direction = "BULLISH" if (total_bull >= total_bear and total_bull >= 35) else ("BEARISH" if total_bear >= 35 else "NEUTRAL")
+        conviction_score = total_bull if direction == "BULLISH" else (total_bear if direction == "BEARISH" else max(total_bull, total_bear))
 
         # Correct Stop-Loss & Targets from Opportunity Potential Engine
         sl = opp_eval.get("stop_loss") or opp_eval.get("suggested_sl") if opp_eval else None
@@ -246,7 +310,6 @@ class OpportunityRankingEngine:
         exhaustion_risk = opp_eval.get("exhaustion_risk", "LOW") if opp_eval else "LOW"
 
         # Quality Gates for CONFIRMED:
-        # Strict Potential > 1.0%, actual RR >= 1.50, exhaustion != HIGH, is_viable == True
         is_viable_opportunity = (
             opp_eval.get("is_viable", False) and 
             potential_pct > 1.0 and 
@@ -254,22 +317,29 @@ class OpportunityRankingEngine:
             exhaustion_risk != "HIGH"
         ) if opp_eval else False
 
-        # Stage Classification
-        if is_viable_opportunity and conviction_score >= 55:
+        # Stage Classification with Separate Early vs Confirmation Triggers
+        if is_viable_opportunity and (conf_bull_score >= 50 or conf_bear_score >= 50):
             stage = "CONFIRMED"
             stage_desc = f"Verified Completed Trade: RR 1:{rr_ratio:.2f}, +{potential_pct:.1f}% Room"
-        elif is_expanding_now or (rvol >= 1.75 and conviction_score >= 50) or is_broken_above_orh or is_broken_below_orl:
+            entry_trigger = f"Demand/Supply OB Entry confirmed with RR 1:{rr_ratio:.1f}"
+        elif is_broken_above_orh or is_broken_below_orl or is_expanding_now or (rvol >= 1.75 and conviction_score >= 45):
             stage = "IGNITION"
             stage_desc = f"Momentum Breaking Out: RVOL {rvol:.1f}x, Range {curr_range/atr14:.1f}x ATR"
-        elif is_coiling_near_orh or is_coiling_near_orl or is_range_squeezed or (vol_consecutive_rise and conviction_score >= 35):
+            entry_trigger = "Breakout confirmed above ORH" if direction == "BULLISH" else "Breakdown confirmed below ORL"
+        elif is_coiling_near_orh or is_coiling_near_orl or is_range_squeezed or is_flat_open_ignition or (early_bull_score >= 40 or early_bear_score >= 40):
             stage = "PREPARING"
             stage_desc = "Early Energy Coil: Volume accumulating below breakout level before the move"
+            entry_trigger = f"Watch for breakout above ₹{orh:.1f} (ORH)" if direction == "BULLISH" else f"Watch for breakdown below ₹{orl:.1f} (ORL)"
         else:
             stage = "MONITORING"
             stage_desc = "Normal intraday action"
+            entry_trigger = "Wait for structure setup"
 
         # Setup Evidence & Drivers
         reasons = []
+        if is_flat_open_ignition: reasons.append("Flat-open ignition")
+        if is_gap_up_holding: reasons.append(f"Gap-up +{open_gap_pct}% holding")
+        elif is_gap_down_holding: reasons.append(f"Gap-down {open_gap_pct}% holding")
         if vol_consecutive_rise: reasons.append("3-bar volume surge")
         if is_coiling_near_orh: reasons.append(f"Coiling {dist_to_orh_pct:.2f}% under ORH")
         elif is_broken_above_orh: reasons.append("Broken above 15m ORH")
@@ -289,14 +359,19 @@ class OpportunityRankingEngine:
             "change_pct": rs_data["stock_change_pct"],
             "direction": direction,
             "conviction_score": conviction_score,
+            "early_opportunity_score": early_bull_score if direction == "BULLISH" else early_bear_score,
+            "confirmation_score": conf_bull_score if direction == "BULLISH" else conf_bear_score,
             "stage": stage,
             "stage_desc": stage_desc,
+            "entry_trigger": entry_trigger,
             "rvol": rvol,
             "vol_consecutive_rise": vol_consecutive_rise,
             "is_range_squeezed": is_range_squeezed,
             "rs_nifty": rs_nifty,
             "rs_sector": rs_sector,
             "rs_accel": rs_accel,
+            "rs_accel_3": rs_accel_3,
+            "rs_accel_6": rs_accel_6,
             "orh": orh,
             "orl": orl,
             "reasons": reasons,
@@ -323,19 +398,25 @@ class OpportunityRankingEngine:
 
         # Sort priority:
         # 1. Stage (CONFIRMED > IGNITION > PREPARING > MONITORING)
-        # 2. Conviction Score descending
-        # 3. Relative Strength Acceleration
-        stage_weights = {"CONFIRMED": 300, "IGNITION": 200, "PREPARING": 100, "MONITORING": 0}
+        # 2. Stage-appropriate scoring:
+        #    - For CONFIRMED/IGNITION: weighted by confirmation_score and rs_accel_6
+        #    - For PREPARING: weighted by early_opportunity_score and rs_accel_3
+        stage_weights = {"CONFIRMED": 400, "IGNITION": 250, "PREPARING": 150, "MONITORING": 0}
 
-        bullish.sort(
-            key=lambda x: (stage_weights.get(x["stage"], 0) + x["conviction_score"] + (x["rs_accel"] * 10)),
-            reverse=True
-        )
+        def score_candidate(cand, is_bull=True):
+            stg = cand.get("stage", "MONITORING")
+            base = stage_weights.get(stg, 0)
+            if stg in ("CONFIRMED", "IGNITION"):
+                main_score = cand.get("confirmation_score", cand.get("conviction_score", 0))
+            else:
+                main_score = cand.get("early_opportunity_score", cand.get("conviction_score", 0))
+            
+            rs_acc = cand.get("rs_accel_3", 0.0) if is_bull else abs(cand.get("rs_accel_3", 0.0))
+            rs_acc6 = cand.get("rs_accel_6", 0.0) if is_bull else abs(cand.get("rs_accel_6", 0.0))
+            return base + main_score + (rs_acc * 10) + (rs_acc6 * 5)
 
-        bearish.sort(
-            key=lambda x: (stage_weights.get(x["stage"], 0) + x["conviction_score"] + (abs(x["rs_accel"]) * 10)),
-            reverse=True
-        )
+        bullish.sort(key=lambda x: score_candidate(x, is_bull=True), reverse=True)
+        bearish.sort(key=lambda x: score_candidate(x, is_bull=False), reverse=True)
 
         return {
             "top_bullish": bullish[:top_n],

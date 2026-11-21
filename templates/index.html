@@ -524,8 +524,21 @@
                     const sym = c.symbol;
                     const stageColor = c.stage === 'CONFIRMED' ? 'var(--accent-green)' : (c.stage === 'IGNITION' ? 'var(--accent-blue)' : '#f59e0b');
                     const reasons = (c.reasons || []).slice(0, 2).join(', ');
+                    
+                    // Full trade setup details
+                    let setupDetails = '';
+                    if (c.stage === 'CONFIRMED' && c.suggested_sl && c.suggested_tp1) {
+                        setupDetails = `<div style="font-size:0.63rem; color:#f8fafc; margin-top:3px; background:rgba(0,208,156,0.1); padding:2px 4px; border-radius:3px;">
+                            Trigger: <span style="color:#00d09c;">${c.entry_trigger || 'OB Entry'}</span> | SL: <span style="color:#f59e0b;">₹${c.suggested_sl}</span> | TP1: <span style="color:#38bdf8;">₹${c.suggested_tp1}</span> | RR: 1:${c.risk_reward_ratio || 1.5}
+                        </div>`;
+                    } else {
+                        setupDetails = `<div style="font-size:0.63rem; color:#94a3b8; margin-top:3px;">
+                            Trigger: <span style="color:#f59e0b;">${c.entry_trigger || 'Watching Breakout'}</span>
+                        </div>`;
+                    }
+
                     bullHtml += `
-                    <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(0,208,156,0.2); border-radius:4px; padding:5px 8px; cursor:pointer;" onclick="selectStock('${sym}')" title="Click to view ${sym} in Radar">
+                    <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(0,208,156,0.2); border-radius:4px; padding:6px 8px; cursor:pointer;" onclick="selectStock('${sym}')" title="Click to view ${sym} in Radar">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
                             <span style="font-size:0.75rem; font-weight:bold; color:#fff;">#${i+1} ${sym.replace('.NS', '')} <span style="font-size:0.65rem; color:${stageColor};">(${c.stage})</span></span>
                             <span style="font-size:0.7rem; color:var(--accent-green); font-weight:bold;">+${c.change_pct}%</span>
@@ -534,6 +547,7 @@
                             <span>Score: ${c.conviction_score}/100 | ${reasons}</span>
                             <span>${c.potential_pct ? '+' + c.potential_pct + '% room' : ''}</span>
                         </div>
+                        ${setupDetails}
                     </div>`;
                 });
             }
@@ -548,8 +562,21 @@
                     const sym = c.symbol;
                     const stageColor = c.stage === 'CONFIRMED' ? 'var(--accent-green)' : (c.stage === 'IGNITION' ? 'var(--accent-blue)' : '#f59e0b');
                     const reasons = (c.reasons || []).slice(0, 2).join(', ');
+
+                    // Full trade setup details
+                    let setupDetails = '';
+                    if (c.stage === 'CONFIRMED' && c.suggested_sl && c.suggested_tp1) {
+                        setupDetails = `<div style="font-size:0.63rem; color:#f8fafc; margin-top:3px; background:rgba(235,87,87,0.1); padding:2px 4px; border-radius:3px;">
+                            Trigger: <span style="color:#eb5757;">${c.entry_trigger || 'OB Entry'}</span> | SL: <span style="color:#f59e0b;">₹${c.suggested_sl}</span> | TP1: <span style="color:#38bdf8;">₹${c.suggested_tp1}</span> | RR: 1:${c.risk_reward_ratio || 1.5}
+                        </div>`;
+                    } else {
+                        setupDetails = `<div style="font-size:0.63rem; color:#94a3b8; margin-top:3px;">
+                            Trigger: <span style="color:#f59e0b;">${c.entry_trigger || 'Watching Breakdown'}</span>
+                        </div>`;
+                    }
+
                     bearHtml += `
-                    <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(235,87,87,0.2); border-radius:4px; padding:5px 8px; cursor:pointer;" onclick="selectStock('${sym}')" title="Click to view ${sym} in Radar">
+                    <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(235,87,87,0.2); border-radius:4px; padding:6px 8px; cursor:pointer;" onclick="selectStock('${sym}')" title="Click to view ${sym} in Radar">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
                             <span style="font-size:0.75rem; font-weight:bold; color:#fff;">#${i+1} ${sym.replace('.NS', '')} <span style="font-size:0.65rem; color:${stageColor};">(${c.stage})</span></span>
                             <span style="font-size:0.7rem; color:var(--accent-red); font-weight:bold;">${c.change_pct}%</span>
@@ -558,6 +585,7 @@
                             <span>Score: ${c.conviction_score}/100 | ${reasons}</span>
                             <span>${c.potential_pct ? '-' + c.potential_pct + '% room' : ''}</span>
                         </div>
+                        ${setupDetails}
                     </div>`;
                 });
             }

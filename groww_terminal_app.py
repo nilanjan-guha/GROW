@@ -529,15 +529,25 @@ def background_screener_worker():
                             }
                             latest_dfs[sym] = cdf
 
-                            # Enforce completed candle validation
+                            # Enforce strict feed validation: Reject stale, unvalidated, or corrupt feeds before ranking
                             feed_val = MarketValidator.validate_feed_freshness(cdf, max_delay_seconds=300, candle_duration_seconds=300)
-                            is_comp = feed_val.get("is_completed_candle", True)
+                            if not feed_val.get("is_valid", False):
+                                continue
+
+                            is_comp = feed_val.get("is_completed_candle", False)
                             eval_cdf = cdf if is_comp else cdf.iloc[:-1]
+                            if len(eval_cdf) < 15:
+                                continue
 
                             # Execute OpportunityRankingEngine live across candidate
+                            # Look up sector mapping: Groww trending map or classify_stock_sector
                             sec_info = groww_sector_engine.stock_to_sector_map.get(sym, {})
-                            sec_name = sec_info.get("sector", "GENERAL")
+                            sec_name = sec_info.get("sector")
                             sec_chg = sec_info.get("sector_change", 0.0)
+                            if not sec_name:
+                                sec_name = classify_stock_sector(sym)
+                                sec_data = screener_state.get("sectors", {}).get(sec_name, {})
+                                sec_chg = sec_data.get("change", 0.0)
                             
                             # Retrieve enriched cache if present
                             enriched = screener_state.get("enriched_signals_cache", {}).get(sym, {}).get("data", {})
@@ -918,9 +928,22 @@ def get_ranked_opportunities_endpoint():
             if sym == "^NSEI" or item.get("df") is None:
                 continue
             df_sym = item["df"]
+            # Enforce validation
+            f_val = MarketValidator.validate_feed_freshness(df_sym, max_delay_seconds=300, candle_duration_seconds=300)
+            if not f_val.get("is_valid", False):
+                continue
+            is_comp = f_val.get("is_completed_candle", False)
+            eval_df_sym = df_sym if is_comp else df_sym.iloc[:-1]
+            if len(eval_df_sym) < 15:
+                continue
+
             sec_info = groww_sector_engine.stock_to_sector_map.get(sym, {})
-            sec_name = sec_info.get("sector", "GENERAL")
+            sec_name = sec_info.get("sector")
             sec_chg = sec_info.get("sector_change", 0.0)
+            if not sec_name:
+                sec_name = classify_stock_sector(sym)
+                sec_data = screener_state.get("sectors", {}).get(sec_name, {})
+                sec_chg = sec_data.get("change", 0.0)
             
             # Retrieve enriched cache if present
             enriched = screener_state.get("enriched_signals_cache", {}).get(sym, {}).get("data", {})
@@ -934,7 +957,7 @@ def get_ranked_opportunities_endpoint():
                 "exhaustion_risk": enriched.get("exhaustion_risk", "LOW")
             }
             eval_res = OpportunityRankingEngine.evaluate_stock_opportunity(
-                stock_df=df_sym,
+                stock_df=eval_df_sym,
                 symbol=sym,
                 sector_name=sec_name,
                 sector_change=sec_chg,
