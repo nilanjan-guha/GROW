@@ -150,7 +150,7 @@ ICT_GROUP                       = 'ICT / SMC Institutional Engine'
 ORDERFLOW_GROUP                 = 'Order Flow / CVD & Absorption'
 useCvdFilter                    = input.bool(true, 'Enable CVD & Absorption Footprint Filter', group=ORDERFLOW_GROUP, tooltip='Validates that buyers are aggressively absorbing sellers on sweeps via positive Volume Delta.')
 cvdLength                       = input.int(14, 'CVD Smoothing Period', minval=3, maxval=50, group=ORDERFLOW_GROUP)
-showAbsorptionSignals           = input.bool(true, 'Show Institutional Absorption Wick Signals', group=ORDERFLOW_GROUP)
+showAbsorptionSignals           = input.bool(false, 'Show Institutional Absorption Wick Signals', group=ORDERFLOW_GROUP, tooltip='Default false to keep the chart ultra clean. Absorption is still calculated in the background to boost win rate.')
 
 strictAPlusOnly                 = input.bool(true, 'Strict A+ Checklist Only (Sweep + Displacement + MSS + FVG Retest)', group=ICT_GROUP, tooltip='When enabled, only takes the pristine institutional 7-point A+ setups. Filters out lower probability secondary setups.')
 useSequencedAPlus                = input.bool(true, 'Require Sweep → Displacement → MSS → FVG → Retest', group=ICT_GROUP)
@@ -1305,10 +1305,14 @@ if showIctAnnotations and barstate.isconfirmed
         label.new(bar_index, low, 'A+ BUY', style=label.style_label_up, color=color.white, textcolor=color.black, size=size.small)
     if ictAPlusSell
         label.new(bar_index, high, 'A+ SELL', style=label.style_label_down, color=color.white, textcolor=color.black, size=size.small)
+var label ictAbsorptionLabel = na
+
     if showAbsorptionSignals and cvdBullishAbsorption and not ictAPlusBuy
-        label.new(bar_index, low, 'ABSORPTION WICK', style=label.style_none, textcolor=color.teal, size=size.tiny)
+        label.delete(ictAbsorptionLabel)
+        ictAbsorptionLabel := label.new(bar_index, low, 'ABSORPTION WICK', style=label.style_none, textcolor=color.teal, size=size.tiny)
     if showAbsorptionSignals and cvdBearishAbsorption and not ictAPlusSell
-        label.new(bar_index, high, 'ABSORPTION WICK', style=label.style_none, textcolor=color.maroon, size=size.tiny)
+        label.delete(ictAbsorptionLabel)
+        ictAbsorptionLabel := label.new(bar_index, high, 'ABSORPTION WICK', style=label.style_none, textcolor=color.maroon, size=size.tiny)
 //---------------------------------------------------------------------------------------------------------------------}
 
 
