@@ -732,9 +732,17 @@ obSupplyTouch = not na(internalHigh.currentLevel) and (high >= internalHigh.curr
 htfMajorBuy  = useHtfConfluence and (htfSweepLow or (htfInDiscount and sweepLow)) and (close > open)
 htfMajorSell = useHtfConfluence and (htfSweepHigh or (not htfInDiscount and sweepHigh)) and (close < open)
 
+// Automatic Asset Class Identification (Index Spot vs Option Contract)
+tickerUpper  = str.upper(syminfo.ticker)
+isOption     = syminfo.type == 'option' or str.contains(tickerUpper, "CALL") or str.contains(tickerUpper, "PUT") or str.endswith(tickerUpper, "CE") or str.endswith(tickerUpper, "PE")
+isCallOption = isOption and (str.endswith(tickerUpper, "CE") or str.contains(tickerUpper, "CALL"))
+isPutOption  = isOption and (str.endswith(tickerUpper, "PE") or str.contains(tickerUpper, "PUT"))
+isIndex      = str.contains(tickerUpper, "NIFTY") or str.contains(tickerUpper, "BANKNIFTY") or str.contains(tickerUpper, "SENSEX") or str.contains(tickerUpper, "FINNIFTY") or str.contains(tickerUpper, "MIDCPNIFTY") or syminfo.type == "index"
+
 // Complete Trigger: Standard Trend Continuation OR Major 15M Liquidity Reversal
+// NOTE: If on an Option chart (CE/PE), strictly only BUYING triggers fire. On Index/Spot charts, both BUY & SELL triggers fire.
 sniperBuyTrigger  = (bullTrend and (triggeredBullShift or (sweepLow and close > open) or obDemandTouch)) or htfMajorBuy
-sniperSellTrigger = (bearTrend and (triggeredBearShift or (sweepHigh and close < open) or obSupplyTouch)) or htfMajorSell
+sniperSellTrigger = not isOption and (((bearTrend and (triggeredBearShift or (sweepHigh and close < open) or obSupplyTouch)) or htfMajorSell))
 
 // Arm Pending Sniper Orders on Major Shift, Sweeps & OB Retests
 if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - lastExitBar >= cooldownBarsInput)
@@ -812,8 +820,9 @@ if pendingOrder and not inTrade
                                bgcolor=colTPBox, border_color=color.teal, border_style=line.style_solid)
         activeSLBox := box.new(left=entryBarIdx, top=entryPrice, right=entryBarIdx + 1, bottom=stopLossPrice, 
                                bgcolor=colSLBox, border_color=color.maroon, border_style=line.style_solid)
+        buyLabelText = isIndex ? "BUY CALL (CE) " : (isCallOption ? "BUY CALL " : (isPutOption ? "BUY PUT " : "BUY "))
         activeLbl   := label.new(entryBarIdx + 1, entryPrice, 
-                                 "BUY " + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
+                                 buyLabelText + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
                                  style=label.style_label_left, color=color(na), textcolor=color.teal, size=size.tiny)
 
     // Short retest filled (Price pulls into entry level)
@@ -831,8 +840,9 @@ if pendingOrder and not inTrade
                                bgcolor=colTPBox, border_color=color.teal, border_style=line.style_solid)
         activeSLBox := box.new(left=entryBarIdx, top=stopLossPrice, right=entryBarIdx + 1, bottom=entryPrice, 
                                bgcolor=colSLBox, border_color=color.maroon, border_style=line.style_solid)
+        sellLabelText = isIndex ? "BUY PUT (PE) " : "SELL "
         activeLbl   := label.new(entryBarIdx + 1, entryPrice, 
-                                 "SELL " + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
+                                 sellLabelText + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
                                  style=label.style_label_left, color=color(na), textcolor=color.maroon, size=size.tiny)
 
 // Active Trade Progression (With Break-Even & Full Swing Target Delivery)
