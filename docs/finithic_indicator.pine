@@ -849,10 +849,23 @@ bool optionSideRecognized = isRecognizedCallOption or isRecognizedPutOption or i
 // Only evaluate entries on confirmed bar closes to prevent mid-candle repainting
 bool barConfirmed = barstate.isconfirmed or barstate.islastconfirmedhistory
 
+// Consolidation / Choppy Base Filter:
+// In choppy sideways ranges (circled in red on your chart), EMA 50 is flat and price chops back and forth.
+// A genuine trending breakout requires either:
+// 1) Price breaking above/below recent 20-bar consolidation range (high > ta.highest(high[1], 20))
+// 2) Or confirmed pullback into a fresh, unmitigated Demand/Supply Support zone
+float rangeHigh20 = ta.highest(high[1], 20)
+float rangeLow20  = ta.lowest(low[1], 20)
+float rangeSize20 = rangeHigh20 - rangeLow20
+bool inTightChoppyRange = rangeSize20 <= (atr14 * 2.5) and math.abs(close - ema50) < (atr14 * 0.4) and not (inDemandObZone or sweepLow)
+
+// Institutional Support Zone Bounce:
+// Fires when price tests a Demand Order Block or structure support, rejects the floor with a green candle
+bool demandSupportBounce = inDemandObZone or obRetestTouch or sweepReversalTouch or (structureRetestTouch and bullishReversalCandle)
+
 // Bullish Setup (Index moving UP / Option Call moving UP / Stock moving UP):
-// On Option Chart: Price tests Demand OB / Sweep and forms Green Reversal Candle with Volume
-// On Index/Stock Spot Chart: Price breaks bullish (BOS/CHoCH, EMA cross, or Demand bounce) -> triggers BUY CALL (CE) / BUY
-sniperBuyTrigger  = barConfirmed and bullTrend and (sniperZoneTestBuy or ((isIndexChart or isStockChart) and volumeConfirmed and (triggeredBullShift or ta.crossover(close, ema50) or (sweepLow and close > open)))) and (not isOptionChart or (optionSideRecognized and optionUnderlyingAligned))
+// In consolidation, suppress fakeouts; ONLY enter when bouncing cleanly off demand support or breaking out with volume!
+sniperBuyTrigger  = barConfirmed and bullTrend and not inTightChoppyRange and (sniperZoneTestBuy or demandSupportBounce or ((isIndexChart or isStockChart) and volumeConfirmed and (triggeredBullShift or ta.crossover(close, ema50) or (sweepLow and close > open)))) and (not isOptionChart or (optionSideRecognized and optionUnderlyingAligned))
 
 // Bearish Setup (Index moving DOWN / Stock moving DOWN):
 // On Index Spot Chart: triggers BUY PUT (PE)
@@ -992,7 +1005,7 @@ if pendingOrder and not inTrade
 
     // Short retest filled: When price pulls into supply pendingEntry level
     bool shortRetestCondition = (high >= pendingEntry) and (bar_index > pendingSetupBar or (close < open and high >= pendingEntry))
-    else if pendingDir == -1 and shortRetestCondition
+    if pendingDir == -1 and shortRetestCondition
         box.delete(pendingBox)
         pendingOrder    := false
         inTrade         := true
