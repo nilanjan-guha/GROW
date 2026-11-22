@@ -773,110 +773,89 @@ isCallOption = isOption and (str.endswith(tickerUpper, "CE") or str.contains(tic
 isPutOption  = isOption and (str.endswith(tickerUpper, "PE") or str.contains(tickerUpper, "PUT"))
 isIndex      = str.contains(tickerUpper, "NIFTY") or str.contains(tickerUpper, "BANKNIFTY") or str.contains(tickerUpper, "SENSEX") or str.contains(tickerUpper, "FINNIFTY") or str.contains(tickerUpper, "MIDCPNIFTY") or syminfo.type == "index"
 
-// Complete Trigger with Sufficient High-Win Trades:
-// Condition: Must be inside active killzone hours + Trend alignment + (Shift OR Retest OR FVG 50% OR Sweep)
-sniperBuyTrigger  = isInKillzone and ((bullTrend and ((triggeredBullShift and isDisplacement) or (sweepLow and close > open) or obDemandTouch or fvgDemandRetest)) or htfMajorBuy)
-sniperSellTrigger = not isOption and isInKillzone and (((bearTrend and ((triggeredBearShift and isDisplacement) or (sweepHigh and close < open) or obSupplyTouch or fvgSupplyRetest)) or htfMajorSell))
+// Recent BOS / Structure Breakout Level Memory
+var float lastBullBreakoutLevel = na
+var int   lastBullBreakoutBar   = -999
+var float lastBearBreakoutLevel = na
+var int   lastBearBreakoutBar   = -999
 
-// Arm Pending Sniper Orders on Major Shift, Sweeps & OB Retests
-if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - lastExitBar >= cooldownBarsInput)
-    if sniperBuyTrigger
-        impulseHigh  = high
-        // Pick best structural low: internalLow, swingLow, or local pivot low
+if triggeredBullShift
+    lastBullBreakoutLevel := not na(internalHigh.currentLevel) ? internalHigh.currentLevel : high[1]
+    lastBullBreakoutBar   := bar_index
+if triggeredBearShift
+    lastBearBreakoutLevel := not na(internalLow.currentLevel) ? internalLow.currentLevel : low[1]
+    lastBearBreakoutBar   := bar_index
+
+// Direct Retest of Breakout Level / Order Block Support:
+// Price tests previous broken high (support) with a bullish confirmation candle
+bullBreakoutRetest = not na(lastBullBreakoutLevel) and (bar_index - lastBullBreakoutBar <= 5) and (low <= lastBullBreakoutLevel + (atr14 * 0.4)) and (close > open)
+bearBreakoutRetest = not na(lastBearBreakoutLevel) and (bar_index - lastBearBreakoutBar <= 5) and (high >= lastBearBreakoutLevel - (atr14 * 0.4)) and (close < open)
+
+// Complete Trigger: High momentum continuation breakout retest OR sweep OR OB/FVG touch OR HTF confluence
+// Trend breakout retest is permitted across all market hours so explosive option continuation moves are never missed
+sniperBuyTrigger  = (bullTrend and (bullBreakoutRetest or (triggeredBullShift and isDisplacement) or (sweepLow and close > open) or obDemandTouch or fvgDemandRetest)) or htfMajorBuy
+sniperSellTrigger = not isOption and ((bearTrend and (bearBreakoutRetest or (triggeredBearShift and isDisplacement) or (sweepHigh and close < open) or obSupplyTouch or fvgSupplyRetest)) or htfMajorSell)
+
+// Direct Execution & Retest Management
+if enableSniperEngine and not inTrade and (bar_index - lastExitBar >= cooldownBarsInput)
+    // Direct Entry on Support / Breakout Retest or Displacement Shift
+    if sniperBuyTrigger and not pendingOrder
+        // Structural low: Cushion SL right below the support candle / swing low
         float structLow = not na(internalLow.currentLevel) ? internalLow.currentLevel : low[1]
+        if not na(lastBullBreakoutLevel) and lastBullBreakoutLevel < close
+            structLow := math.min(structLow, math.min(low, low[1]))
         if sweepLow and not na(swingLow.currentLevel) and swingLow.currentLevel < structLow
             structLow := swingLow.currentLevel
-        impulseLow   = math.min(structLow, low)
-        rangeDist    = impulseHigh - impulseLow
-        // Tight, clearly visible institutional SL cushioned below the structural swing/sweep pivot
-        calcSL       = impulseLow - (atr14 * 0.15)
-        calcEntry    = rangeDist > 0 ? impulseHigh - (rangeDist * sniperRetraceRatio) : close
-        riskDist     = calcEntry - calcSL
+        calcSL   = math.min(structLow, low) - (atr14 * 0.15)
+        calcEntry = close
+        riskDist = calcEntry - calcSL
 
-        // Filter out microscopic fakeouts: require meaningful risk distance >= minRiskAtr * ATR
-        if riskDist >= (atr14 * minRiskAtr)
-            pendingOrder    := true
-            pendingDir      := 1
-            pendingEntry    := math.min(calcEntry, close)
-            pendingSL       := calcSL
-            targetHighPrice = (targetOppositeSwing and not na(swingHigh.currentLevel) and swingHigh.currentLevel > pendingEntry + riskDist * 2.0) ? math.min(swingHigh.currentLevel, pendingEntry + (riskDist * 4.0)) : pendingEntry + (riskDist * sniperRRRatio)
-            pendingTP       := targetHighPrice
-            pendingSetupBar := bar_index
-            pendingBox      := box.new(left=bar_index, top=pendingEntry, right=bar_index + 1, bottom=pendingSL,
-                                       bgcolor=colPendingLong, border_color=color.teal, border_style=line.style_dotted)
+        if riskDist >= (atr14 * minRiskAtr * 0.5)
+            inTrade         := true
+            tradeDir        := 1
+            entryBarIdx     := bar_index
+            entryPrice      := calcEntry
+            stopLossPrice   := calcSL
+            targetHighPrice = (targetOppositeSwing and not na(swingHigh.currentLevel) and swingHigh.currentLevel > entryPrice + riskDist * 2.0) ? math.min(swingHigh.currentLevel, entryPrice + (riskDist * 4.0)) : entryPrice + (riskDist * sniperRRRatio)
+            takeProfitPrice := targetHighPrice
 
-    else if sniperSellTrigger
-        // Pick best structural high: internalHigh, swingHigh, or local pivot high
+            activeTPBox := box.new(left=entryBarIdx, top=takeProfitPrice, right=entryBarIdx + 1, bottom=entryPrice, 
+                                   bgcolor=colTPBox, border_color=color.teal, border_style=line.style_solid)
+            activeSLBox := box.new(left=entryBarIdx, top=entryPrice, right=entryBarIdx + 1, bottom=stopLossPrice, 
+                                   bgcolor=colSLBox, border_color=color.maroon, border_style=line.style_solid)
+            buyLabelText = isIndex ? "BUY CALL (CE) " : (isCallOption ? "BUY CALL " : (isPutOption ? "BUY PUT " : "BUY "))
+            activeLbl   := label.new(entryBarIdx + 1, entryPrice, 
+                                     buyLabelText + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
+                                     style=label.style_label_left, color=color(na), textcolor=color.teal, size=size.tiny)
+
+    else if sniperSellTrigger and not pendingOrder
+        // Structural high: Cushion SL right above the resistance candle / swing high
         float structHigh = not na(internalHigh.currentLevel) ? internalHigh.currentLevel : high[1]
+        if not na(lastBearBreakoutLevel) and lastBearBreakoutLevel > close
+            structHigh := math.max(structHigh, math.max(high, high[1]))
         if sweepHigh and not na(swingHigh.currentLevel) and swingHigh.currentLevel > structHigh
             structHigh := swingHigh.currentLevel
-        impulseHigh  = math.max(structHigh, high)
-        impulseLow   = low
-        rangeDist    = impulseHigh - impulseLow
-        // Tight, clearly visible institutional SL cushioned above the structural swing/sweep pivot
-        calcSL       = impulseHigh + (atr14 * 0.15)
-        calcEntry    = rangeDist > 0 ? impulseLow + (rangeDist * sniperRetraceRatio) : close
-        riskDist     = calcSL - calcEntry
+        calcSL   = math.max(structHigh, high) + (atr14 * 0.15)
+        calcEntry = close
+        riskDist = calcSL - calcEntry
 
-        // Filter out microscopic fakeouts: require meaningful risk distance >= minRiskAtr * ATR
-        if riskDist >= (atr14 * minRiskAtr)
-            pendingOrder    := true
-            pendingDir      := -1
-            pendingEntry    := math.max(calcEntry, close)
-            pendingSL       := calcSL
-            targetLowPrice  = (targetOppositeSwing and not na(swingLow.currentLevel) and swingLow.currentLevel < pendingEntry - riskDist * 2.0 and swingLow.currentLevel > 0) ? math.max(swingLow.currentLevel, pendingEntry - (riskDist * 4.0)) : pendingEntry - (riskDist * sniperRRRatio)
-            pendingTP       := targetLowPrice
-            pendingSetupBar := bar_index
-            pendingBox      := box.new(left=bar_index, top=pendingSL, right=bar_index + 1, bottom=pendingEntry,
-                                       bgcolor=colPendingShort, border_color=color.maroon, border_style=line.style_dotted)
+        if riskDist >= (atr14 * minRiskAtr * 0.5)
+            inTrade         := true
+            tradeDir        := -1
+            entryBarIdx     := bar_index
+            entryPrice      := calcEntry
+            stopLossPrice   := calcSL
+            targetLowPrice  = (targetOppositeSwing and not na(swingLow.currentLevel) and swingLow.currentLevel < entryPrice - riskDist * 2.0 and swingLow.currentLevel > 0) ? math.max(swingLow.currentLevel, entryPrice - (riskDist * 4.0)) : entryPrice - (riskDist * sniperRRRatio)
+            takeProfitPrice := targetLowPrice
 
-// Invalidate stale pending setups
-if pendingOrder and (bar_index - pendingSetupBar > sniperMaxWaitBars)
-    pendingOrder := false
-    box.delete(pendingBox)
-
-// Check for Fill & Manage Live Active Trade
-if pendingOrder and not inTrade
-    box.set_right(pendingBox, bar_index + 1)
-    
-    // Long retest filled (Price pulls into entry level)
-    if pendingDir == 1 and low <= pendingEntry
-        box.delete(pendingBox)
-        pendingOrder    := false
-        inTrade         := true
-        tradeDir        := 1
-        entryBarIdx     := bar_index
-        entryPrice      := math.min(pendingEntry, open)
-        stopLossPrice   := pendingSL
-        takeProfitPrice := pendingTP
-
-        activeTPBox := box.new(left=entryBarIdx, top=takeProfitPrice, right=entryBarIdx + 1, bottom=entryPrice, 
-                               bgcolor=colTPBox, border_color=color.teal, border_style=line.style_solid)
-        activeSLBox := box.new(left=entryBarIdx, top=entryPrice, right=entryBarIdx + 1, bottom=stopLossPrice, 
-                               bgcolor=colSLBox, border_color=color.maroon, border_style=line.style_solid)
-        buyLabelText = isIndex ? "BUY CALL (CE) " : (isCallOption ? "BUY CALL " : (isPutOption ? "BUY PUT " : "BUY "))
-        activeLbl   := label.new(entryBarIdx + 1, entryPrice, 
-                                 buyLabelText + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
-                                 style=label.style_label_left, color=color(na), textcolor=color.teal, size=size.tiny)
-
-    // Short retest filled (Price pulls into entry level)
-    else if pendingDir == -1 and high >= pendingEntry
-        box.delete(pendingBox)
-        pendingOrder    := false
-        inTrade         := true
-        tradeDir        := -1
-        entryBarIdx     := bar_index
-        entryPrice      := math.max(pendingEntry, open)
-        stopLossPrice   := pendingSL
-        takeProfitPrice := pendingTP
-
-        activeTPBox := box.new(left=entryBarIdx, top=entryPrice, right=entryBarIdx + 1, bottom=takeProfitPrice, 
-                               bgcolor=colTPBox, border_color=color.teal, border_style=line.style_solid)
-        activeSLBox := box.new(left=entryBarIdx, top=stopLossPrice, right=entryBarIdx + 1, bottom=entryPrice, 
-                               bgcolor=colSLBox, border_color=color.maroon, border_style=line.style_solid)
-        sellLabelText = isIndex ? "BUY PUT (PE) " : "SELL "
-        activeLbl   := label.new(entryBarIdx + 1, entryPrice, 
-                                 sellLabelText + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
+            activeTPBox := box.new(left=entryBarIdx, top=entryPrice, right=entryBarIdx + 1, bottom=takeProfitPrice, 
+                                   bgcolor=colTPBox, border_color=color.teal, border_style=line.style_solid)
+            activeSLBox := box.new(left=entryBarIdx, top=stopLossPrice, right=entryBarIdx + 1, bottom=entryPrice, 
+                                   bgcolor=colSLBox, border_color=color.maroon, border_style=line.style_solid)
+            sellLabelText = isIndex ? "BUY PUT (PE) " : "SELL "
+            activeLbl   := label.new(entryBarIdx + 1, entryPrice, 
+                                     sellLabelText + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
+                                     style=label.style_label_left, color=color(na), textcolor=color.maroon, size=size.tiny)
                                  style=label.style_label_left, color=color(na), textcolor=color.maroon, size=size.tiny)
 
 // Active Trade Progression (With Break-Even & Full Swing Target Delivery)
