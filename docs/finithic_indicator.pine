@@ -115,6 +115,7 @@ chartInstrumentType             = input.string( 'Auto Detect', 'Chart Mode / Ins
                                                options = ['Auto Detect', 'Option Premium Chart (BUY CALL / BUY PUT Only)', 'Index Spot Chart (BUY CE on Bullish / BUY PE on Bearish)'], 
                                                group = SNIPER_GROUP, 
                                                tooltip = 'Auto Detect: Automatically detects whether you are viewing an Option chart (CE/PE) or an Index spot/futures chart.\n\nOption Premium Chart: Always issues BUY signals only (Buying Call or Buying Put momentum, never selling options).\n\nIndex Spot Chart: When market breaks up, triggers BUY CALL (CE). When market breaks down, triggers BUY PUT (PE).')
+optionContractSideInput          = input.string('Auto Detect', 'Option Contract Side', options = ['Auto Detect', 'CALL', 'PUT'], group = SNIPER_GROUP, tooltip = 'If the data feed does not expose CE/PE clearly in the ticker, choose CALL or PUT manually.')
 underlyingIndexSymbol            = input.symbol('NSE:NIFTY', 'Underlying Index (for option charts)', group = SNIPER_GROUP, tooltip = 'Select the spot index that drives the option-side filter. Example: NSE:NIFTY or NSE:BANKNIFTY. CALL premium requires bullish underlying bias; PUT premium requires bearish underlying bias. The option premium must still form its own bullish SMC setup.')
 underlyingBiasTimeframe           = input.timeframe('15', 'Underlying Bias Timeframe', group = SNIPER_GROUP)
 targetTypeInput                 = input.string( 'Percentage Target (+30% to +40%)', 'Profit Target Mode', 
@@ -809,8 +810,10 @@ tickerStr = str.upper(syminfo.ticker)
 // Never classify an instrument by loose CE/PE substrings: ordinary equity names can contain those letters.
 // Auto-detect only trusts TradingView's instrument type; use the explicit chart-mode input if a feed labels options unusually.
 isAnyOption  = syminfo.type == 'option'
-isCallOption = isAnyOption and (str.endswith(tickerStr, 'CE') or str.contains(tickerStr, 'CALL'))
-isPutOption  = isAnyOption and (str.endswith(tickerStr, 'PE') or str.contains(tickerStr, 'PUT'))
+detectedCallOption = isAnyOption and (str.endswith(tickerStr, 'CE') or str.contains(tickerStr, 'CALL'))
+detectedPutOption  = isAnyOption and (str.endswith(tickerStr, 'PE') or str.contains(tickerStr, 'PUT'))
+isCallOption = optionContractSideInput == 'CALL' or (optionContractSideInput == 'Auto Detect' and detectedCallOption)
+isPutOption  = optionContractSideInput == 'PUT' or (optionContractSideInput == 'Auto Detect' and detectedPutOption)
 
 bool isKnownIndex = str.contains(tickerStr, "NIFTY") or str.contains(tickerStr, "BANKNIFTY") or str.contains(tickerStr, "SENSEX") or str.contains(tickerStr, "FINNIFTY") or str.contains(tickerStr, "MIDCPNIFTY") or syminfo.type == "index"
 
