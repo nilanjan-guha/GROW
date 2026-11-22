@@ -1060,8 +1060,10 @@ bool ictLocationBuy = not usePremiumDiscountFilter or ictDiscount
 bool ictLocationSell = not usePremiumDiscountFilter or ictPremium
 
 // OB mitigation: return to the actual opposing candle range, then reject.
-bool ictBullObRetest = allowObMitigationSetup and ictBullObActive and bar_index > ictBullObBar and low <= ictBullObTop and high >= ictBullObBottom and close > ictBullObBottom and ictBullReject
-bool ictBearObRetest = allowObMitigationSetup and ictBearObActive and bar_index > ictBearObBar and high >= ictBearObBottom and low <= ictBearObTop and close < ictBearObTop and ictBearReject
+bool ictBullObMidTouched = not na(ictBullObTop) and not na(ictBullObBottom) and low <= math.avg(ictBullObTop, ictBullObBottom)
+bool ictBearObMidTouched = not na(ictBearObTop) and not na(ictBearObBottom) and high >= math.avg(ictBearObTop, ictBearObBottom)
+bool ictBullObRetest = allowObMitigationSetup and ictBullObActive and bar_index > ictBullObBar and ictBullObMidTouched and close > ictBullObBottom and ictBullReject
+bool ictBearObRetest = allowObMitigationSetup and ictBearObActive and bar_index > ictBearObBar and ictBearObMidTouched and close < ictBearObTop and ictBearReject
 if ictBullObActive and close < ictBullObBottom
     // Bullish OB failed; it can become a bearish breaker after retest from below.
     ictBearBreakerTop := ictBullObTop
@@ -1074,8 +1076,8 @@ if ictBearObActive and close > ictBearObTop
     ictBullBreakerBottom := ictBearObBottom
     ictBullBreakerActive := true
     ictBearObActive := false
-bool ictBullBreakerRetest = allowBreakerSetup and ictBullBreakerActive and low <= ictBullBreakerTop and low >= ictBullBreakerBottom and close > ictBullBreakerTop and ictBullReject
-bool ictBearBreakerRetest = allowBreakerSetup and ictBearBreakerActive and high >= ictBearBreakerBottom and high <= ictBearBreakerTop and close < ictBearBreakerBottom and ictBearReject
+bool ictBullBreakerRetest = allowBreakerSetup and ictBullBreakerActive and low <= math.avg(ictBullBreakerTop, ictBullBreakerBottom) and close > ictBullBreakerTop and ictBullReject
+bool ictBearBreakerRetest = allowBreakerSetup and ictBearBreakerActive and high >= math.avg(ictBearBreakerTop, ictBearBreakerBottom) and close < ictBearBreakerBottom and ictBearReject
 
 if showIctAnnotations and ictNewBullFvg and not na(ictBullObTop)
     if not na(ictObTopLine)
@@ -1102,8 +1104,8 @@ if ictBearObActive and high >= ictBearObBottom and close < ictBearObTop
     ictBearMitigationTop := ictBearObTop
     ictBearMitigationBottom := ictBearObBottom
     ictBearMitigationActive := true
-bool ictBullMitigationRetest = ictBullMitigationActive and low <= ictBullMitigationTop and close > ictBullMitigationBottom and ictBullReject
-bool ictBearMitigationRetest = ictBearMitigationActive and high >= ictBearMitigationBottom and close < ictBearMitigationTop and ictBearReject
+bool ictBullMitigationRetest = ictBullMitigationActive and low <= math.avg(ictBullMitigationTop, ictBullMitigationBottom) and close > ictBullMitigationBottom and ictBullReject
+bool ictBearMitigationRetest = ictBearMitigationActive and high >= math.avg(ictBearMitigationTop, ictBearMitigationBottom) and close < ictBearMitigationTop and ictBearReject
 
 // BOS continuation: close through a swing, then retest the broken level.
 if triggeredBullShift and swingTrend.bias == BULLISH
@@ -1207,10 +1209,10 @@ bool ictLongConfirmed = barstate.isconfirmed and ictLongSetup and ictLongContext
 bool ictShortConfirmed = barstate.isconfirmed and ictShortSetup and ictShortContext and bearTrend and volumeConfirmed and ictUnderlyingBearOnly and ictShortInstrumentAllowed
 
 // Use the actual sweep extreme for reversal stops; otherwise use the relevant OB / structure boundary.
-float ictPlannedLongEntry = ictBullFvgRetest or ictAPlusBuy ? ictBullFvgMid : ictBullObRetest ? math.avg(ictBullObTop, ictBullObBottom) : ictBullBreakerRetest ? math.avg(ictBullBreakerTop, ictBullBreakerBottom) : ictBullMitigationRetest ? math.avg(ictBullMitigationTop, ictBullMitigationBottom) : close
-float ictPlannedShortEntry = ictBearFvgRetest or ictAPlusSell ? ictBearFvgMid : ictBearObRetest ? math.avg(ictBearObTop, ictBearObBottom) : ictBearBreakerRetest ? math.avg(ictBearBreakerTop, ictBearBreakerBottom) : ictBearMitigationRetest ? math.avg(ictBearMitigationTop, ictBearMitigationBottom) : close
-float ictPlannedLongSL = not na(ictBullSweepExtreme) and not na(ictBullSweepBar) and bar_index - ictBullSweepBar <= ictSetupExpiry ? ictBullSweepExtreme - atr14 * 0.15 : ictBullObRetest ? ictBullObBottom - atr14 * 0.15 : ictBullBreakerRetest ? ictBullBreakerBottom - atr14 * 0.15 : ictBullMitigationRetest ? ictBullMitigationBottom - atr14 * 0.15 : math.min(low, low[1]) - atr14 * 0.25
-float ictPlannedShortSL = not na(ictBearSweepExtreme) and not na(ictBearSweepBar) and bar_index - ictBearSweepBar <= ictSetupExpiry ? ictBearSweepExtreme + atr14 * 0.15 : ictBearObRetest ? ictBearObTop + atr14 * 0.15 : ictBearBreakerRetest ? ictBearBreakerTop + atr14 * 0.15 : ictBearMitigationRetest ? ictBearMitigationTop + atr14 * 0.15 : math.max(high, high[1]) + atr14 * 0.25
+float ictPlannedLongEntry = ictBullFvgRetest or ictAPlusBuy ? ictBullFvgMid : ictBullObRetest ? math.avg(ictBullObTop, ictBullObBottom) : ictBullBreakerRetest ? math.avg(ictBullBreakerTop, ictBullBreakerBottom) : ictBullMitigationRetest ? math.avg(ictBullMitigationTop, ictBullMitigationBottom) : ictBullBosRetest ? ictBullBosLevel : close
+float ictPlannedShortEntry = ictBearFvgRetest or ictAPlusSell ? ictBearFvgMid : ictBearObRetest ? math.avg(ictBearObTop, ictBearObBottom) : ictBearBreakerRetest ? math.avg(ictBearBreakerTop, ictBearBreakerBottom) : ictBearMitigationRetest ? math.avg(ictBearMitigationTop, ictBearMitigationBottom) : ictBearBosRetest ? ictBearBosLevel : close
+float ictPlannedLongSL = not na(ictBullSweepExtreme) and not na(ictBullSweepBar) and bar_index - ictBullSweepBar <= ictSetupExpiry and (ictAPlusBuy or ictBullStage > 0 or ictTurtleBuy or ictJudasBuy) ? ictBullSweepExtreme - atr14 * 0.15 : ictBullObRetest ? ictBullObBottom - atr14 * 0.15 : ictBullBreakerRetest ? ictBullBreakerBottom - atr14 * 0.15 : ictBullMitigationRetest ? ictBullMitigationBottom - atr14 * 0.15 : math.min(low, low[1]) - atr14 * 0.25
+float ictPlannedShortSL = not na(ictBearSweepExtreme) and not na(ictBearSweepBar) and bar_index - ictBearSweepBar <= ictSetupExpiry and (ictAPlusSell or ictBearStage > 0 or ictTurtleSell or ictJudasSell) ? ictBearSweepExtreme + atr14 * 0.15 : ictBearObRetest ? ictBearObTop + atr14 * 0.15 : ictBearBreakerRetest ? ictBearBreakerTop + atr14 * 0.15 : ictBearMitigationRetest ? ictBearMitigationTop + atr14 * 0.15 : math.max(high, high[1]) + atr14 * 0.25
 
 // Replace permissive OR-based legacy triggers with confirmed SMC modules.
 sniperBuyTrigger := enableSniperEngine and ictLongConfirmed
