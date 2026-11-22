@@ -144,6 +144,29 @@ minRiskAtr       = input.float(0.8, 'Minimum Swing Size / Risk (ATR Multiple)', 
 targetOppositeSwing = input.bool(false, 'Target Opposite Swing High/Low (Major Target)', group = SNIPER_GROUP)
 cooldownBarsInput   = input.int(8, 'Trade Cooldown Bars (Prevents Chop Spam)', minval=3, maxval=20, group = SNIPER_GROUP)
 
+ 
+// Complete ICT/SMC engine controls
+ICT_GROUP                       = 'ICT / SMC Institutional Engine'
+useSequencedAPlus                = input.bool(true, 'Require Sweep → Displacement → MSS → FVG → Retest', group=ICT_GROUP)
+allowFvgMitigationSetup          = input.bool(true, 'Enable Standalone FVG 50% Mitigation', group=ICT_GROUP)
+allowObMitigationSetup           = input.bool(true, 'Enable Order Block Mitigation', group=ICT_GROUP)
+allowBreakerSetup                = input.bool(true, 'Enable Breaker Block Retest', group=ICT_GROUP)
+allowBosContinuation              = input.bool(true, 'Enable BOS Continuation Retest', group=ICT_GROUP)
+allowTurtleSoup                   = input.bool(true, 'Enable Turtle Soup / PDH-PDL Sweep', group=ICT_GROUP)
+allowSmtDivergence                = input.bool(true, 'Enable SMT Divergence Filter', group=ICT_GROUP)
+smtComparisonSymbol               = input.symbol('NSE:BANKNIFTY', 'SMT Comparison Index', group=ICT_GROUP)
+useOteFilter                      = input.bool(false, 'Require OTE 62%-79% (0.705 preferred)', group=ICT_GROUP)
+usePremiumDiscountFilter          = input.bool(true, 'Use Dealing-Range Premium / Discount', group=ICT_GROUP)
+useSessionContext                 = input.bool(true, 'Use Session / Judas Swing Context', group=ICT_GROUP)
+ictDisplacementAtr                = input.float(1.0, 'Displacement Body / ATR', minval=0.4, maxval=3.0, step=0.1, group=ICT_GROUP)
+ictMinBodyRatio                   = input.float(0.65, 'Displacement Body / Candle Range', minval=0.4, maxval=0.95, step=0.05, group=ICT_GROUP)
+ictPivotLength                    = input.int(3, 'Liquidity Pivot Length', minval=2, maxval=10, group=ICT_GROUP)
+ictObLookback                     = input.int(8, 'Opposing Candle Search Bars', minval=2, maxval=30, group=ICT_GROUP)
+ictSetupExpiry                    = input.int(20, 'Setup Expiry Bars', minval=3, maxval=60, group=ICT_GROUP)
+ictZoneExtend                     = input.int(30, 'Zone Horizontal Extension (bars)', minval=5, maxval=200, group=ICT_GROUP)
+showIctAnnotations                = input.bool(true, 'Show Clean ICT Names / Entry Levels', group=ICT_GROUP)
+
+
 // HTF calculations for 15M discount/premium and sweep zones
 htfHigh  = request.security(syminfo.tickerid, htfTimeframe, high[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
 htfLow   = request.security(syminfo.tickerid, htfTimeframe, low[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
@@ -153,7 +176,7 @@ htfEma   = request.security(syminfo.tickerid, htfTimeframe, ta.ema(close, 50)[1]
 // 15M HTF Liquidity Sweep & Discount Rejection
 htfSweepLow  = (low < htfLow) and (close > htfLow)
 htfSweepHigh = (high > htfHigh) and (close < htfHigh)
-htfInDiscount = close < htfEma
+htfInDiscount = close < math.avg(htfHigh, htfLow)
 
 // Request 15M HTF Structure, Pivots and Order Blocks:
 [htfSwingHighLevel, htfSwingLowLevel, htfIsBullishStructure] = request.security(syminfo.tickerid, htfTimeframe, [
@@ -406,7 +429,7 @@ drawStructure(pivot p_ivot, string tag, color structureColor, string lineStyle, 
     // Clean transparent bold text without solid background badge
     cleanTag = "--- " + tag + " ---"
     l_abel := label.new(chart.point.new(na, midX, p_ivot.currentLevel), cleanTag, xloc.bar_index, 
-                        color=color(na), textcolor=structureColor, style=labelStyle, size=size.small)
+                        color=color(na), textcolor=structureColor, style=labelStyle, size=labelSize)
 
 deleteOrderBlocks(bool internal = false) =>
     array<orderBlock> orderBlocks = internal ? internalOrderBlocks : swingOrderBlocks
@@ -472,8 +495,8 @@ displayStructure(bool internal = false) =>
     var bearishBar = true
 
     if internalFilterConfluenceInput
-        bullishBar := high - math.max(close, open) > math.min(close, open - low)
-        bearishBar := high - math.max(close, open) < math.min(close, open - low)
+        bullishBar := math.min(open, close) - low > high - math.max(open, close)
+        bearishBar := high - math.max(open, close) > math.min(open, close) - low
     
     pivot p_ivot    = internal ? internalHigh : swingHigh
     trend t_rend    = internal ? internalTrend : swingTrend
@@ -550,11 +573,11 @@ deleteFairValueGaps() =>
                 fairValueGaps.remove(i)
     
 drawFairValueGaps() => 
-    [lastClose, lastOpen, lastTime, currentHigh, currentLow, currentTime, last2High, last2Low] = request.security(syminfo.tickerid, fairValueGapsTimeframeInput, [close[1], open[1], time[1], high[0], low[0], time[0], high[2], low[2]], lookahead = barmerge.lookahead_on)
+    [lastClose, lastOpen, lastTime, currentHigh, currentLow, currentTime, last2High, last2Low] = request.security(syminfo.tickerid, fairValueGapsTimeframeInput, [close[1], open[1], time[1], high[1], low[1], time[1], high[3], low[3]], lookahead = barmerge.lookahead_on)
 
-    barDeltaPercent     = (lastClose - lastOpen) / (lastOpen * 100)
+    barDeltaPercent     = (lastClose - lastOpen) / math.max(math.abs(lastOpen), syminfo.mintick) * 100
     newTimeframe        = timeframe.change(fairValueGapsTimeframeInput)
-    threshold           = fairValueGapsThresholdInput ? ta.cum(math.abs(newTimeframe ? barDeltaPercent : 0)) / bar_index * 2 : 0
+    threshold           = fairValueGapsThresholdInput ? ta.cum(math.abs(newTimeframe ? barDeltaPercent : 0)) / math.max(bar_index, 1) * 2 : 0
 
     bullishFairValueGap = currentLow > last2High and lastClose > last2High and barDeltaPercent > threshold and newTimeframe
     bearishFairValueGap = currentHigh < last2Low and lastClose < last2Low and -barDeltaPercent > threshold and newTimeframe
@@ -759,14 +782,14 @@ sweepHigh = sweepIntHigh or sweepSwingHigh
 sweepLow  = sweepIntLow or sweepSwingLow
 
 // Higher Trend definition: EMA 50 > EMA 200 and close > EMA 50 (Strong Trend) OR close > EMA 200 OR 1M Structure Breakout
-bullTrend = not trendFilterEma or (close > ema200 and ema50 >= ema200) or (close > ema50) or (internalTrend.bias == BULLISH) or ta.crossover(close, ema50)
-bearTrend = not trendFilterEma or (close < ema200 and ema50 <= ema200) or (close < ema50) or (internalTrend.bias == BEARISH) or ta.crossunder(close, ema50)
+bullTrend = not trendFilterEma or ((close > ema50 and ema50 > ema200) or internalTrend.bias == BULLISH)
+bearTrend = not trendFilterEma or ((close < ema50 and ema50 < ema200) or internalTrend.bias == BEARISH)
 
 // Confirmed underlying-index direction for option-premium charts:
 // Robust detection: if index is above its 50 EMA, or rising, or symbol is unset/matching, it's Bullish!
 [underlyingCloseConfirmed, underlyingEma50Confirmed, underlyingEma200Confirmed] = request.security(underlyingIndexSymbol, underlyingBiasTimeframe, [close[1], ta.ema(close, 50)[1], ta.ema(close, 200)[1]], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-bool underlyingBullish = underlyingCloseConfirmed >= underlyingEma50Confirmed or (underlyingCloseConfirmed > underlyingCloseConfirmed[1]) or (close > ema50)
-bool underlyingBearish = underlyingCloseConfirmed <= underlyingEma50Confirmed or (underlyingCloseConfirmed < underlyingCloseConfirmed[1]) or (close < ema50)
+bool underlyingBullish = underlyingCloseConfirmed >= underlyingEma50Confirmed and underlyingEma50Confirmed >= underlyingEma200Confirmed
+bool underlyingBearish = underlyingCloseConfirmed <= underlyingEma50Confirmed and underlyingEma50Confirmed <= underlyingEma200Confirmed
 string underlyingBiasText = underlyingBullish ? 'BULLISH' : underlyingBearish ? 'BEARISH' : 'NEUTRAL'
 
 // Automatic Chart Type Detection (Index Spot vs Option Premium CE/PE):
@@ -822,6 +845,417 @@ bool bearishReversal = (close < open) and hasUpperRejectionWick and (close <= cl
 bool smcBearishSetup = (sweepHigh and bearishReversal) or (triggeredBearShift and close < open) or (obSupplyTouch and bearishReversal) or (htfSweepHigh and bearishReversal) or (tap15mSupply and bearishReversal) or htfMajorSell
 sniperSellTrigger = (isIndexChart or isStockChart) and smcBearishSetup and bearTrend and volumeConfirmed and (close <= ema50)
 
+//---------------------------------------------------------------------------------------------------------------------}
+// COMPLETE ICT / SMC EVENT ENGINE
+// Confirmed-bar event sequencing; independent setup modules feed one execution layer.
+//---------------------------------------------------------------------------------------------------------------------{
+float ictRange = math.max(high - low, syminfo.mintick)
+float ictBody = math.abs(close - open)
+float ictBodyRatio = ictBody / ictRange
+bool ictBullDisplacement = barstate.isconfirmed and close > open and ictBody >= atr14 * ictDisplacementAtr and ictBodyRatio >= ictMinBodyRatio and close >= high - ictRange * 0.20 and volumeConfirmed
+bool ictBearDisplacement = barstate.isconfirmed and close < open and ictBody >= atr14 * ictDisplacementAtr and ictBodyRatio >= ictMinBodyRatio and close <= low + ictRange * 0.20 and volumeConfirmed
+
+// Confirmed external liquidity references.
+float ictPDH = request.security(syminfo.tickerid, 'D', high[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+float ictPDL = request.security(syminfo.tickerid, 'D', low[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+float ictPWH = request.security(syminfo.tickerid, 'W', high[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+float ictPWL = request.security(syminfo.tickerid, 'W', low[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+float ictPMH = request.security(syminfo.tickerid, 'M', high[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+float ictPML = request.security(syminfo.tickerid, 'M', low[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+
+// Equal highs/lows and swing pivots are maintained as liquidity pools.
+float ictPivotHi = ta.pivothigh(high, ictPivotLength, ictPivotLength)
+float ictPivotLo = ta.pivotlow(low, ictPivotLength, ictPivotLength)
+var float ictLastPivotHi = na
+var float ictLastPivotLo = na
+var float ictPreviousPivotHi = na
+var float ictPreviousPivotLo = na
+if not na(ictPivotHi)
+    ictPreviousPivotHi := ictLastPivotHi
+    ictLastPivotHi := ictPivotHi
+if not na(ictPivotLo)
+    ictPreviousPivotLo := ictLastPivotLo
+    ictLastPivotLo := ictPivotLo
+float ictEqTolerance = atr14 * 0.12
+bool ictEQH = not na(ictLastPivotHi) and not na(ictPreviousPivotHi) and math.abs(ictLastPivotHi - ictPreviousPivotHi) <= ictEqTolerance
+bool ictEQL = not na(ictLastPivotLo) and not na(ictPreviousPivotLo) and math.abs(ictLastPivotLo - ictPreviousPivotLo) <= ictEqTolerance
+float ictBSL = ictEQH ? math.max(ictLastPivotHi, ictPreviousPivotHi) : ictLastPivotHi
+float ictSSL = ictEQL ? math.min(ictLastPivotLo, ictPreviousPivotLo) : ictLastPivotLo
+
+bool ictSweepSSL = barstate.isconfirmed and ((not na(ictSSL) and low < ictSSL and close > ictSSL) or (low < ictPDL and close > ictPDL) or (low < ictPWL and close > ictPWL) or (low < ictPML and close > ictPML))
+bool ictSweepBSL = barstate.isconfirmed and ((not na(ictBSL) and high > ictBSL and close < ictBSL) or (high > ictPDH and close < ictPDH) or (high > ictPWH and close < ictPWH) or (high > ictPMH and close < ictPMH))
+bool ictTurtleBuy = allowTurtleSoup and barstate.isconfirmed and ((low < ictPDL and close > ictPDL) or (low < ictPWL and close > ictPWL))
+bool ictTurtleSell = allowTurtleSoup and barstate.isconfirmed and ((high > ictPDH and close < ictPDH) or (high > ictPWH and close < ictPWH))
+
+// MSS is explicitly stronger than a plain structure break: prior sweep + displacement + opposing pivot break.
+var int ictBullStage = 0
+var int ictBearStage = 0
+var int ictBullSweepBar = na
+var int ictBearSweepBar = na
+var float ictBullSweepExtreme = na
+var float ictBearSweepExtreme = na
+var float ictBullImpulseHigh = na
+var float ictBearImpulseLow = na
+var float ictBullFvgTop = na
+var float ictBullFvgBottom = na
+var float ictBearFvgTop = na
+var float ictBearFvgBottom = na
+var float ictBullObTop = na
+var float ictBullObBottom = na
+var float ictBearObTop = na
+var float ictBearObBottom = na
+var float ictBullBreakerTop = na
+var float ictBullBreakerBottom = na
+var float ictBearBreakerTop = na
+var float ictBearBreakerBottom = na
+var float ictBullBosLevel = na
+var float ictBearBosLevel = na
+var bool ictBullFvgActive = false
+var bool ictBearFvgActive = false
+var bool ictBullObActive = false
+var bool ictBearObActive = false
+var bool ictBullBreakerActive = false
+var bool ictBearBreakerActive = false
+var int ictBullFvgBar = na
+var int ictBearFvgBar = na
+var int ictBullObBar = na
+var int ictBearObBar = na
+var line ictFvgTopLine = na
+var line ictFvgBottomLine = na
+var line ictObTopLine = na
+var line ictObBottomLine = na
+var line ictBreakerLine = na
+var line ictOteLine = na
+
+if barstate.isconfirmed
+    if ictSweepSSL
+        ictBullStage := 1
+        ictBullSweepBar := bar_index
+        ictBullSweepExtreme := low
+    if ictSweepBSL
+        ictBearStage := 1
+        ictBearSweepBar := bar_index
+        ictBearSweepExtreme := high
+    if ictBullStage > 0 and not na(ictBullSweepBar) and bar_index - ictBullSweepBar > ictSetupExpiry
+        ictBullStage := 0
+    if ictBearStage > 0 and not na(ictBearSweepBar) and bar_index - ictBearSweepBar > ictSetupExpiry
+        ictBearStage := 0
+    if ictBullDisplacement
+        if ictBullStage == 1
+            ictBullStage := 2
+            ictBullImpulseHigh := high
+        // Last bearish candle before bullish displacement = candidate bullish OB.
+        for j = 1 to ictObLookback
+            if close[j] < open[j]
+                ictBullObTop := high[j]
+                ictBullObBottom := low[j]
+                ictBullObActive := true
+                ictBullObBar := bar_index
+                break
+    if ictBearDisplacement
+        if ictBearStage == 1
+            ictBearStage := 2
+            ictBearImpulseLow := low
+        // Last bullish candle before bearish displacement = candidate bearish OB.
+        for j = 1 to ictObLookback
+            if close[j] > open[j]
+                ictBearObTop := high[j]
+                ictBearObBottom := low[j]
+                ictBearObActive := true
+                ictBearObBar := bar_index
+                break
+    if ictBullStage == 2 and triggeredBullShift
+        ictBullStage := 3
+    if ictBearStage == 2 and triggeredBearShift
+        ictBearStage := 3
+
+// Current-timeframe FVGs are only accepted on a confirmed bar.
+bool ictNewBullFvg = barstate.isconfirmed and low > high[2] and close[1] > high[2] and ictBullDisplacement
+bool ictNewBearFvg = barstate.isconfirmed and high < low[2] and close[1] < low[2] and ictBearDisplacement
+if ictNewBullFvg
+    ictBullFvgTop := low
+    ictBullFvgBottom := high[2]
+    ictBullFvgActive := true
+    ictBullFvgBar := bar_index
+    if not na(ictFvgTopLine)
+        line.delete(ictFvgTopLine)
+    if not na(ictFvgBottomLine)
+        line.delete(ictFvgBottomLine)
+    if showIctAnnotations
+        ictFvgTopLine := line.new(bar_index, ictBullFvgTop, bar_index + ictZoneExtend, ictBullFvgTop, color=color.black, width=1)
+        ictFvgBottomLine := line.new(bar_index, ictBullFvgBottom, bar_index + ictZoneExtend, ictBullFvgBottom, color=color.black, width=1, style=line.style_dotted)
+        label.new(bar_index, math.avg(ictBullFvgTop, ictBullFvgBottom), 'BULL FVG 50%', style=label.style_none, textcolor=color.black, size=size.tiny)
+    if ictBullStage == 3
+        ictBullStage := 4
+if ictNewBearFvg
+    ictBearFvgTop := low[2]
+    ictBearFvgBottom := high
+    ictBearFvgActive := true
+    ictBearFvgBar := bar_index
+    if not na(ictFvgTopLine)
+        line.delete(ictFvgTopLine)
+    if not na(ictFvgBottomLine)
+        line.delete(ictFvgBottomLine)
+    if showIctAnnotations
+        ictFvgTopLine := line.new(bar_index, ictBearFvgTop, bar_index + ictZoneExtend, ictBearFvgTop, color=color.black, width=1)
+        ictFvgBottomLine := line.new(bar_index, ictBearFvgBottom, bar_index + ictZoneExtend, ictBearFvgBottom, color=color.black, width=1, style=line.style_dotted)
+        label.new(bar_index, math.avg(ictBearFvgTop, ictBearFvgBottom), 'BEAR FVG 50%', style=label.style_none, textcolor=color.black, size=size.tiny)
+    if ictBearStage == 3
+        ictBearStage := 4
+
+float ictBullFvgMid = math.avg(ictBullFvgTop, ictBullFvgBottom)
+float ictBearFvgMid = math.avg(ictBearFvgTop, ictBearFvgBottom)
+if ictBullFvgActive and close < ictBullFvgBottom
+    // Bullish FVG inversion -> bearish IFVG.
+    ictBullFvgActive := false
+    ictBearFvgTop := ictBullFvgTop
+    ictBearFvgBottom := ictBullFvgBottom
+    ictBearFvgActive := true
+    ictBearFvgBar := bar_index
+if ictBearFvgActive and close > ictBearFvgTop
+    // Bearish FVG inversion -> bullish IFVG.
+    ictBearFvgActive := false
+    ictBullFvgTop := ictBearFvgTop
+    ictBullFvgBottom := ictBearFvgBottom
+    ictBullFvgActive := true
+    ictBullFvgBar := bar_index
+
+bool ictBullReject = barstate.isconfirmed and close > open and close > close[1] and (math.min(open, close) - low) / ictRange >= 0.20
+bool ictBearReject = barstate.isconfirmed and close < open and close < close[1] and (high - math.max(open, close)) / ictRange >= 0.20
+bool ictBullFvgRetest = allowFvgMitigationSetup and ictBullFvgActive and bar_index > ictBullFvgBar and low <= ictBullFvgMid and close > ictBullFvgBottom and ictBullReject
+bool ictBearFvgRetest = allowFvgMitigationSetup and ictBearFvgActive and bar_index > ictBearFvgBar and high >= ictBearFvgMid and close < ictBearFvgTop and ictBearReject
+bool ictAPlusBuy = useSequencedAPlus and ictBullStage == 4 and ictBullFvgRetest
+bool ictAPlusSell = useSequencedAPlus and ictBearStage == 4 and ictBearFvgRetest
+if ictAPlusBuy
+    ictBullStage := 0
+    ictBullFvgActive := false
+if ictAPlusSell
+    ictBearStage := 0
+    ictBearFvgActive := false
+// Consume one-shot zones after a qualifying retest so the same zone cannot fire repeatedly.
+if ictBullFvgRetest
+    ictBullFvgActive := false
+if ictBearFvgRetest
+    ictBearFvgActive := false
+if ictBullObRetest
+    ictBullObActive := false
+if ictBearObRetest
+    ictBearObActive := false
+if ictBullBreakerRetest
+    ictBullBreakerActive := false
+if ictBearBreakerRetest
+    ictBearBreakerActive := false
+if ictBullMitigationRetest
+    ictBullMitigationActive := false
+if ictBearMitigationRetest
+    ictBearMitigationActive := false
+if ictBullBosRetest
+    ictBullBosLevel := na
+if ictBearBosRetest
+    ictBearBosLevel := na
+
+// OTE from the sweep extreme to displacement extreme (0.62-0.79; 0.705 reference).
+float ictBullRange = ictBullImpulseHigh - ictBullSweepExtreme
+float ictBullOteTop = ictBullImpulseHigh - ictBullRange * 0.62
+float ictBullOteBottom = ictBullImpulseHigh - ictBullRange * 0.79
+float ictBullOte705 = ictBullImpulseHigh - ictBullRange * 0.705
+float ictBearRange = ictBearSweepExtreme - ictBearImpulseLow
+float ictBearOteBottom = ictBearImpulseLow + ictBearRange * 0.62
+float ictBearOteTop = ictBearImpulseLow + ictBearRange * 0.79
+float ictBearOte705 = ictBearImpulseLow + ictBearRange * 0.705
+bool ictBullOteTouch = not useOteFilter or (low <= ictBullOteTop and low >= ictBullOteBottom) or (low <= ictBullOte705 and high >= ictBullOte705)
+bool ictBearOteTouch = not useOteFilter or (high >= ictBearOteBottom and high <= ictBearOteTop) or (low <= ictBearOte705 and high >= ictBearOte705)
+if showIctAnnotations and barstate.isconfirmed and ictBullStage == 2 and ictBullRange > syminfo.mintick
+    if not na(ictOteLine)
+        line.delete(ictOteLine)
+    ictOteLine := line.new(bar_index, ictBullOte705, bar_index + ictZoneExtend, ictBullOte705, color=color.black, style=line.style_dashed)
+    label.new(bar_index, ictBullOte705, 'OTE 0.705', style=label.style_none, textcolor=color.black, size=size.tiny)
+
+// Premium / discount uses a rolling dealing range, not an EMA proxy.
+float ictDealingHigh = ta.highest(high, 50)
+float ictDealingLow = ta.lowest(low, 50)
+float ictEquilibrium = math.avg(ictDealingHigh, ictDealingLow)
+bool ictDiscount = close < ictEquilibrium
+bool ictPremium = close > ictEquilibrium
+bool ictLocationBuy = not usePremiumDiscountFilter or ictDiscount
+bool ictLocationSell = not usePremiumDiscountFilter or ictPremium
+
+// OB mitigation: return to the actual opposing candle range, then reject.
+bool ictBullObMidTouched = not na(ictBullObTop) and not na(ictBullObBottom) and low <= math.avg(ictBullObTop, ictBullObBottom)
+bool ictBearObMidTouched = not na(ictBearObTop) and not na(ictBearObBottom) and high >= math.avg(ictBearObTop, ictBearObBottom)
+bool ictBullObRetest = allowObMitigationSetup and ictBullObActive and bar_index > ictBullObBar and ictBullObMidTouched and close > ictBullObBottom and ictBullReject
+bool ictBearObRetest = allowObMitigationSetup and ictBearObActive and bar_index > ictBearObBar and ictBearObMidTouched and close < ictBearObTop and ictBearReject
+if ictBullObActive and close < ictBullObBottom
+    // Bullish OB failed; it can become a bearish breaker after retest from below.
+    ictBearBreakerTop := ictBullObTop
+    ictBearBreakerBottom := ictBullObBottom
+    ictBearBreakerActive := true
+    ictBullObActive := false
+if ictBearObActive and close > ictBearObTop
+    // Bearish OB failed; it can become a bullish breaker after retest from above.
+    ictBullBreakerTop := ictBearObTop
+    ictBullBreakerBottom := ictBearObBottom
+    ictBullBreakerActive := true
+    ictBearObActive := false
+bool ictBullBreakerRetest = allowBreakerSetup and ictBullBreakerActive and low <= math.avg(ictBullBreakerTop, ictBullBreakerBottom) and close > ictBullBreakerTop and ictBullReject
+bool ictBearBreakerRetest = allowBreakerSetup and ictBearBreakerActive and high >= math.avg(ictBearBreakerTop, ictBearBreakerBottom) and close < ictBearBreakerBottom and ictBearReject
+
+if showIctAnnotations and ictNewBullFvg and not na(ictBullObTop)
+    if not na(ictObTopLine)
+        line.delete(ictObTopLine)
+    if not na(ictObBottomLine)
+        line.delete(ictObBottomLine)
+    ictObTopLine := line.new(bar_index, ictBullObTop, bar_index + ictZoneExtend, ictBullObTop, color=color.black, style=line.style_dashed)
+    ictObBottomLine := line.new(bar_index, ictBullObBottom, bar_index + ictZoneExtend, ictBullObBottom, color=color.black, style=line.style_dotted)
+    label.new(bar_index, ictBullObTop, 'BULL OB', style=label.style_none, textcolor=color.black, size=size.tiny)
+
+
+// Mitigation block: failed/partially mitigated OB retested from the opposite side.
+var float ictBullMitigationTop = na
+var float ictBullMitigationBottom = na
+var float ictBearMitigationTop = na
+var float ictBearMitigationBottom = na
+var bool ictBullMitigationActive = false
+var bool ictBearMitigationActive = false
+if ictBullObActive and low <= ictBullObTop and close > ictBullObBottom
+    ictBullMitigationTop := ictBullObTop
+    ictBullMitigationBottom := ictBullObBottom
+    ictBullMitigationActive := true
+if ictBearObActive and high >= ictBearObBottom and close < ictBearObTop
+    ictBearMitigationTop := ictBearObTop
+    ictBearMitigationBottom := ictBearObBottom
+    ictBearMitigationActive := true
+bool ictBullMitigationRetest = ictBullMitigationActive and low <= math.avg(ictBullMitigationTop, ictBullMitigationBottom) and close > ictBullMitigationBottom and ictBullReject
+bool ictBearMitigationRetest = ictBearMitigationActive and high >= math.avg(ictBearMitigationTop, ictBearMitigationBottom) and close < ictBearMitigationTop and ictBearReject
+
+// BOS continuation: close through a swing, then retest the broken level.
+if triggeredBullShift and swingTrend.bias == BULLISH
+    ictBullBosLevel := swingHigh.currentLevel
+if triggeredBearShift and swingTrend.bias == BEARISH
+    ictBearBosLevel := swingLow.currentLevel
+bool ictBullBosRetest = allowBosContinuation and not na(ictBullBosLevel) and low <= ictBullBosLevel and close > ictBullBosLevel and ictBullReject
+bool ictBearBosRetest = allowBosContinuation and not na(ictBearBosLevel) and high >= ictBearBosLevel and close < ictBearBosLevel and ictBearReject
+
+// SMT divergence: compare relative swing extremes with a correlated index.
+float ictOtherHigh = request.security(smtComparisonSymbol, timeframe.period, high, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+float ictOtherLow = request.security(smtComparisonSymbol, timeframe.period, low, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+bool ictChartNewLow = low <= ta.lowest(low[1], 20)
+bool ictChartNewHigh = high >= ta.highest(high[1], 20)
+bool ictOtherNewLow = ictOtherLow <= ta.lowest(ictOtherLow[1], 20)
+bool ictOtherNewHigh = ictOtherHigh >= ta.highest(ictOtherHigh[1], 20)
+bool ictBullSmt = allowSmtDivergence and ictChartNewLow and not ictOtherNewLow
+bool ictBearSmt = allowSmtDivergence and ictChartNewHigh and not ictOtherNewHigh
+
+// Session context (exchange local time); first-hour false break is the local Judas-style model.
+bool ictNewDay = timeframe.change('D')
+bool ictAsiaSession = not na(time(timeframe.period, '0000-0500', 'Etc/UTC'))
+var float ictAsiaHigh = na
+var float ictAsiaLow = na
+if ictNewDay
+    ictAsiaHigh := na
+    ictAsiaLow := na
+if ictAsiaSession
+    ictAsiaHigh := na(ictAsiaHigh) ? high : math.max(ictAsiaHigh, high)
+    ictAsiaLow := na(ictAsiaLow) ? low : math.min(ictAsiaLow, low)
+bool ictAsiaHighSweep = not ictAsiaSession and not na(ictAsiaHigh) and high > ictAsiaHigh and close < ictAsiaHigh
+bool ictAsiaLowSweep = not ictAsiaSession and not na(ictAsiaLow) and low < ictAsiaLow and close > ictAsiaLow
+bool ictLondonKill = not na(time(timeframe.period, '0700-1000', 'Etc/UTC'))
+bool ictNewYorkKill = not na(time(timeframe.period, '1230-1600', 'Etc/UTC'))
+bool ictIndiaOpen = not na(time(timeframe.period, '0915-1015', 'Asia/Kolkata'))
+var float ictOpenRangeHigh = na
+var float ictOpenRangeLow = na
+
+if ictNewDay
+    ictOpenRangeHigh := na
+    ictOpenRangeLow := na
+if ictIndiaOpen
+    ictOpenRangeHigh := na(ictOpenRangeHigh) ? high : math.max(ictOpenRangeHigh, high)
+    ictOpenRangeLow := na(ictOpenRangeLow) ? low : math.min(ictOpenRangeLow, low)
+bool ictJudasBuy = useSessionContext and ((not na(ictOpenRangeLow) and low < ictOpenRangeLow and close > ictOpenRangeLow) or ictAsiaLowSweep) and ictBullReject
+bool ictJudasSell = useSessionContext and ((not na(ictOpenRangeHigh) and high > ictOpenRangeHigh and close < ictOpenRangeHigh) or ictAsiaHighSweep) and ictBearReject
+bool ictSessionAllowed = not useSessionContext or ictIndiaOpen or ictLondonKill or ictNewYorkKill or not (ictAsiaSession)
+
+// Volume imbalance approximation (price gap between adjacent candles; FVG remains the primary imbalance definition).
+bool ictBullVolumeImbalance = low > high[1]
+bool ictBearVolumeImbalance = high < low[1]
+if showIctAnnotations and barstate.isconfirmed and ictBullVolumeImbalance
+    label.new(bar_index, low, 'VOLUME IMBALANCE', style=label.style_none, textcolor=color.black, size=size.tiny)
+if showIctAnnotations and barstate.isconfirmed and ictBearVolumeImbalance
+    label.new(bar_index, high, 'VOLUME IMBALANCE', style=label.style_none, textcolor=color.black, size=size.tiny)
+
+// Target liquidity: nearest available external level in the trade direction.
+float ictLongLiquidityTarget = na
+ictLongLiquidityTarget := not na(ictPDH) and ictPDH > close ? ictPDH : na
+ictLongLiquidityTarget := not na(ictPMH) and ictPMH > close and (na(ictLongLiquidityTarget) or ictPMH < ictLongLiquidityTarget) ? ictPMH : ictLongLiquidityTarget
+ictLongLiquidityTarget := not na(ictPWH) and ictPWH > close and (na(ictLongLiquidityTarget) or ictPWH < ictLongLiquidityTarget) ? ictPWH : ictLongLiquidityTarget
+ictLongLiquidityTarget := not na(ictBSL) and ictBSL > close and (na(ictLongLiquidityTarget) or ictBSL < ictLongLiquidityTarget) ? ictBSL : ictLongLiquidityTarget
+float ictShortLiquidityTarget = na
+ictShortLiquidityTarget := not na(ictPDL) and ictPDL < close ? ictPDL : na
+ictShortLiquidityTarget := not na(ictPML) and ictPML < close and (na(ictShortLiquidityTarget) or ictPML > ictShortLiquidityTarget) ? ictPML : ictShortLiquidityTarget
+ictShortLiquidityTarget := not na(ictPWL) and ictPWL < close and (na(ictShortLiquidityTarget) or ictPWL > ictShortLiquidityTarget) ? ictPWL : ictShortLiquidityTarget
+ictShortLiquidityTarget := not na(ictSSL) and ictSSL < close and (na(ictShortLiquidityTarget) or ictSSL > ictShortLiquidityTarget) ? ictSSL : ictShortLiquidityTarget
+
+
+// Minimal black external-liquidity references (no filled boxes).
+var line ictPdhLine = na
+var line ictPdlLine = na
+var line ictEqhLine = na
+var line ictEqlLine = na
+if showIctAnnotations and barstate.islast
+    if not na(ictPdhLine)
+        line.delete(ictPdhLine)
+    if not na(ictPdlLine)
+        line.delete(ictPdlLine)
+    if not na(ictEqhLine)
+        line.delete(ictEqhLine)
+    if not na(ictEqlLine)
+        line.delete(ictEqlLine)
+    ictPdhLine := line.new(bar_index - 20, ictPDH, bar_index + ictZoneExtend, ictPDH, color=color.black, style=line.style_dashed)
+    ictPdlLine := line.new(bar_index - 20, ictPDL, bar_index + ictZoneExtend, ictPDL, color=color.black, style=line.style_dashed)
+    if not na(ictBSL)
+        ictEqhLine := line.new(bar_index - 10, ictBSL, bar_index + ictZoneExtend, ictBSL, color=color.black, style=line.style_dotted)
+    if not na(ictSSL)
+        ictEqlLine := line.new(bar_index - 10, ictSSL, bar_index + ictZoneExtend, ictSSL, color=color.black, style=line.style_dotted)
+
+// Every module is independently identifiable; the A+ reversal retains the strict event sequence.
+bool ictLongSetup = ictAPlusBuy or ictBullFvgRetest or ictBullObRetest or ictBullBreakerRetest or ictBullBosRetest or ictBullMitigationRetest or ((ictTurtleBuy or ictJudasBuy) and ictBullDisplacement) or (ictBullFvgRetest and ictBullSmt)
+bool ictShortSetup = ictAPlusSell or ictBearFvgRetest or ictBearObRetest or ictBearBreakerRetest or ictBearBosRetest or ictBearMitigationRetest or ((ictTurtleSell or ictJudasSell) and ictBearDisplacement) or (ictBearFvgRetest and ictBearSmt)
+bool ictLongContext = ictLocationBuy and ictBullOteTouch and ictSessionAllowed and not ictBearSmt
+bool ictShortContext = ictLocationSell and ictBearOteTouch and ictSessionAllowed and not ictBullSmt
+bool ictUnderlyingBullOnly = not isOptionChart or (isRecognizedCallOption and underlyingBullish)
+bool ictUnderlyingBearOnly = not isOptionChart or (isRecognizedPutOption and underlyingBearish)
+bool ictLongInstrumentAllowed = isIndexChart or isStockChart or (isOptionChart and isRecognizedCallOption)
+bool ictShortInstrumentAllowed = isIndexChart or isStockChart or (isOptionChart and isRecognizedPutOption)
+bool ictLongConfirmed = barstate.isconfirmed and ictLongSetup and ictLongContext and bullTrend and volumeConfirmed and ictUnderlyingBullOnly and ictLongInstrumentAllowed
+bool ictShortConfirmed = barstate.isconfirmed and ictShortSetup and ictShortContext and bearTrend and volumeConfirmed and ictUnderlyingBearOnly and ictShortInstrumentAllowed
+
+// Use the actual sweep extreme for reversal stops; otherwise use the relevant OB / structure boundary.
+float ictPlannedLongEntry = ictBullFvgRetest or ictAPlusBuy ? ictBullFvgMid : ictBullObRetest ? math.avg(ictBullObTop, ictBullObBottom) : ictBullBreakerRetest ? math.avg(ictBullBreakerTop, ictBullBreakerBottom) : ictBullMitigationRetest ? math.avg(ictBullMitigationTop, ictBullMitigationBottom) : ictBullBosRetest ? ictBullBosLevel : close
+float ictPlannedShortEntry = ictBearFvgRetest or ictAPlusSell ? ictBearFvgMid : ictBearObRetest ? math.avg(ictBearObTop, ictBearObBottom) : ictBearBreakerRetest ? math.avg(ictBearBreakerTop, ictBearBreakerBottom) : ictBearMitigationRetest ? math.avg(ictBearMitigationTop, ictBearMitigationBottom) : ictBearBosRetest ? ictBearBosLevel : close
+float ictPlannedLongSL = not na(ictBullSweepExtreme) and not na(ictBullSweepBar) and bar_index - ictBullSweepBar <= ictSetupExpiry and (ictAPlusBuy or ictBullStage > 0 or ictTurtleBuy or ictJudasBuy) ? ictBullSweepExtreme - atr14 * 0.15 : ictBullObRetest ? ictBullObBottom - atr14 * 0.15 : ictBullBreakerRetest ? ictBullBreakerBottom - atr14 * 0.15 : ictBullMitigationRetest ? ictBullMitigationBottom - atr14 * 0.15 : math.min(low, low[1]) - atr14 * 0.25
+float ictPlannedShortSL = not na(ictBearSweepExtreme) and not na(ictBearSweepBar) and bar_index - ictBearSweepBar <= ictSetupExpiry and (ictAPlusSell or ictBearStage > 0 or ictTurtleSell or ictJudasSell) ? ictBearSweepExtreme + atr14 * 0.15 : ictBearObRetest ? ictBearObTop + atr14 * 0.15 : ictBearBreakerRetest ? ictBearBreakerTop + atr14 * 0.15 : ictBearMitigationRetest ? ictBearMitigationTop + atr14 * 0.15 : math.max(high, high[1]) + atr14 * 0.25
+
+// Replace permissive OR-based legacy triggers with confirmed SMC modules.
+sniperBuyTrigger := enableSniperEngine and ictLongConfirmed
+sniperSellTrigger := enableSniperEngine and ictShortConfirmed
+
+if showIctAnnotations and barstate.isconfirmed
+    if ictSweepSSL
+        label.new(bar_index, low, ictEQL ? 'EQL / SSL SWEEP' : 'SSL SWEEP', style=label.style_none, textcolor=color.black, size=size.tiny)
+    if ictSweepBSL
+        label.new(bar_index, high, ictEQH ? 'EQH / BSL SWEEP' : 'BSL SWEEP', style=label.style_none, textcolor=color.black, size=size.tiny)
+    if triggeredBullShift and ictBullStage >= 2
+        label.new(bar_index, high, 'MSS / CHoCH', style=label.style_none, textcolor=color.black, size=size.tiny)
+    if triggeredBearShift and ictBearStage >= 2
+        label.new(bar_index, low, 'MSS / CHoCH', style=label.style_none, textcolor=color.black, size=size.tiny)
+    if ictAPlusBuy
+        label.new(bar_index, low, 'A+ BUY', style=label.style_label_up, color=color.white, textcolor=color.black, size=size.small)
+    if ictAPlusSell
+        label.new(bar_index, high, 'A+ SELL', style=label.style_label_down, color=color.white, textcolor=color.black, size=size.small)
+}
+//---------------------------------------------------------------------------------------------------------------------}
+
+
 // Direct Retest Execution Toggle:
 // When true, immediately enters at the current close upon demand rejection rather than waiting for an extra pullback candle.
 directSmcFill = input.bool(true, 'Direct Entry at Rejection Close (Zero Delay)', group = SNIPER_GROUP, tooltip = 'Synchronizes entry right at the bounce candle close so you never miss fast option spikes or get hurt by theta decay.')
@@ -832,16 +1266,16 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
         impulseHigh  = high
         // Give structural breathing room below the local rejection base (at least 0.35 * ATR buffer)
         float localFloor = math.min(low, math.min(low[1], low[2]))
-        float calcSL     = localFloor - (atr14 * 0.35)
-        float calcEntry  = directSmcFill ? close : impulseHigh
+        float calcSL     = ictPlannedLongSL
+        float calcEntry  = ictPlannedLongEntry
         float riskDist   = calcEntry - calcSL
 
         // Target Calculation: Percentage (e.g. +35% for 30-40% gain) or R:R
         float calcTP = calcEntry + (riskDist * sniperRRRatio)
         if targetTypeInput == 'Percentage Target (+30% to +40%)'
             calcTP := isOptionChart ? (calcEntry * (1.0 + (targetPercentInput / 100.0))) : (calcEntry + (riskDist * math.max(sniperRRRatio, 2.5)))
-        else if targetTypeInput == 'Opposite Swing Liquidity' and not na(swingHigh.currentLevel) and swingHigh.currentLevel > calcEntry + riskDist
-            calcTP := swingHigh.currentLevel
+        else if targetTypeInput == 'Opposite Swing Liquidity'
+            calcTP := not na(ictLongLiquidityTarget) and ictLongLiquidityTarget > calcEntry ? ictLongLiquidityTarget : (not na(swingHigh.currentLevel) and swingHigh.currentLevel > calcEntry ? swingHigh.currentLevel : calcTP)
 
         // Execute entry:
         if riskDist >= (atr14 * 0.3)
@@ -849,7 +1283,7 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
                 inTrade         := true
                 tradeDir        := 1
                 entryBarIdx     := bar_index
-                entryPrice      := close
+                entryPrice      := calcEntry
                 stopLossPrice   := calcSL
                 takeProfitPrice := calcTP
 
@@ -869,23 +1303,23 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
     else if sniperSellTrigger
         impulseLow   = low
         float localCeiling = math.max(high, math.max(high[1], high[2]))
-        float calcSL       = localCeiling + (atr14 * 0.35)
-        float calcEntry    = directSmcFill ? close : impulseLow
+        float calcSL       = ictPlannedShortSL
+        float calcEntry    = ictPlannedShortEntry
         float riskDist     = calcSL - calcEntry
 
         // Target Calculation for Short / Bearish Setup: Percentage or R:R
         float calcTPSell = calcEntry - (riskDist * sniperRRRatio)
         if targetTypeInput == 'Percentage Target (+30% to +40%)'
             calcTPSell := isIndexChart ? (calcEntry - (riskDist * math.max(sniperRRRatio, 2.5))) : (calcEntry * (1.0 - (targetPercentInput / 100.0)))
-        else if targetTypeInput == 'Opposite Swing Liquidity' and not na(swingLow.currentLevel) and swingLow.currentLevel < calcEntry - riskDist and swingLow.currentLevel > 0
-            calcTPSell := swingLow.currentLevel
+        else if targetTypeInput == 'Opposite Swing Liquidity'
+            calcTPSell := not na(ictShortLiquidityTarget) and ictShortLiquidityTarget < calcEntry ? ictShortLiquidityTarget : (not na(swingLow.currentLevel) and swingLow.currentLevel < calcEntry ? swingLow.currentLevel : calcTPSell)
 
         if riskDist >= (atr14 * 0.3)
             if directSmcFill
                 inTrade         := true
                 tradeDir        := -1
                 entryBarIdx     := bar_index
-                entryPrice      := close
+                entryPrice      := calcEntry
                 stopLossPrice   := calcSL
                 takeProfitPrice := calcTPSell
 
@@ -966,7 +1400,12 @@ if inTrade
             label.set_text(activeLbl, isIndexChart ? "BUY CALL (SL @ BE)" : "BUY (SL @ BE)")
 
         // Fixed Invalidation SL & TP: Trade stays open until TP or SL is hit
-        if high >= takeProfitPrice
+        if high >= takeProfitPrice and low <= stopLossPrice
+            inTrade := false
+            lastExitBar := bar_index
+            totalLosses += 1
+            label.new(bar_index, low, "AMBIGUOUS BAR - SL ASSUMED", style=label.style_label_up, color=color(na), textcolor=color.red, size=size.tiny)
+        else if high >= takeProfitPrice
             inTrade := false
             lastExitBar := bar_index
             totalWins += 1
@@ -991,7 +1430,12 @@ if inTrade
             label.set_text(activeLbl, isIndexChart ? "BUY PUT (SL @ BE)" : "SELL (SL @ BE)")
 
         // Fixed Invalidation SL & TP: Trade stays open until TP or SL is hit
-        if low <= takeProfitPrice
+        if low <= takeProfitPrice and high >= stopLossPrice
+            inTrade := false
+            lastExitBar := bar_index
+            totalLosses += 1
+            label.new(bar_index, high, "AMBIGUOUS BAR - SL ASSUMED", style=label.style_label_down, color=color(na), textcolor=color.red, size=size.tiny)
+        else if low <= takeProfitPrice
             inTrade := false
             lastExitBar := bar_index
             totalWins += 1
