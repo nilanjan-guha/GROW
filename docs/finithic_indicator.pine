@@ -734,12 +734,16 @@ sweepSwingLow  = not na(swingLow.currentLevel) and low < swingLow.currentLevel a
 sweepHigh = sweepIntHigh or sweepSwingHigh
 sweepLow  = sweepIntLow or sweepSwingLow
 
-// Higher Trend definition: In SMC, a bullish master structure is defined by 15M trend + 1M structural alignment
-bool htfBullishTrend = htfClose >= htfEma or (close > ema50) or (internalTrend.bias == BULLISH) or (ta.crossover(close, ema50))
-bool htfBearishTrend = htfClose < htfEma or (close < ema50) or (internalTrend.bias == BEARISH) or (ta.crossunder(close, ema50))
+// Higher Trend definition: Genuine Multi-Timeframe Alignment
+// If useHtfConfluence is enabled, 15M HTF bias is strictly required. Otherwise, aligned 1M EMA + structure governs.
+bool htf15MBullish = (htfClose >= htfEma) and (close >= ema50)
+bool htf15MBearish = (htfClose <= htfEma) and (close <= ema50)
 
-bullTrend = not trendFilterEma or htfBullishTrend
-bearTrend = not trendFilterEma or htfBearishTrend
+bool local1MBullish = (close > ema50) and (internalTrend.bias == BULLISH or ta.crossover(close, ema50) or close > ema200)
+bool local1MBearish = (close < ema50) and (internalTrend.bias == BEARISH or ta.crossunder(close, ema50) or close < ema200)
+
+bullTrend = not trendFilterEma or (useHtfConfluence ? (htf15MBullish and (internalTrend.bias == BULLISH or close >= ema50)) : local1MBullish)
+bearTrend = not trendFilterEma or (useHtfConfluence ? (htf15MBearish and (internalTrend.bias == BEARISH or close <= ema50)) : local1MBearish)
 
 // Track Pullback from 15M / 1M Demand Zone:
 var int lastDemandZoneTouchBar = -999
@@ -791,25 +795,32 @@ bool notFallingKnife = (close > low[1]) or (close > open)
 // Only fires when price is in an accumulation area AND confirms with a green reversal rejection
 bool sniperZoneTestBuy = inAccumulationArea and bullishReversalCandle and notFallingKnife
 
-// Automatic Chart Type Detection (Index Spot vs Option Premium CE/PE):
+// Automatic Chart Type Detection (Index Spot, Equity/Futures Spot, and Option Premium CE/PE):
 tickerStr = syminfo.ticker
 isCallOption = str.contains(tickerStr, "CALL") or str.contains(tickerStr, "CE")
 isPutOption  = str.contains(tickerStr, "PUT")  or str.contains(tickerStr, "PE")
 isAnyOption  = isCallOption or isPutOption
 
+bool isKnownIndex = str.contains(tickerStr, "NIFTY") or str.contains(tickerStr, "BANKNIFTY") or str.contains(tickerStr, "SENSEX") or str.contains(tickerStr, "FINNIFTY") or str.contains(tickerStr, "MIDCPNIFTY") or syminfo.type == "index"
+
 // Mode resolution:
 bool isOptionChart = chartInstrumentType == 'Option Premium Chart (BUY CALL / BUY PUT Only)' or (chartInstrumentType == 'Auto Detect' and isAnyOption)
-bool isIndexChart  = chartInstrumentType == 'Index Spot Chart (BUY CE on Bullish / BUY PE on Bearish)' or (chartInstrumentType == 'Auto Detect' and not isAnyOption)
+bool isIndexChart  = chartInstrumentType == 'Index Spot Chart (BUY CE on Bullish / BUY PE on Bearish)' or (chartInstrumentType == 'Auto Detect' and isKnownIndex and not isAnyOption)
+bool isStockChart  = not isOptionChart and not isIndexChart
 
 // Complete Trigger: Standard Trend Continuation OR Major 15M Liquidity Reversal
-// Bullish Setup (Index moving UP / Option Call moving UP):
-// On Option Chart: Price tests Demand OB / Sweep and forms Green Reversal Candle with Volume
-// On Index Spot Chart: Index breaks bullish (BOS/CHoCH, EMA cross, or Demand bounce) -> triggers BUY CALL (CE)
-sniperBuyTrigger  = bullTrend and (sniperZoneTestBuy or (isIndexChart and volumeConfirmed and (triggeredBullShift or ta.crossover(close, ema50) or (sweepLow and close > open))))
+// Only evaluate entries on confirmed bar closes to prevent mid-candle repainting
+bool barConfirmed = barstate.isconfirmed or barstate.islastconfirmedhistory
 
-// Bearish Setup (Index moving DOWN):
-// On Index Spot Chart: Index breaks bearish (BOS/CHoCH, EMA crossunder, Supply OB rejection, or Sweep High rejection) -> triggers BUY PUT (PE)
-sniperSellTrigger = isIndexChart and bearTrend and volumeConfirmed and (triggeredBearShift or (sweepHigh and close < open) or ta.crossunder(close, ema50) or (inSupplyObZone and close < open))
+// Bullish Setup (Index moving UP / Option Call moving UP / Stock moving UP):
+// On Option Chart: Price tests Demand OB / Sweep and forms Green Reversal Candle with Volume
+// On Index/Stock Spot Chart: Price breaks bullish (BOS/CHoCH, EMA cross, or Demand bounce) -> triggers BUY CALL (CE) / BUY
+sniperBuyTrigger  = barConfirmed and bullTrend and (sniperZoneTestBuy or ((isIndexChart or isStockChart) and volumeConfirmed and (triggeredBullShift or ta.crossover(close, ema50) or (sweepLow and close > open))))
+
+// Bearish Setup (Index moving DOWN / Stock moving DOWN):
+// On Index Spot Chart: triggers BUY PUT (PE)
+// On Stock Spot Chart: triggers SHORT
+sniperSellTrigger = barConfirmed and (isIndexChart or isStockChart) and bearTrend and volumeConfirmed and (triggeredBearShift or (sweepHigh and close < open) or ta.crossunder(close, ema50) or (inSupplyObZone and close < open))
 
 // Direct immediate execution at the zone bottom so the trade is filled right where circled
 directSmcFill = true
@@ -850,7 +861,7 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
                                        bgcolor=colTPBox, border_color=color.teal, border_style=line.style_solid)
                 activeSLBox := box.new(left=entryBarIdx, top=entryPrice, right=entryBarIdx + 1, bottom=stopLossPrice, 
                                        bgcolor=colSLBox, border_color=color.maroon, border_style=line.style_solid)
-                string buyLabelText = isIndexChart ? "BUY CALL (CE)" : "BUY "
+                string buyLabelText = isIndexChart ? "BUY CALL (CE)" : (isStockChart ? "BUY SPOT" : "BUY ")
                 activeLbl   := label.new(entryBarIdx + 1, entryPrice, 
                                          buyLabelText + " " + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
                                          style=label.style_label_left, color=color(na), textcolor=color.teal, size=size.tiny)
@@ -898,7 +909,7 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
                                        bgcolor=colTPBox, border_color=color.teal, border_style=line.style_solid)
                 activeSLBox := box.new(left=entryBarIdx, top=stopLossPrice, right=entryBarIdx + 1, bottom=entryPrice, 
                                        bgcolor=colSLBox, border_color=color.maroon, border_style=line.style_solid)
-                string sellLabelText = isIndexChart ? "BUY PUT (PE)" : "SELL "
+                string sellLabelText = isIndexChart ? "BUY PUT (PE)" : (isStockChart ? "SELL SPOT" : "SELL ")
                 activeLbl   := label.new(entryBarIdx + 1, entryPrice, 
                                          sellLabelText + " " + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
                                          style=label.style_label_left, color=color(na), textcolor=color.maroon, size=size.tiny)
@@ -974,16 +985,29 @@ if inTrade
         if trailToBE and stopLossPrice < entryPrice and high >= beTriggerPrice
             stopLossPrice := entryPrice
             box.set_bottom(activeSLBox, entryPrice)
-            label.set_text(activeLbl, isIndexChart ? "BUY CALL (SL @ BE)" : "BUY (SL @ BE)")
+            label.set_text(activeLbl, isIndexChart ? "BUY CALL (SL @ BE)" : (isStockChart ? "BUY SPOT (SL @ BE)" : "BUY (SL @ BE)"))
 
-        // Fixed Invalidation SL & TP: Trade stays open until TP or SL is hit
-        if high >= takeProfitPrice
+        // Conservative Realistic Evaluation: If same candle breaches both SL and TP, conservatively count SL hit first
+        bool hitSL = low <= stopLossPrice
+        bool hitTP = high >= takeProfitPrice
+
+        if hitSL and hitTP
+            // Ambiguous same-bar hit: conservative reality check prevents phantom win-rate inflation
+            inTrade := false
+            lastExitBar := bar_index
+            if trailToBE and stopLossPrice >= entryPrice
+                totalWins += 1
+                label.new(bar_index, low, "BE EXIT (PROTECTED)", style=label.style_label_up, color=color(na), textcolor=color.teal, size=size.small)
+            else
+                totalLosses += 1
+                label.new(bar_index, low, "SL HIT", style=label.style_label_up, color=color(na), textcolor=color.red, size=size.small)
+        else if hitTP
             inTrade := false
             lastExitBar := bar_index
             totalWins += 1
             string tpText = targetTypeInput == 'Percentage Target (+30% to +40%)' ? ("TP HIT (+" + str.tostring(targetPercentInput, "#") + "%)") : ("TP HIT (+1:" + str.tostring(sniperRRRatio, "#.#") + ")")
             label.new(bar_index, high, tpText, style=label.style_label_down, color=color(na), textcolor=color.green, size=size.small)
-        else if low <= stopLossPrice
+        else if hitSL
             inTrade := false
             lastExitBar := bar_index
             if trailToBE and stopLossPrice >= entryPrice
@@ -999,16 +1023,28 @@ if inTrade
         if trailToBE and stopLossPrice > entryPrice and low <= beTriggerPriceSell
             stopLossPrice := entryPrice
             box.set_top(activeSLBox, entryPrice)
-            label.set_text(activeLbl, isIndexChart ? "BUY PUT (SL @ BE)" : "SELL (SL @ BE)")
+            label.set_text(activeLbl, isIndexChart ? "BUY PUT (SL @ BE)" : (isStockChart ? "SELL SPOT (SL @ BE)" : "SELL (SL @ BE)"))
 
-        // Fixed Invalidation SL & TP: Trade stays open until TP or SL is hit
-        if low <= takeProfitPrice
+        bool hitSLShort = high >= stopLossPrice
+        bool hitTPShort = low <= takeProfitPrice
+
+        if hitSLShort and hitTPShort
+            // Ambiguous same-bar hit: conservative reality check
+            inTrade := false
+            lastExitBar := bar_index
+            if trailToBE and stopLossPrice <= entryPrice
+                totalWins += 1
+                label.new(bar_index, high, "BE EXIT (PROTECTED)", style=label.style_label_down, color=color(na), textcolor=color.teal, size=size.small)
+            else
+                totalLosses += 1
+                label.new(bar_index, high, "SL HIT", style=label.style_label_down, color=color(na), textcolor=color.red, size=size.small)
+        else if hitTPShort
             inTrade := false
             lastExitBar := bar_index
             totalWins += 1
             string tpTextSell = targetTypeInput == 'Percentage Target (+30% to +40%)' ? ("TP HIT (+" + str.tostring(targetPercentInput, "#") + "%)") : ("TP HIT (+1:" + str.tostring(sniperRRRatio, "#.#") + ")")
             label.new(bar_index, low, tpTextSell, style=label.style_label_up, color=color(na), textcolor=color.green, size=size.small)
-        else if high >= stopLossPrice
+        else if hitSLShort
             inTrade := false
             lastExitBar := bar_index
             if trailToBE and stopLossPrice <= entryPrice
