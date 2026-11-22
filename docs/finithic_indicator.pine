@@ -111,7 +111,10 @@ discountZoneColorInput          = input.color(  GREEN,      'Discount Zone',    
 
 // Sniper Scalp Engine Inputs
 enableSniperEngine              = input.bool(   true,       'Enable Sniper Retest Engine', group = SNIPER_GROUP)
-tradeModeOptionBuyer            = input.bool(   true,       'Option Buyer Mode (BUY ONLY on Call/Put Charts)', group = SNIPER_GROUP, tooltip = 'When enabled, only takes BUY setups on the current chart (CALL or PUT). Shorting/Selling premium is disabled so you only BUY momentum.')
+chartInstrumentType             = input.string( 'Auto Detect', 'Chart Mode / Instrument Type', 
+                                               options = ['Auto Detect', 'Option Premium Chart (BUY CALL / BUY PUT Only)', 'Index Spot Chart (BUY CE on Bullish / BUY PE on Bearish)'], 
+                                               group = SNIPER_GROUP, 
+                                               tooltip = 'Auto Detect: Automatically detects whether you are viewing an Option chart (CE/PE) or an Index spot/futures chart.\n\nOption Premium Chart: Always issues BUY signals only (Buying Call or Buying Put momentum, never selling options).\n\nIndex Spot Chart: When market breaks up, triggers BUY CALL (CE). When market breaks down, triggers BUY PUT (PE).')
 entryExecutionType              = input.string( 'Retest Fill (At Zone Demand Bottom)', 'Entry Mode', options = ['Retest Fill (At Zone Demand Bottom)', 'Breakout Confirmation'], group = SNIPER_GROUP, tooltip = 'Retest Fill enters right inside the Demand Order Block / bottom of the pullback (catching the entire green wave shown with red checkmarks). Breakout Confirmation enters on green candle close.')
 sniperRRRatio                   = input.float(  3.0,        'Sniper Target R:R Ratio (3, 4, 5, 6+)', minval=1.5, step=0.5, group = SNIPER_GROUP)
 sniperRetraceRatio              = input.float(  0.5,        'Discount Retracement Entry (0.5 = 50%)', minval=0.2, maxval=0.79, step=0.05, group = SNIPER_GROUP)
@@ -779,8 +782,26 @@ bool notFallingKnife = (close > low[1]) or (close > open)
 // Only fires when price is in an accumulation area AND confirms with a green reversal rejection
 bool sniperZoneTestBuy = inAccumulationArea and bullishReversalCandle and notFallingKnife
 
+// Automatic Chart Type Detection (Index Spot vs Option Premium CE/PE):
+tickerStr = syminfo.ticker
+isCallOption = str.contains(tickerStr, "CALL") or str.contains(tickerStr, "CE")
+isPutOption  = str.contains(tickerStr, "PUT")  or str.contains(tickerStr, "PE")
+isAnyOption  = isCallOption or isPutOption
+
+// Mode resolution:
+bool isOptionChart = chartInstrumentType == 'Option Premium Chart (BUY CALL / BUY PUT Only)' or (chartInstrumentType == 'Auto Detect' and isAnyOption)
+bool isIndexChart  = chartInstrumentType == 'Index Spot Chart (BUY CE on Bullish / BUY PE on Bearish)' or (chartInstrumentType == 'Auto Detect' and not isAnyOption)
+
+// Trigger Definitions:
+// 1) On Option charts:
+//    - Call Chart: Bullish setup triggers BUY (Buying Call)
+//    - Put Chart: Bullish setup triggers BUY (Buying Put)
+//    - Selling/Shorting options is completely disabled.
+// 2) On Index Spot / Futures charts (NIFTY 50, BANKNIFTY, SENSEX):
+//    - Bullish setup triggers BUY CALL (CE)
+//    - Bearish setup triggers BUY PUT (PE)
 sniperBuyTrigger  = bullTrend and sniperZoneTestBuy
-sniperSellTrigger = not tradeModeOptionBuyer and bearTrend and (triggeredBearShift or (sweepHigh and close < open))
+sniperSellTrigger = isIndexChart and bearTrend and (triggeredBearShift or (sweepHigh and close < open))
 
 // Direct immediate execution at the zone bottom so the trade is filled right where circled
 directSmcFill = true
@@ -814,35 +835,53 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
                                        bgcolor=colTPBox, border_color=color.teal, border_style=line.style_solid)
                 activeSLBox := box.new(left=entryBarIdx, top=entryPrice, right=entryBarIdx + 1, bottom=stopLossPrice, 
                                        bgcolor=colSLBox, border_color=color.maroon, border_style=line.style_solid)
-                activeLbl   := label.new(entryBarIdx + 1, entryPrice, 
-                                         "BUY " + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
-                                         style=label.style_label_left, color=color(na), textcolor=color.teal, size=size.tiny)
-            else
-                pendingOrder    := true
-                pendingDir      := 1
-                pendingEntry    := math.min(calcEntry, close)
-                pendingSL       := calcSL
-                targetHighPrice = (targetOppositeSwing and not na(swingHigh.currentLevel) and swingHigh.currentLevel > pendingEntry + riskDist * 2.0) ? math.min(swingHigh.currentLevel, pendingEntry + (riskDist * 4.0)) : pendingEntry + (riskDist * sniperRRRatio)
-                pendingTP       := targetHighPrice
-                pendingSetupBar := bar_index
-                pendingBox      := box.new(left=bar_index, top=pendingEntry, right=bar_index + 1, bottom=pendingSL,
-                                           bgcolor=colPendingLong, border_color=color.teal, border_style=line.style_dotted)
+        string buyLabelText = isIndexChart ? "BUY CALL (CE)" : "BUY "
+        activeLbl   := label.new(entryBarIdx + 1, entryPrice, 
+                                 buyLabelText + " " + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
+                                 style=label.style_label_left, color=color(na), textcolor=color.teal, size=size.tiny)
+    else
+        pendingOrder    := true
+        pendingDir      := 1
+        pendingEntry    := math.min(calcEntry, close)
+        pendingSL       := calcSL
+        targetHighPrice = (targetOppositeSwing and not na(swingHigh.currentLevel) and swingHigh.currentLevel > pendingEntry + riskDist * 2.0) ? math.min(swingHigh.currentLevel, pendingEntry + (riskDist * 4.0)) : pendingEntry + (riskDist * sniperRRRatio)
+        pendingTP       := targetHighPrice
+        pendingSetupBar := bar_index
+        pendingBox      := box.new(left=bar_index, top=pendingEntry, right=bar_index + 1, bottom=pendingSL,
+                                   bgcolor=colPendingLong, border_color=color.teal, border_style=line.style_dotted)
 
-    else if sniperSellTrigger
-        // Pick best structural high: internalHigh, swingHigh, or local pivot high
-        float structHigh = not na(internalHigh.currentLevel) ? internalHigh.currentLevel : high[1]
-        if sweepHigh and not na(swingHigh.currentLevel) and swingHigh.currentLevel > structHigh
-            structHigh := swingHigh.currentLevel
-        impulseHigh  = math.max(structHigh, high)
-        impulseLow   = low
-        rangeDist    = impulseHigh - impulseLow
-        // Tight, clearly visible institutional SL cushioned above the structural swing/sweep pivot
-        calcSL       = impulseHigh + (atr14 * 0.15)
-        calcEntry    = rangeDist > 0 ? impulseLow + (rangeDist * sniperRetraceRatio) : close
-        riskDist     = calcSL - calcEntry
+else if sniperSellTrigger
+    // Pick best structural high: internalHigh, swingHigh, or local pivot high
+    float structHigh = not na(internalHigh.currentLevel) ? internalHigh.currentLevel : high[1]
+    if sweepHigh and not na(swingHigh.currentLevel) and swingHigh.currentLevel > structHigh
+        structHigh := swingHigh.currentLevel
+    impulseHigh  = math.max(structHigh, high)
+    impulseLow   = low
+    rangeDist    = impulseHigh - impulseLow
+    // Tight, clearly visible institutional SL cushioned above the structural swing/sweep pivot
+    calcSL       = impulseHigh + (atr14 * 0.15)
+    calcEntry    = rangeDist > 0 ? impulseLow + (rangeDist * sniperRetraceRatio) : close
+    riskDist     = calcSL - calcEntry
 
-        // Filter out microscopic fakeouts: require meaningful risk distance >= minRiskAtr * ATR
-        if riskDist >= (atr14 * minRiskAtr)
+    // Filter out microscopic fakeouts: require meaningful risk distance >= minRiskAtr * ATR
+    if riskDist >= (atr14 * minRiskAtr)
+        if directSmcFill
+            inTrade         := true
+            tradeDir        := -1
+            entryBarIdx     := bar_index
+            entryPrice      := close
+            stopLossPrice   := calcSL
+            takeProfitPrice := close - (riskDist * sniperRRRatio)
+
+            activeTPBox := box.new(left=entryBarIdx, top=entryPrice, right=entryBarIdx + 1, bottom=takeProfitPrice, 
+                                   bgcolor=colTPBox, border_color=color.teal, border_style=line.style_solid)
+            activeSLBox := box.new(left=entryBarIdx, top=stopLossPrice, right=entryBarIdx + 1, bottom=entryPrice, 
+                                   bgcolor=colSLBox, border_color=color.maroon, border_style=line.style_solid)
+            string sellLabelText = isIndexChart ? "BUY PUT (PE)" : "SELL "
+            activeLbl   := label.new(entryBarIdx + 1, entryPrice, 
+                                     sellLabelText + " " + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
+                                     style=label.style_label_left, color=color(na), textcolor=color.maroon, size=size.tiny)
+        else
             pendingOrder    := true
             pendingDir      := -1
             pendingEntry    := math.max(calcEntry, close)
@@ -911,7 +950,7 @@ if inTrade
         if trailToBE and stopLossPrice < entryPrice and high >= (entryPrice + (entryPrice - stopLossPrice) * 2.0)
             stopLossPrice := entryPrice
             box.set_bottom(activeSLBox, entryPrice)
-            label.set_text(activeLbl, "BUY (SL @ BE)")
+            label.set_text(activeLbl, isIndexChart ? "BUY CALL (SL @ BE)" : "BUY (SL @ BE)")
 
         // Fixed Invalidation SL & TP: Trade stays open until TP or SL is hit
         if high >= takeProfitPrice
@@ -934,7 +973,7 @@ if inTrade
         if trailToBE and stopLossPrice > entryPrice and low <= (entryPrice - (stopLossPrice - entryPrice) * 2.0)
             stopLossPrice := entryPrice
             box.set_top(activeSLBox, entryPrice)
-            label.set_text(activeLbl, "SELL (SL @ BE)")
+            label.set_text(activeLbl, isIndexChart ? "BUY PUT (SL @ BE)" : "SELL (SL @ BE)")
 
         // Fixed Invalidation SL & TP: Trade stays open until TP or SL is hit
         if low <= takeProfitPrice
