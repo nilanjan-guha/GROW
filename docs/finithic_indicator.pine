@@ -73,25 +73,25 @@ showHighLowSwingsInput          = input.bool(   false,      'Show Strong/Weak Hi
 
 showInternalOrderBlocksInput    = input.bool(   false,      'Internal Order Blocks',  group = BLOCKS_GROUP, inline = 'iob')
 internalOrderBlocksSizeInput    = input.int(    5,          '',                       group = BLOCKS_GROUP, minval = 1, maxval = 20, inline = 'iob')
-showSwingOrderBlocksInput       = input.bool(   true,       '15M Swing Order Blocks', group = BLOCKS_GROUP, inline = 'ob')
+showSwingOrderBlocksInput       = input.bool(   false,      '15M Swing Order Blocks', group = BLOCKS_GROUP, inline = 'ob')
 swingOrderBlocksSizeInput       = input.int(    5,          '',                       group = BLOCKS_GROUP, minval = 1, maxval = 20, inline = 'ob') 
 orderBlockFilterInput           = input.string( 'Atr',      'Order Block Filter',     group = BLOCKS_GROUP, options = [ATR, RANGE])
 orderBlockMitigationInput       = input.string( HIGHLOW,    'Order Block Mitigation', group = BLOCKS_GROUP, options = [CLOSE,HIGHLOW])
-internalBullishOrderBlockColor  = input.color(  color.new(#000000, 92), 'Internal Bullish OB', group = BLOCKS_GROUP)
-internalBearishOrderBlockColor  = input.color(  color.new(#000000, 92), 'Internal Bearish OB', group = BLOCKS_GROUP)
-swingBullishOrderBlockColor     = input.color(  color.new(#000000, 88), 'Bullish OB',          group = BLOCKS_GROUP)
-swingBearishOrderBlockColor     = input.color(  color.new(#000000, 88), 'Bearish OB',          group = BLOCKS_GROUP)
+internalBullishOrderBlockColor  = input.color(  color.new(#000000, 95), 'Internal Bullish OB', group = BLOCKS_GROUP)
+internalBearishOrderBlockColor  = input.color(  color.new(#000000, 95), 'Internal Bearish OB', group = BLOCKS_GROUP)
+swingBullishOrderBlockColor     = input.color(  color.new(#000000, 95), 'Bullish OB',          group = BLOCKS_GROUP)
+swingBearishOrderBlockColor     = input.color(  color.new(#000000, 95), 'Bearish OB',          group = BLOCKS_GROUP)
 
-showEqualHighsLowsInput         = input.bool(   true,       'Equal High/Low (Liquidity Pools)', group = EQUAL_GROUP)
+showEqualHighsLowsInput         = input.bool(   false,      'Equal High/Low (Liquidity Pools)', group = EQUAL_GROUP)
 equalHighsLowsLengthInput       = input.int(    3,          'Bars Confirmation',      group = EQUAL_GROUP, minval = 1)
 equalHighsLowsThresholdInput    = input.float(  0.1,        'Threshold (ATR fraction)',group = EQUAL_GROUP, minval = 0, maxval = 0.5, step = 0.1)
 equalHighsLowsSizeInput         = input.string( TINY,       'Label Size',             group = EQUAL_GROUP, options = [TINY,SMALL,NORMAL])
 
-showFairValueGapsInput          = input.bool(   true,       'Fair Value Gaps (15M HTF on Chart)', group = GAPS_GROUP)
+showFairValueGapsInput          = input.bool(   false,      'Fair Value Gaps',        group = GAPS_GROUP)
 fairValueGapsThresholdInput     = input.bool(   true,       'Auto Threshold',         group = GAPS_GROUP)
 fairValueGapsTimeframeInput     = input.timeframe('15',     'FVG Higher Timeframe',   group = GAPS_GROUP, tooltip = 'Projects 15-Minute Institutional Fair Value Gaps directly onto your 1-minute execution chart.')
-fairValueGapsBullColorInput     = input.color(  color.new(#000000, 90), 'Bullish FVG (Black/Gray)', group = GAPS_GROUP)
-fairValueGapsBearColorInput     = input.color(  color.new(#000000, 90), 'Bearish FVG (Black/Gray)', group = GAPS_GROUP)
+fairValueGapsBullColorInput     = input.color(  color.new(#000000, 95), 'Bullish FVG', group = GAPS_GROUP)
+fairValueGapsBearColorInput     = input.color(  color.new(#000000, 95), 'Bearish FVG', group = GAPS_GROUP)
 fairValueGapsExtendInput        = input.int(    5,          'Extend FVG Bars',        group = GAPS_GROUP, minval = 0)
 
 showDailyLevelsInput            = input.bool(   false,      'Daily High/Low',         group = LEVELS_GROUP, inline = 'daily')
@@ -802,16 +802,15 @@ htfMajorSell = useHtfConfluence and (htfSweepHigh or (not htfInDiscount and swee
 float lowerWick = math.min(open, close) - low
 float upperWick = high - math.max(open, close)
 float barRange   = math.max(high - low, syminfo.mintick)
-bool hasRejectionWick = (lowerWick / barRange) >= 0.20 or (close >= (high + low) / 2.0)
+bool hasRejectionWick = (lowerWick / barRange) >= 0.15 or (close >= (high + low) / 2.0)
 bool bullishReversal = (close > open) and hasRejectionWick and (close >= close[1])
 
-// High-Conviction 15M Institutional SMC Setup:
-// Requires genuine 15-Minute macro confluence:
-// 1) Price sweeps 15M liquidity or sweeps swing low with rejection wick, OR
-// 2) Price taps 15M Bullish Fair Value Gap and rejects upward, OR
-// 3) Price taps 15M Institutional Demand Zone and bounces, OR
-// 4) 15M Major Discount Reversal
-bool smcBullishSetup = (htfSweepLow and bullishReversal) or (tap15mBullFvg and bullishReversal) or (tap15mDemand and bullishReversal) or htfMajorBuy
+// High-Conviction Structural SMC Setup (Sweeps, Demand Zones, Structure Breaks & HTF alignment):
+// 1) Clear Liquidity Sweep (sweepLow) with rejection bounce, OR
+// 2) Structural Breakout / CHoCH (triggeredBullShift) with momentum, OR
+// 3) Retest of active institutional Demand Order Block, OR
+// 4) 15-Minute Macro Level Confluence (HTF Sweep or 15M Demand tap)
+bool smcBullishSetup = (sweepLow and bullishReversal) or (triggeredBullShift and close > open) or (obDemandTouch and bullishReversal) or (htfSweepLow and bullishReversal) or (tap15mDemand and bullishReversal) or htfMajorBuy
 
 // Complete Trigger:
 // 1) Bullish Index Spot Chart -> triggers BUY CALL (CE)
@@ -819,9 +818,9 @@ bool smcBullishSetup = (htfSweepLow and bullishReversal) or (tap15mBullFvg and b
 sniperBuyTrigger  = smcBullishSetup and bullTrend and volumeConfirmed and optionUnderlyingAligned and (close >= ema50)
 
 // 3) Falling/Bearish Index Spot Chart -> triggers BUY PUT (PE)
-bool hasUpperRejectionWick = (upperWick / barRange) >= 0.20 or (close <= (high + low) / 2.0)
+bool hasUpperRejectionWick = (upperWick / barRange) >= 0.15 or (close <= (high + low) / 2.0)
 bool bearishReversal = (close < open) and hasUpperRejectionWick and (close <= close[1])
-bool smcBearishSetup = (htfSweepHigh and bearishReversal) or (tap15mBearFvg and bearishReversal) or (tap15mSupply and bearishReversal) or htfMajorSell
+bool smcBearishSetup = (sweepHigh and bearishReversal) or (triggeredBearShift and close < open) or (obSupplyTouch and bearishReversal) or (htfSweepHigh and bearishReversal) or (tap15mSupply and bearishReversal) or htfMajorSell
 sniperSellTrigger = (isIndexChart or isStockChart) and smcBearishSetup and bearTrend and volumeConfirmed and (close <= ema50)
 
 // Direct Retest Execution Toggle:
