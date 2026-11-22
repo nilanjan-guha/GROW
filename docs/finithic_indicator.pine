@@ -1124,6 +1124,7 @@ bool ictBullSmt = allowSmtDivergence and ictChartNewLow and not ictOtherNewLow
 bool ictBearSmt = allowSmtDivergence and ictChartNewHigh and not ictOtherNewHigh
 
 // Session context (exchange local time); first-hour false break is the local Judas-style model.
+bool ictNewDay = timeframe.change('D')
 bool ictAsiaSession = not na(time(timeframe.period, '0000-0500', 'Etc/UTC'))
 var float ictAsiaHigh = na
 var float ictAsiaLow = na
@@ -1140,7 +1141,7 @@ bool ictNewYorkKill = not na(time(timeframe.period, '1230-1600', 'Etc/UTC'))
 bool ictIndiaOpen = not na(time(timeframe.period, '0915-1015', 'Asia/Kolkata'))
 var float ictOpenRangeHigh = na
 var float ictOpenRangeLow = na
-bool ictNewDay = timeframe.change('D')
+
 if ictNewDay
     ictOpenRangeHigh := na
     ictOpenRangeLow := na
