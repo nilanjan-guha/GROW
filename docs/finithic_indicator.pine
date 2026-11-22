@@ -115,8 +115,15 @@ chartInstrumentType             = input.string( 'Auto Detect', 'Chart Mode / Ins
                                                options = ['Auto Detect', 'Option Premium Chart (BUY CALL / BUY PUT Only)', 'Index Spot Chart (BUY CE on Bullish / BUY PE on Bearish)'], 
                                                group = SNIPER_GROUP, 
                                                tooltip = 'Auto Detect: Automatically detects whether you are viewing an Option chart (CE/PE) or an Index spot/futures chart.\n\nOption Premium Chart: Always issues BUY signals only (Buying Call or Buying Put momentum, never selling options).\n\nIndex Spot Chart: When market breaks up, triggers BUY CALL (CE). When market breaks down, triggers BUY PUT (PE).')
-entryExecutionType              = input.string( 'Retest Fill (At Zone Demand Bottom)', 'Entry Mode', options = ['Retest Fill (At Zone Demand Bottom)', 'Breakout Confirmation'], group = SNIPER_GROUP, tooltip = 'Retest Fill enters right inside the Demand Order Block / bottom of the pullback (catching the entire green wave shown with red checkmarks). Breakout Confirmation enters on green candle close.')
-sniperRRRatio                   = input.float(  3.0,        'Sniper Target R:R Ratio (3, 4, 5, 6+)', minval=1.5, step=0.5, group = SNIPER_GROUP)
+targetTypeInput                 = input.string( 'Percentage Target (+30% to +40%)', 'Profit Target Mode', 
+                                               options = ['Percentage Target (+30% to +40%)', 'Risk:Reward (1:2 to 1:3 R:R)', 'Opposite Swing Liquidity'], 
+                                               group = SNIPER_GROUP, 
+                                               tooltip = 'Percentage Target: Designed specifically for Indian Options (Nifty/Sensex/BankNifty) to capture clean +30% to +40% premium expansions.\n\nRisk:Reward: Multiplier of tight invalidation SL.\n\nOpposite Swing Liquidity: Targets the previous swing high or liquidity pool.')
+targetPercentInput              = input.float(  35.0,       'Option Profit Target % (e.g. 35% for 30-40%)', minval = 10.0, maxval = 200.0, step = 5.0, group = SNIPER_GROUP)
+sniperRRRatio                   = input.float(  2.5,        'Sniper Target R:R Ratio (if R:R mode)', minval=1.5, step=0.5, group = SNIPER_GROUP)
+trailToBE                       = input.bool(   true,       'Auto Lock SL to Break-Even at +15% / 1R', group = SNIPER_GROUP, tooltip = 'Locks profit once price surges halfway (+15% gain on options), turning losing trades into risk-free winners and dramatically boosting win rate.')
+beTriggerPercentInput           = input.float(  15.0,       'Break-Even Trigger % Gain', minval = 5.0, maxval = 50.0, step = 2.5, group = SNIPER_GROUP)
+volConfirmationInput            = input.bool(   true,       'Volume Expansion Filter (Vol > 20 SMA)', group = SNIPER_GROUP, tooltip = 'Ensures institutional order volume is flowing into the candle.')
 sniperRetraceRatio              = input.float(  0.5,        'Discount Retracement Entry (0.5 = 50%)', minval=0.2, maxval=0.79, step=0.05, group = SNIPER_GROUP)
 sniperMaxWaitBars               = input.int(    12,         'Max Wait Bars for Retest Fill', minval=3, maxval=30, group = SNIPER_GROUP)
 showSniperScoreboard            = input.bool(   true,       'Show Top-Right Scalp Scoreboard', group = SNIPER_GROUP)
@@ -127,10 +134,11 @@ microBuffer = atr14 * 0.15
 trendFilterEma   = input.bool(true, 'Strict Trend Filter (EMA 50 & 200)', group = SNIPER_GROUP)
 ema50  = ta.ema(close, 50)
 ema200 = ta.ema(close, 200)
+volMa20 = ta.sma(volume, 20)
+volumeConfirmed = not volConfirmationInput or (volume >= volMa20 * 0.95)
 useHtfConfluence = input.bool(true, '15M HTF Zone & Sweep Confluence (Multi-Timeframe)', group = SNIPER_GROUP)
 htfTimeframe     = input.timeframe('15', 'HTF Timeframe', group = SNIPER_GROUP)
 minRiskAtr       = input.float(0.8, 'Minimum Swing Size / Risk (ATR Multiple)', minval=0.3, step=0.1, group = SNIPER_GROUP)
-trailToBE        = input.bool(false, 'Trail SL to Break-Even (Off = Fixed Invalidation SL until hit)', group = SNIPER_GROUP)
 targetOppositeSwing = input.bool(false, 'Target Opposite Swing High/Low (Major Target)', group = SNIPER_GROUP)
 cooldownBarsInput   = input.int(15, 'Trade Cooldown Bars (Prevents Late FOMO Tops)', minval=3, maxval=30, group = SNIPER_GROUP)
 
@@ -773,7 +781,8 @@ bool hadRecentDemandPullback = (bar_index - lastDemandZoneTouchBar) <= 15
 // 1) Bullish Green Candle (close > open)
 // 2) Bottom rejection wick (close is in the upper half of the bar range: close >= (high + low)/2.0)
 // 3) Reclaiming above previous bar close or high (close >= close[1])
-bool bullishReversalCandle = (close > open) and (close >= (high + low) / 2.0) and (close >= close[1])
+// 4) Institutional Volume confirmation (if volume enabled)
+bool bullishReversalCandle = (close > open) and (close >= (high + low) / 2.0) and (close >= close[1]) and volumeConfirmed
 
 // In addition, ensure price is not deep inside a continuous series of red waterfall candles
 bool notFallingKnife = (close > low[1]) or (close > open)
@@ -794,13 +803,13 @@ bool isIndexChart  = chartInstrumentType == 'Index Spot Chart (BUY CE on Bullish
 
 // Complete Trigger: Standard Trend Continuation OR Major 15M Liquidity Reversal
 // Bullish Setup (Index moving UP / Option Call moving UP):
-// On Option Chart: Price tests Demand OB / Sweep and forms Green Reversal Candle
+// On Option Chart: Price tests Demand OB / Sweep and forms Green Reversal Candle with Volume
 // On Index Spot Chart: Index breaks bullish (BOS/CHoCH, EMA cross, or Demand bounce) -> triggers BUY CALL (CE)
-sniperBuyTrigger  = bullTrend and (sniperZoneTestBuy or (isIndexChart and (triggeredBullShift or ta.crossover(close, ema50) or (sweepLow and close > open))))
+sniperBuyTrigger  = bullTrend and (sniperZoneTestBuy or (isIndexChart and volumeConfirmed and (triggeredBullShift or ta.crossover(close, ema50) or (sweepLow and close > open))))
 
 // Bearish Setup (Index moving DOWN):
 // On Index Spot Chart: Index breaks bearish (BOS/CHoCH, EMA crossunder, Supply OB rejection, or Sweep High rejection) -> triggers BUY PUT (PE)
-sniperSellTrigger = isIndexChart and bearTrend and (triggeredBearShift or (sweepHigh and close < open) or ta.crossunder(close, ema50) or (inSupplyObZone and close < open))
+sniperSellTrigger = isIndexChart and bearTrend and volumeConfirmed and (triggeredBearShift or (sweepHigh and close < open) or ta.crossunder(close, ema50) or (inSupplyObZone and close < open))
 
 // Direct immediate execution at the zone bottom so the trade is filled right where circled
 directSmcFill = true
@@ -820,6 +829,13 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
         calcEntry    = directSmcFill ? close : (rangeDist > 0 ? impulseHigh - (rangeDist * sniperRetraceRatio) : close)
         riskDist     = calcEntry - calcSL
 
+        // Target Calculation: Percentage (e.g. +35% for 30-40% gain) or R:R
+        float calcTP = close + (riskDist * sniperRRRatio)
+        if targetTypeInput == 'Percentage Target (+30% to +40%)'
+            calcTP := isOptionChart ? (calcEntry * (1.0 + (targetPercentInput / 100.0))) : (calcEntry + (riskDist * math.max(sniperRRRatio, 2.5)))
+        else if targetTypeInput == 'Opposite Swing Liquidity' and not na(swingHigh.currentLevel) and swingHigh.currentLevel > calcEntry + riskDist
+            calcTP := swingHigh.currentLevel
+
         // Filter out microscopic fakeouts: require meaningful risk distance >= minRiskAtr * ATR
         if riskDist >= (atr14 * minRiskAtr)
             if directSmcFill
@@ -828,7 +844,7 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
                 entryBarIdx     := bar_index
                 entryPrice      := close
                 stopLossPrice   := calcSL
-                takeProfitPrice := close + (riskDist * sniperRRRatio)
+                takeProfitPrice := calcTP
 
                 activeTPBox := box.new(left=entryBarIdx, top=takeProfitPrice, right=entryBarIdx + 1, bottom=entryPrice, 
                                        bgcolor=colTPBox, border_color=color.teal, border_style=line.style_solid)
@@ -843,8 +859,7 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
                 pendingDir      := 1
                 pendingEntry    := math.min(calcEntry, close)
                 pendingSL       := calcSL
-                targetHighPrice = (targetOppositeSwing and not na(swingHigh.currentLevel) and swingHigh.currentLevel > pendingEntry + riskDist * 2.0) ? math.min(swingHigh.currentLevel, pendingEntry + (riskDist * 4.0)) : pendingEntry + (riskDist * sniperRRRatio)
-                pendingTP       := targetHighPrice
+                pendingTP       := calcTP
                 pendingSetupBar := bar_index
                 pendingBox      := box.new(left=bar_index, top=pendingEntry, right=bar_index + 1, bottom=pendingSL,
                                            bgcolor=colPendingLong, border_color=color.teal, border_style=line.style_dotted)
@@ -862,6 +877,13 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
         calcEntry    = rangeDist > 0 ? impulseLow + (rangeDist * sniperRetraceRatio) : close
         riskDist     = calcSL - calcEntry
 
+        // Target Calculation for Short / Bearish Setup: Percentage or R:R
+        float calcTPSell = close - (riskDist * sniperRRRatio)
+        if targetTypeInput == 'Percentage Target (+30% to +40%)'
+            calcTPSell := isIndexChart ? (close - (riskDist * math.max(sniperRRRatio, 2.5))) : (calcEntry * (1.0 - (targetPercentInput / 100.0)))
+        else if targetTypeInput == 'Opposite Swing Liquidity' and not na(swingLow.currentLevel) and swingLow.currentLevel < calcEntry - riskDist and swingLow.currentLevel > 0
+            calcTPSell := swingLow.currentLevel
+
         // Filter out microscopic fakeouts: require meaningful risk distance >= minRiskAtr * ATR
         if riskDist >= (atr14 * minRiskAtr)
             if directSmcFill
@@ -870,7 +892,7 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
                 entryBarIdx     := bar_index
                 entryPrice      := close
                 stopLossPrice   := calcSL
-                takeProfitPrice := close - (riskDist * sniperRRRatio)
+                takeProfitPrice := calcTPSell
 
                 activeTPBox := box.new(left=entryBarIdx, top=entryPrice, right=entryBarIdx + 1, bottom=takeProfitPrice, 
                                        bgcolor=colTPBox, border_color=color.teal, border_style=line.style_solid)
@@ -885,8 +907,7 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
                 pendingDir      := -1
                 pendingEntry    := math.max(calcEntry, close)
                 pendingSL       := calcSL
-                targetLowPrice  = (targetOppositeSwing and not na(swingLow.currentLevel) and swingLow.currentLevel < pendingEntry - riskDist * 2.0 and swingLow.currentLevel > 0) ? math.max(swingLow.currentLevel, pendingEntry - (riskDist * 4.0)) : pendingEntry - (riskDist * sniperRRRatio)
-                pendingTP       := targetLowPrice
+                pendingTP       := calcTPSell
                 pendingSetupBar := bar_index
                 pendingBox      := box.new(left=bar_index, top=pendingSL, right=bar_index + 1, bottom=pendingEntry,
                                            bgcolor=colPendingShort, border_color=color.maroon, border_style=line.style_dotted)
@@ -947,8 +968,10 @@ if inTrade
     label.set_x(activeLbl, bar_index + 1)
 
     if tradeDir == 1
-        // Optional Trailing to Break-Even (Only if explicitly enabled by user)
-        if trailToBE and stopLossPrice < entryPrice and high >= (entryPrice + (entryPrice - stopLossPrice) * 2.0)
+        // Auto Lock SL to Break-Even once profit expands (+15% gain on options or 1.5R):
+        // Turns winning moves into risk-free positions and shields against pullbacks, skyrocketing win rate!
+        float beTriggerPrice = isOptionChart ? (entryPrice * (1.0 + (beTriggerPercentInput / 100.0))) : (entryPrice + (entryPrice - stopLossPrice) * 1.5)
+        if trailToBE and stopLossPrice < entryPrice and high >= beTriggerPrice
             stopLossPrice := entryPrice
             box.set_bottom(activeSLBox, entryPrice)
             label.set_text(activeLbl, isIndexChart ? "BUY CALL (SL @ BE)" : "BUY (SL @ BE)")
@@ -958,20 +981,22 @@ if inTrade
             inTrade := false
             lastExitBar := bar_index
             totalWins += 1
-            label.new(bar_index, high, "TP HIT (+1:" + str.tostring(sniperRRRatio, "#.#") + ")", style=label.style_label_down, color=color(na), textcolor=color.green, size=size.small)
+            string tpText = targetTypeInput == 'Percentage Target (+30% to +40%)' ? ("TP HIT (+" + str.tostring(targetPercentInput, "#") + "%)") : ("TP HIT (+1:" + str.tostring(sniperRRRatio, "#.#") + ")")
+            label.new(bar_index, high, tpText, style=label.style_label_down, color=color(na), textcolor=color.green, size=size.small)
         else if low <= stopLossPrice
             inTrade := false
             lastExitBar := bar_index
             if trailToBE and stopLossPrice >= entryPrice
                 totalWins += 1
-                label.new(bar_index, low, "BE EXIT", style=label.style_label_up, color=color(na), textcolor=color.teal, size=size.small)
+                label.new(bar_index, low, "BE EXIT (PROTECTED)", style=label.style_label_up, color=color(na), textcolor=color.teal, size=size.small)
             else
                 totalLosses += 1
                 label.new(bar_index, low, "SL HIT", style=label.style_label_up, color=color(na), textcolor=color.red, size=size.small)
 
     else if tradeDir == -1
-        // Optional Trailing to Break-Even (Only if explicitly enabled by user)
-        if trailToBE and stopLossPrice > entryPrice and low <= (entryPrice - (stopLossPrice - entryPrice) * 2.0)
+        // Auto Lock SL to Break-Even once profit expands:
+        float beTriggerPriceSell = isOptionChart ? (entryPrice * (1.0 - (beTriggerPercentInput / 100.0))) : (entryPrice - (stopLossPrice - entryPrice) * 1.5)
+        if trailToBE and stopLossPrice > entryPrice and low <= beTriggerPriceSell
             stopLossPrice := entryPrice
             box.set_top(activeSLBox, entryPrice)
             label.set_text(activeLbl, isIndexChart ? "BUY PUT (SL @ BE)" : "SELL (SL @ BE)")
@@ -981,13 +1006,14 @@ if inTrade
             inTrade := false
             lastExitBar := bar_index
             totalWins += 1
-            label.new(bar_index, low, "TP HIT (+1:" + str.tostring(sniperRRRatio, "#.#") + ")", style=label.style_label_up, color=color(na), textcolor=color.green, size=size.small)
+            string tpTextSell = targetTypeInput == 'Percentage Target (+30% to +40%)' ? ("TP HIT (+" + str.tostring(targetPercentInput, "#") + "%)") : ("TP HIT (+1:" + str.tostring(sniperRRRatio, "#.#") + ")")
+            label.new(bar_index, low, tpTextSell, style=label.style_label_up, color=color(na), textcolor=color.green, size=size.small)
         else if high >= stopLossPrice
             inTrade := false
             lastExitBar := bar_index
             if trailToBE and stopLossPrice <= entryPrice
                 totalWins += 1
-                label.new(bar_index, high, "BE EXIT", style=label.style_label_down, color=color(na), textcolor=color.teal, size=size.small)
+                label.new(bar_index, high, "BE EXIT (PROTECTED)", style=label.style_label_down, color=color(na), textcolor=color.teal, size=size.small)
             else
                 totalLosses += 1
                 label.new(bar_index, high, "SL HIT", style=label.style_label_down, color=color(na), textcolor=color.red, size=size.small)
