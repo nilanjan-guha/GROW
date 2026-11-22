@@ -110,7 +110,7 @@ equilibriumZoneColorInput       = input.color(  color.new(#000000, 60), 'Equilib
 discountZoneColorInput          = input.color(  color.new(#000000, 85), 'Discount Zone',          group = ZONES_GROUP)
 
 // Sniper Scalp Engine Inputs
-enableSniperEngine              = input.bool(   false,      'Enable Signal Alerts/Trade Signals (OFF = Pure SMC Structure & Clean Drawing Only)', group = SNIPER_GROUP)
+enableSniperEngine              = input.bool(   true,       'Enable SMC Sniper Entry Engine (Buy/Sell Zones & Drawings)', group = SNIPER_GROUP)
 chartInstrumentType             = input.string( 'Auto Detect', 'Chart Mode / Instrument Type', 
                                                options = ['Auto Detect', 'Option Premium Chart (BUY CALL / BUY PUT Only)', 'Index Spot Chart (BUY CE on Bullish / BUY PE on Bearish)'], 
                                                group = SNIPER_GROUP, 
@@ -726,10 +726,10 @@ var int   totalWins         = 0
 var int   totalLosses       = 0
 var int   lastExitBar       = -999
 
-colTPBox        = color.new(#089981, 75)
-colSLBox        = color.new(#f23645, 75)
-colPendingLong  = color.new(#00bcd4, 85)
-colPendingShort = color.new(#e91e63, 85)
+colTPBox        = color.new(#000000, 85)
+colSLBox        = color.new(#000000, 80)
+colPendingLong  = color.new(#000000, 88)
+colPendingShort = color.new(#000000, 88)
 
 // Institutional Liquidity Sweeps (Internal & Swing High/Low Sweeps - Wicked and closed back inside)
 sweepIntHigh   = not na(internalHigh.currentLevel) and high > internalHigh.currentLevel and close < internalHigh.currentLevel
@@ -917,13 +917,13 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
                 takeProfitPrice := calcTP
 
                 activeTPBox := box.new(left=entryBarIdx, top=takeProfitPrice, right=entryBarIdx + 1, bottom=entryPrice, 
-                                       bgcolor=colTPBox, border_color=color.teal, border_style=line.style_solid)
+                                       bgcolor=colTPBox, border_color=#000000, border_style=line.style_solid)
                 activeSLBox := box.new(left=entryBarIdx, top=entryPrice, right=entryBarIdx + 1, bottom=stopLossPrice, 
-                                       bgcolor=colSLBox, border_color=color.maroon, border_style=line.style_solid)
+                                       bgcolor=colSLBox, border_color=#000000, border_style=line.style_solid)
                 string buyLabelText = isIndexChart ? "BUY CALL (CE)" : (isStockChart ? "BUY SPOT" : "BUY ")
                 activeLbl   := label.new(entryBarIdx + 1, entryPrice, 
                                          buyLabelText + " " + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
-                                         style=label.style_label_left, color=color(na), textcolor=color.teal, size=size.tiny)
+                                         style=label.style_label_left, color=color(na), textcolor=#000000, size=size.tiny)
             else
                 pendingOrder    := true
                 pendingDir      := 1
@@ -932,7 +932,7 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
                 pendingTP       := calcTP
                 pendingSetupBar := bar_index
                 pendingBox      := box.new(left=bar_index, top=pendingEntry, right=bar_index + 1, bottom=pendingSL,
-                                           bgcolor=colPendingLong, border_color=color.teal, border_style=line.style_dotted)
+                                           bgcolor=colPendingLong, border_color=#000000, border_style=line.style_dotted)
 
     else if sniperSellTrigger
         // Pick best structural high: internalHigh, swingHigh, or local pivot high
@@ -965,13 +965,13 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
                 takeProfitPrice := calcTPSell
 
                 activeTPBox := box.new(left=entryBarIdx, top=entryPrice, right=entryBarIdx + 1, bottom=takeProfitPrice, 
-                                       bgcolor=colTPBox, border_color=color.teal, border_style=line.style_solid)
+                                       bgcolor=colTPBox, border_color=#000000, border_style=line.style_solid)
                 activeSLBox := box.new(left=entryBarIdx, top=stopLossPrice, right=entryBarIdx + 1, bottom=entryPrice, 
-                                       bgcolor=colSLBox, border_color=color.maroon, border_style=line.style_solid)
+                                       bgcolor=colSLBox, border_color=#000000, border_style=line.style_solid)
                 string sellLabelText = isIndexChart ? "BUY PUT (PE)" : (isStockChart ? "SELL SPOT" : "SELL ")
                 activeLbl   := label.new(entryBarIdx + 1, entryPrice, 
                                          sellLabelText + " " + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
-                                         style=label.style_label_left, color=color(na), textcolor=color.maroon, size=size.tiny)
+                                         style=label.style_label_left, color=color(na), textcolor=#000000, size=size.tiny)
             else
                 pendingOrder    := true
                 pendingDir      := -1
@@ -980,7 +980,7 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
                 pendingTP       := calcTPSell
                 pendingSetupBar := bar_index
                 pendingBox      := box.new(left=bar_index, top=pendingSL, right=bar_index + 1, bottom=pendingEntry,
-                                           bgcolor=colPendingShort, border_color=color.maroon, border_style=line.style_dotted)
+                                           bgcolor=colPendingShort, border_color=#000000, border_style=line.style_dotted)
 
 // Invalidate stale pending setups
 if pendingOrder and (bar_index - pendingSetupBar > sniperMaxWaitBars)
@@ -1005,13 +1005,13 @@ if pendingOrder and not inTrade
         takeProfitPrice := pendingTP
 
         activeTPBox := box.new(left=entryBarIdx, top=takeProfitPrice, right=entryBarIdx + 1, bottom=entryPrice, 
-                               bgcolor=colTPBox, border_color=color.teal, border_style=line.style_solid)
+                               bgcolor=colTPBox, border_color=#000000, border_style=line.style_solid)
         activeSLBox := box.new(left=entryBarIdx, top=entryPrice, right=entryBarIdx + 1, bottom=stopLossPrice, 
-                               bgcolor=colSLBox, border_color=color.maroon, border_style=line.style_solid)
+                               bgcolor=colSLBox, border_color=#000000, border_style=line.style_solid)
         string pendingBuyText = isIndexChart ? "BUY CALL (CE)" : (isRecognizedCallOption ? "BUY CALL" : (isRecognizedPutOption ? "BUY PUT" : "BUY "))
         activeLbl   := label.new(entryBarIdx + 1, entryPrice, 
                                  pendingBuyText + " " + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
-                                 style=label.style_label_left, color=color(na), textcolor=color.teal, size=size.tiny)
+                                 style=label.style_label_left, color=color(na), textcolor=#000000, size=size.tiny)
 
     // Short retest filled: When price pulls into supply pendingEntry level
     float retestUpperWick = high - math.max(open, close)
@@ -1027,13 +1027,13 @@ if pendingOrder and not inTrade
         takeProfitPrice := pendingTP
 
         activeTPBox := box.new(left=entryBarIdx, top=entryPrice, right=entryBarIdx + 1, bottom=takeProfitPrice, 
-                               bgcolor=colTPBox, border_color=color.teal, border_style=line.style_solid)
+                               bgcolor=colTPBox, border_color=#000000, border_style=line.style_solid)
         activeSLBox := box.new(left=entryBarIdx, top=stopLossPrice, right=entryBarIdx + 1, bottom=entryPrice, 
-                               bgcolor=colSLBox, border_color=color.maroon, border_style=line.style_solid)
+                               bgcolor=colSLBox, border_color=#000000, border_style=line.style_solid)
         string pendingSellText = isIndexChart ? "BUY PUT (PE)" : "NO TRADE"
         activeLbl   := label.new(entryBarIdx + 1, entryPrice, 
                                  pendingSellText + " " + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
-                                 style=label.style_label_left, color=color(na), textcolor=color.maroon, size=size.tiny)
+                                 style=label.style_label_left, color=color(na), textcolor=#000000, size=size.tiny)
 
 // Active Trade Progression (With Break-Even & Full Swing Target Delivery)
 if inTrade
