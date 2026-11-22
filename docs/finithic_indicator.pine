@@ -908,6 +908,8 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
 
         // Filter out microscopic fakeouts: require meaningful risk distance >= minRiskAtr * ATR
         if calcEntry > calcSL and riskDist >= (atr14 * minRiskAtr)
+            string buyText = isIndexChart ? "BUY CALL (CE)" : (isStockChart ? "BUY SPOT" : "BUY ")
+            string buyLabelStr = buyText + " " + str.tostring(calcEntry, "#.##") + " | SL: " + str.tostring(calcSL, "#.##")
             if directSmcFill
                 inTrade         := true
                 tradeDir        := 1
@@ -916,14 +918,9 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
                 stopLossPrice   := calcSL
                 takeProfitPrice := calcTP
 
-                activeTPBox := box.new(left=entryBarIdx, top=takeProfitPrice, right=entryBarIdx + 1, bottom=entryPrice, 
-                                       bgcolor=colTPBox, border_color=#000000, border_style=line.style_solid)
-                activeSLBox := box.new(left=entryBarIdx, top=entryPrice, right=entryBarIdx + 1, bottom=stopLossPrice, 
-                                       bgcolor=colSLBox, border_color=#000000, border_style=line.style_solid)
-                string buyLabelText = isIndexChart ? "BUY CALL (CE)" : (isStockChart ? "BUY SPOT" : "BUY ")
-                activeLbl   := label.new(entryBarIdx + 1, entryPrice, 
-                                         buyLabelText + " " + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
-                                         style=label.style_label_left, color=color(na), textcolor=#000000, size=size.tiny)
+                activeTPBox := box.new(left=entryBarIdx, top=takeProfitPrice, right=entryBarIdx + 1, bottom=entryPrice, bgcolor=colTPBox, border_color=#000000, border_style=line.style_solid)
+                activeSLBox := box.new(left=entryBarIdx, top=entryPrice, right=entryBarIdx + 1, bottom=stopLossPrice, bgcolor=colSLBox, border_color=#000000, border_style=line.style_solid)
+                activeLbl   := label.new(entryBarIdx + 1, entryPrice, buyLabelStr, style=label.style_label_left, color=color(na), textcolor=#000000, size=size.tiny)
             else
                 pendingOrder    := true
                 pendingDir      := 1
@@ -931,8 +928,7 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
                 pendingSL       := calcSL
                 pendingTP       := calcTP
                 pendingSetupBar := bar_index
-                pendingBox      := box.new(left=bar_index, top=pendingEntry, right=bar_index + 1, bottom=pendingSL,
-                                           bgcolor=colPendingLong, border_color=#000000, border_style=line.style_dotted)
+                pendingBox      := box.new(left=bar_index, top=pendingEntry, right=bar_index + 1, bottom=pendingSL, bgcolor=colPendingLong, border_color=#000000, border_style=line.style_dotted)
 
     else if sniperSellTrigger
         // Pick best structural high: internalHigh, swingHigh, or local pivot high
@@ -956,6 +952,8 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
 
         // Filter out microscopic fakeouts: require meaningful risk distance >= minRiskAtr * ATR
         if riskDist >= (atr14 * minRiskAtr)
+            string sellText = isIndexChart ? "BUY PUT (PE)" : (isStockChart ? "SELL SPOT" : "SELL ")
+            string sellLabelStr = sellText + " " + str.tostring(calcEntry, "#.##") + " | SL: " + str.tostring(calcSL, "#.##")
             if directSmcFill
                 inTrade         := true
                 tradeDir        := -1
@@ -964,14 +962,9 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
                 stopLossPrice   := calcSL
                 takeProfitPrice := calcTPSell
 
-                activeTPBox := box.new(left=entryBarIdx, top=entryPrice, right=entryBarIdx + 1, bottom=takeProfitPrice, 
-                                       bgcolor=colTPBox, border_color=#000000, border_style=line.style_solid)
-                activeSLBox := box.new(left=entryBarIdx, top=stopLossPrice, right=entryBarIdx + 1, bottom=entryPrice, 
-                                       bgcolor=colSLBox, border_color=#000000, border_style=line.style_solid)
-                string sellLabelText = isIndexChart ? "BUY PUT (PE)" : (isStockChart ? "SELL SPOT" : "SELL ")
-                activeLbl   := label.new(entryBarIdx + 1, entryPrice, 
-                                         sellLabelText + " " + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
-                                         style=label.style_label_left, color=color(na), textcolor=#000000, size=size.tiny)
+                activeTPBox := box.new(left=entryBarIdx, top=entryPrice, right=entryBarIdx + 1, bottom=takeProfitPrice, bgcolor=colTPBox, border_color=#000000, border_style=line.style_solid)
+                activeSLBox := box.new(left=entryBarIdx, top=stopLossPrice, right=entryBarIdx + 1, bottom=entryPrice, bgcolor=colSLBox, border_color=#000000, border_style=line.style_solid)
+                activeLbl   := label.new(entryBarIdx + 1, entryPrice, sellLabelStr, style=label.style_label_left, color=color(na), textcolor=#000000, size=size.tiny)
             else
                 pendingOrder    := true
                 pendingDir      := -1
@@ -979,8 +972,7 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
                 pendingSL       := calcSL
                 pendingTP       := calcTPSell
                 pendingSetupBar := bar_index
-                pendingBox      := box.new(left=bar_index, top=pendingSL, right=bar_index + 1, bottom=pendingEntry,
-                                           bgcolor=colPendingShort, border_color=#000000, border_style=line.style_dotted)
+                pendingBox      := box.new(left=bar_index, top=pendingSL, right=bar_index + 1, bottom=pendingEntry, bgcolor=colPendingShort, border_color=#000000, border_style=line.style_dotted)
 
 // Invalidate stale pending setups
 if pendingOrder and (bar_index - pendingSetupBar > sniperMaxWaitBars)
