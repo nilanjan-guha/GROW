@@ -792,16 +792,13 @@ isAnyOption  = isCallOption or isPutOption
 bool isOptionChart = chartInstrumentType == 'Option Premium Chart (BUY CALL / BUY PUT Only)' or (chartInstrumentType == 'Auto Detect' and isAnyOption)
 bool isIndexChart  = chartInstrumentType == 'Index Spot Chart (BUY CE on Bullish / BUY PE on Bearish)' or (chartInstrumentType == 'Auto Detect' and not isAnyOption)
 
-// Trigger Definitions:
-// 1) On Option charts:
-//    - Call Chart: Bullish setup triggers BUY (Buying Call)
-//    - Put Chart: Bullish setup triggers BUY (Buying Put)
-//    - Selling/Shorting options is completely disabled.
-// 2) On Index Spot / Futures charts (NIFTY 50, BANKNIFTY, SENSEX):
-//    - Bullish setup triggers BUY CALL (CE)
-//    - Bearish setup triggers BUY PUT (PE)
-sniperBuyTrigger  = bullTrend and sniperZoneTestBuy
-sniperSellTrigger = isIndexChart and bearTrend and (triggeredBearShift or (sweepHigh and close < open))
+// Complete Trigger: Standard Trend Continuation OR Major 15M Liquidity Reversal
+// Bullish Setup (Index moving UP / Option Call moving UP)
+sniperBuyTrigger  = bullTrend and (sniperZoneTestBuy or (isIndexChart and (triggeredBullShift or ta.crossover(close, ema50))))
+
+// Bearish Setup (Index moving DOWN)
+// Triggers "BUY PUT (PE)" when applied on an Index spot chart
+sniperSellTrigger = isIndexChart and bearTrend and (triggeredBearShift or (sweepHigh and close < open) or ta.crossunder(close, ema50) or (inSupplyObZone and close < open))
 
 // Direct immediate execution at the zone bottom so the trade is filled right where circled
 directSmcFill = true
@@ -1006,7 +1003,7 @@ if showSniperScoreboard and barstate.islast
                bgcolor=winRate >= 50 ? color.new(color.teal, 30) : color.new(color.maroon, 30), text_color=color.white, text_size=size.small)
 
     table.cell(dash, 0, 2, "Action State", text_color=color.silver, text_size=size.small)
-    statusText = inTrade ? (tradeDir == 1 ? "LONG ACTIVE" : "SHORT ACTIVE") : (pendingOrder ? "WAITING RETEST FILL" : "SCANNING...")
+    statusText = inTrade ? (tradeDir == 1 ? (isIndexChart ? "BUY CALL (ACTIVE)" : "LONG ACTIVE") : (isIndexChart ? "BUY PUT (ACTIVE)" : "SHORT ACTIVE")) : (pendingOrder ? "WAITING RETEST FILL" : "SCANNING...")
     table.cell(dash, 1, 2, statusText, text_color=inTrade ? color.lime : (pendingOrder ? color.orange : color.yellow), text_size=size.small)
 
     table.cell(dash, 0, 3, "Entry Price", text_color=color.silver, text_size=size.small)
