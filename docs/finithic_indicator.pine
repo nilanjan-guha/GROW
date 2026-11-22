@@ -115,6 +115,8 @@ chartInstrumentType             = input.string( 'Auto Detect', 'Chart Mode / Ins
                                                options = ['Auto Detect', 'Option Premium Chart (BUY CALL / BUY PUT Only)', 'Index Spot Chart (BUY CE on Bullish / BUY PE on Bearish)'], 
                                                group = SNIPER_GROUP, 
                                                tooltip = 'Auto Detect: Automatically detects whether you are viewing an Option chart (CE/PE) or an Index spot/futures chart.\n\nOption Premium Chart: Always issues BUY signals only (Buying Call or Buying Put momentum, never selling options).\n\nIndex Spot Chart: When market breaks up, triggers BUY CALL (CE). When market breaks down, triggers BUY PUT (PE).')
+underlyingIndexSymbol            = input.symbol('NSE:NIFTY', 'Underlying Index (for option charts)', group = SNIPER_GROUP, tooltip = 'Select the spot index that drives the option-side filter. Example: NSE:NIFTY or NSE:BANKNIFTY. CALL premium requires bullish underlying bias; PUT premium requires bearish underlying bias. The option premium must still form its own bullish SMC setup.')
+underlyingBiasTimeframe           = input.timeframe('15', 'Underlying Bias Timeframe', group = SNIPER_GROUP)
 targetTypeInput                 = input.string( 'Percentage Target (+30% to +40%)', 'Profit Target Mode', 
                                                options = ['Percentage Target (+30% to +40%)', 'Risk:Reward (1:2 to 1:3 R:R)', 'Opposite Swing Liquidity'], 
                                                group = SNIPER_GROUP, 
@@ -146,7 +148,7 @@ cooldownBarsInput   = input.int(15, 'Trade Cooldown Bars (Prevents Late FOMO Top
 htfHigh  = request.security(syminfo.tickerid, htfTimeframe, high[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
 htfLow   = request.security(syminfo.tickerid, htfTimeframe, low[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
 htfClose = request.security(syminfo.tickerid, htfTimeframe, close[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-htfEma   = request.security(syminfo.tickerid, htfTimeframe, ta.ema(close, 50), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+htfEma   = request.security(syminfo.tickerid, htfTimeframe, ta.ema(close, 50)[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
 
 // 15M HTF Liquidity Sweep & Discount Rejection
 htfSweepLow   = (low < htfLow) and (close > htfLow)
@@ -526,9 +528,9 @@ deleteFairValueGaps() =>
                 fairValueGaps.remove(i)
     
 drawFairValueGaps() => 
-    [lastClose, lastOpen, lastTime, currentHigh, currentLow, currentTime, last2High, last2Low] = request.security(syminfo.tickerid, fairValueGapsTimeframeInput, [close[1], open[1], time[1], high[0], low[0], time[0], high[2], low[2]], lookahead = barmerge.lookahead_on)
+    [lastClose, lastOpen, lastTime, currentHigh, currentLow, currentTime, last2High, last2Low] = request.security(syminfo.tickerid, fairValueGapsTimeframeInput, [close[1], open[1], time[1], high[1], low[1], time[1], high[3], low[3]], lookahead = barmerge.lookahead_on)
 
-    barDeltaPercent     = (lastClose - lastOpen) / (lastOpen * 100)
+    barDeltaPercent     = lastOpen != 0 ? (lastClose - lastOpen) / lastOpen * 100 : 0
     newTimeframe        = timeframe.change(fairValueGapsTimeframeInput)
     threshold           = fairValueGapsThresholdInput ? ta.cum(math.abs(newTimeframe ? barDeltaPercent : 0)) / bar_index * 2 : 0
 
@@ -739,6 +741,13 @@ sweepLow  = sweepIntLow or sweepSwingLow
 bool htf15MBullish = (htfClose >= htfEma) and (close >= ema50)
 bool htf15MBearish = (htfClose <= htfEma) and (close <= ema50)
 
+// Confirmed underlying-index direction for option-premium charts.
+// Previous completed HTF candle values prevent the option filter from reading a developing index candle.
+[underlyingCloseConfirmed, underlyingEma50Confirmed, underlyingEma200Confirmed] = request.security(underlyingIndexSymbol, underlyingBiasTimeframe, [close[1], ta.ema(close, 50)[1], ta.ema(close, 200)[1]], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+bool underlyingBullish = underlyingCloseConfirmed > underlyingEma50Confirmed and underlyingEma50Confirmed > underlyingEma200Confirmed
+bool underlyingBearish = underlyingCloseConfirmed < underlyingEma50Confirmed and underlyingEma50Confirmed < underlyingEma200Confirmed
+string underlyingBiasText = underlyingBullish ? 'BULLISH' : underlyingBearish ? 'BEARISH' : 'NEUTRAL'
+
 bool local1MBullish = (close > ema50) and (internalTrend.bias == BULLISH or ta.crossover(close, ema50) or close > ema200)
 bool local1MBearish = (close < ema50) and (internalTrend.bias == BEARISH or ta.crossunder(close, ema50) or close < ema200)
 
@@ -796,10 +805,12 @@ bool notFallingKnife = (close > low[1]) or (close > open)
 bool sniperZoneTestBuy = inAccumulationArea and bullishReversalCandle and notFallingKnife
 
 // Automatic Chart Type Detection (Index Spot, Equity/Futures Spot, and Option Premium CE/PE):
-tickerStr = syminfo.ticker
-isCallOption = str.contains(tickerStr, "CALL") or str.contains(tickerStr, "CE")
-isPutOption  = str.contains(tickerStr, "PUT")  or str.contains(tickerStr, "PE")
-isAnyOption  = isCallOption or isPutOption
+tickerStr = str.upper(syminfo.ticker)
+// Never classify an instrument by loose CE/PE substrings: ordinary equity names can contain those letters.
+// Auto-detect only trusts TradingView's instrument type; use the explicit chart-mode input if a feed labels options unusually.
+isAnyOption  = syminfo.type == 'option'
+isCallOption = isAnyOption and (str.endswith(tickerStr, 'CE') or str.contains(tickerStr, 'CALL'))
+isPutOption  = isAnyOption and (str.endswith(tickerStr, 'PE') or str.contains(tickerStr, 'PUT'))
 
 bool isKnownIndex = str.contains(tickerStr, "NIFTY") or str.contains(tickerStr, "BANKNIFTY") or str.contains(tickerStr, "SENSEX") or str.contains(tickerStr, "FINNIFTY") or str.contains(tickerStr, "MIDCPNIFTY") or syminfo.type == "index"
 
@@ -807,6 +818,10 @@ bool isKnownIndex = str.contains(tickerStr, "NIFTY") or str.contains(tickerStr, 
 bool isOptionChart = chartInstrumentType == 'Option Premium Chart (BUY CALL / BUY PUT Only)' or (chartInstrumentType == 'Auto Detect' and isAnyOption)
 bool isIndexChart  = chartInstrumentType == 'Index Spot Chart (BUY CE on Bullish / BUY PE on Bearish)' or (chartInstrumentType == 'Auto Detect' and isKnownIndex and not isAnyOption)
 bool isStockChart  = not isOptionChart and not isIndexChart
+bool isRecognizedCallOption = isOptionChart and isCallOption
+bool isRecognizedPutOption  = isOptionChart and isPutOption
+bool optionUnderlyingAligned = (isRecognizedCallOption and underlyingBullish) or (isRecognizedPutOption and underlyingBearish)
+bool optionSideRecognized = isRecognizedCallOption or isRecognizedPutOption
 
 // Complete Trigger: Standard Trend Continuation OR Major 15M Liquidity Reversal
 // Only evaluate entries on confirmed bar closes to prevent mid-candle repainting
@@ -815,15 +830,15 @@ bool barConfirmed = barstate.isconfirmed or barstate.islastconfirmedhistory
 // Bullish Setup (Index moving UP / Option Call moving UP / Stock moving UP):
 // On Option Chart: Price tests Demand OB / Sweep and forms Green Reversal Candle with Volume
 // On Index/Stock Spot Chart: Price breaks bullish (BOS/CHoCH, EMA cross, or Demand bounce) -> triggers BUY CALL (CE) / BUY
-sniperBuyTrigger  = barConfirmed and bullTrend and (sniperZoneTestBuy or ((isIndexChart or isStockChart) and volumeConfirmed and (triggeredBullShift or ta.crossover(close, ema50) or (sweepLow and close > open))))
+sniperBuyTrigger  = barConfirmed and bullTrend and (sniperZoneTestBuy or ((isIndexChart or isStockChart) and volumeConfirmed and (triggeredBullShift or ta.crossover(close, ema50) or (sweepLow and close > open)))) and (not isOptionChart or (optionSideRecognized and optionUnderlyingAligned))
 
 // Bearish Setup (Index moving DOWN / Stock moving DOWN):
 // On Index Spot Chart: triggers BUY PUT (PE)
 // On Stock Spot Chart: triggers SHORT
-sniperSellTrigger = barConfirmed and (isIndexChart or isStockChart) and bearTrend and volumeConfirmed and (triggeredBearShift or (sweepHigh and close < open) or ta.crossunder(close, ema50) or (inSupplyObZone and close < open))
+sniperSellTrigger = barConfirmed and isIndexChart and bearTrend and volumeConfirmed and (triggeredBearShift or (sweepHigh and close < open) or ta.crossunder(close, ema50) or (inSupplyObZone and close < open))
 
-// Direct immediate execution at the zone bottom so the trade is filled right where circled
-directSmcFill = true
+// Require a genuine pullback/retest; never mark the displacement candle's close as an instant fill.
+directSmcFill = false
 
 // Arm Pending Sniper Orders on Major Shift, Sweeps & OB Retests
 if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - lastExitBar >= cooldownBarsInput)
@@ -933,7 +948,7 @@ if pendingOrder and not inTrade
     box.set_right(pendingBox, bar_index + 1)
     
     // Long retest filled (Price pulls into entry level)
-    if pendingDir == 1 and low <= pendingEntry
+    if pendingDir == 1 and bar_index > pendingSetupBar and low <= pendingEntry and close > open and close > pendingEntry and barConfirmed
         box.delete(pendingBox)
         pendingOrder    := false
         inTrade         := true
@@ -947,13 +962,13 @@ if pendingOrder and not inTrade
                                bgcolor=colTPBox, border_color=color.teal, border_style=line.style_solid)
         activeSLBox := box.new(left=entryBarIdx, top=entryPrice, right=entryBarIdx + 1, bottom=stopLossPrice, 
                                bgcolor=colSLBox, border_color=color.maroon, border_style=line.style_solid)
-        string pendingBuyText = isIndexChart ? "BUY CALL (CE)" : "BUY "
+        string pendingBuyText = isIndexChart ? "BUY CALL (CE)" : (isRecognizedCallOption ? "BUY CALL" : (isRecognizedPutOption ? "BUY PUT" : "BUY "))
         activeLbl   := label.new(entryBarIdx + 1, entryPrice, 
                                  pendingBuyText + " " + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
                                  style=label.style_label_left, color=color(na), textcolor=color.teal, size=size.tiny)
 
     // Short retest filled (Price pulls into entry level)
-    else if pendingDir == -1 and high >= pendingEntry
+    else if pendingDir == -1 and bar_index > pendingSetupBar and high >= pendingEntry and close < open and close < pendingEntry and barConfirmed
         box.delete(pendingBox)
         pendingOrder    := false
         inTrade         := true
@@ -967,7 +982,7 @@ if pendingOrder and not inTrade
                                bgcolor=colTPBox, border_color=color.teal, border_style=line.style_solid)
         activeSLBox := box.new(left=entryBarIdx, top=stopLossPrice, right=entryBarIdx + 1, bottom=entryPrice, 
                                bgcolor=colSLBox, border_color=color.maroon, border_style=line.style_solid)
-        string pendingSellText = isIndexChart ? "BUY PUT (PE)" : "SELL "
+        string pendingSellText = isIndexChart ? "BUY PUT (PE)" : "NO TRADE"
         activeLbl   := label.new(entryBarIdx + 1, entryPrice, 
                                  pendingSellText + " " + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
                                  style=label.style_label_left, color=color(na), textcolor=color.maroon, size=size.tiny)
