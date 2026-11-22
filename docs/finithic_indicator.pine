@@ -1287,6 +1287,7 @@ var label ictSslLabel = na
 var label ictBslLabel = na
 var label ictMssBullLabel = na
 var label ictMssBearLabel = na
+var label ictAbsorptionLabel = na
 
 if showIctAnnotations and barstate.isconfirmed
     if ictSweepSSL
@@ -1305,8 +1306,6 @@ if showIctAnnotations and barstate.isconfirmed
         label.new(bar_index, low, 'A+ BUY', style=label.style_label_up, color=color.white, textcolor=color.black, size=size.small)
     if ictAPlusSell
         label.new(bar_index, high, 'A+ SELL', style=label.style_label_down, color=color.white, textcolor=color.black, size=size.small)
-var label ictAbsorptionLabel = na
-
     if showAbsorptionSignals and cvdBullishAbsorption and not ictAPlusBuy
         label.delete(ictAbsorptionLabel)
         ictAbsorptionLabel := label.new(bar_index, low, 'ABSORPTION WICK', style=label.style_none, textcolor=color.teal, size=size.tiny)
