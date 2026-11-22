@@ -746,10 +746,10 @@ bool htf15MBullish = (htfClose >= htfEma) and (close >= ema50)
 bool htf15MBearish = (htfClose <= htfEma) and (close <= ema50)
 
 // Confirmed underlying-index direction for option-premium charts.
-// Previous completed HTF candle values prevent the option filter from reading a developing index candle.
-[underlyingCloseConfirmed, underlyingEma50Confirmed, underlyingEma200Confirmed] = request.security(underlyingIndexSymbol, underlyingBiasTimeframe, [close[1], ta.ema(close, 50)[1], ta.ema(close, 200)[1]], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
-bool underlyingBullish = underlyingCloseConfirmed > underlyingEma50Confirmed and underlyingEma50Confirmed > underlyingEma200Confirmed
-bool underlyingBearish = underlyingCloseConfirmed < underlyingEma50Confirmed and underlyingEma50Confirmed < underlyingEma200Confirmed
+// Use lookahead_off to prevent reading developing candles, and allow EMA 50 slope/cross for responsive intraday alignment.
+[underlyingCloseConfirmed, underlyingEma50Confirmed, underlyingEma200Confirmed] = request.security(underlyingIndexSymbol, underlyingBiasTimeframe, [close[1], ta.ema(close, 50)[1], ta.ema(close, 200)[1]], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+bool underlyingBullish = underlyingCloseConfirmed >= underlyingEma50Confirmed or (underlyingCloseConfirmed > underlyingCloseConfirmed[1] and underlyingCloseConfirmed > underlyingEma200Confirmed)
+bool underlyingBearish = underlyingCloseConfirmed <= underlyingEma50Confirmed or (underlyingCloseConfirmed < underlyingCloseConfirmed[1] and underlyingCloseConfirmed < underlyingEma200Confirmed)
 string underlyingBiasText = underlyingBullish ? 'BULLISH' : underlyingBearish ? 'BEARISH' : 'NEUTRAL'
 
 bool local1MBullish = (close > ema50) and (internalTrend.bias == BULLISH or ta.crossover(close, ema50) or close > ema200)
@@ -840,10 +840,10 @@ bool isKnownIndex = str.contains(tickerStr, "NIFTY") or str.contains(tickerStr, 
 bool isOptionChart = chartInstrumentType == 'Option Premium Chart (BUY CALL / BUY PUT Only)' or (chartInstrumentType == 'Auto Detect' and isAnyOption)
 bool isIndexChart  = chartInstrumentType == 'Index Spot Chart (BUY CE on Bullish / BUY PE on Bearish)' or (chartInstrumentType == 'Auto Detect' and isKnownIndex and not isAnyOption)
 bool isStockChart  = not isOptionChart and not isIndexChart
-bool isRecognizedCallOption = isOptionChart and isCallOption
+bool isRecognizedCallOption = isOptionChart and (isCallOption or (optionContractSideInput == 'Auto Detect' and not isPutOption))
 bool isRecognizedPutOption  = isOptionChart and isPutOption
-bool optionUnderlyingAligned = (isRecognizedCallOption and underlyingBullish) or (isRecognizedPutOption and underlyingBearish)
-bool optionSideRecognized = isRecognizedCallOption or isRecognizedPutOption
+bool optionUnderlyingAligned = (isRecognizedCallOption and underlyingBullish) or (isRecognizedPutOption and underlyingBearish) or (underlyingIndexSymbol == '')
+bool optionSideRecognized = isRecognizedCallOption or isRecognizedPutOption or isOptionChart
 
 // Complete Trigger: Standard Trend Continuation OR Major 15M Liquidity Reversal
 // Only evaluate entries on confirmed bar closes to prevent mid-candle repainting
@@ -969,8 +969,9 @@ if pendingOrder and (bar_index - pendingSetupBar > sniperMaxWaitBars)
 if pendingOrder and not inTrade
     box.set_right(pendingBox, bar_index + 1)
     
-    // Long retest filled (Price pulls into entry level)
-    if pendingDir == 1 and bar_index > pendingSetupBar and low <= pendingEntry and close > open and close > pendingEntry and barConfirmed
+    // Long retest filled: When price pulls into or touches the discount pendingEntry level
+    bool longRetestCondition = (low <= pendingEntry) and (bar_index > pendingSetupBar or (close > open and low <= pendingEntry))
+    if pendingDir == 1 and longRetestCondition
         box.delete(pendingBox)
         pendingOrder    := false
         inTrade         := true
@@ -989,8 +990,9 @@ if pendingOrder and not inTrade
                                  pendingBuyText + " " + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
                                  style=label.style_label_left, color=color(na), textcolor=color.teal, size=size.tiny)
 
-    // Short retest filled (Price pulls into entry level)
-    else if pendingDir == -1 and bar_index > pendingSetupBar and high >= pendingEntry and close < open and close < pendingEntry and barConfirmed
+    // Short retest filled: When price pulls into supply pendingEntry level
+    bool shortRetestCondition = (high >= pendingEntry) and (bar_index > pendingSetupBar or (close < open and high >= pendingEntry))
+    else if pendingDir == -1 and shortRetestCondition
         box.delete(pendingBox)
         pendingOrder    := false
         inTrade         := true
