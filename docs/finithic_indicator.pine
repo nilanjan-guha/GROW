@@ -124,8 +124,8 @@ targetTypeInput                 = input.string( 'Percentage Target (+30% to +40%
                                                tooltip = 'Percentage Target: Designed specifically for Options to capture clean +30% to +40% premium expansions.')
 targetPercentInput              = input.float(  35.0,       'Option Profit Target % (e.g. 35% for 30-40%)', minval = 10.0, maxval = 200.0, step = 5.0, group = SNIPER_GROUP)
 sniperRRRatio                   = input.float(  3.0,        'Sniper Target R:R Ratio (if R:R mode)', minval=1.5, step=0.5, group = SNIPER_GROUP)
-trailToBE                       = input.bool(   true,       'Auto Lock SL to Break-Even at +15% / 1R', group = SNIPER_GROUP, tooltip = 'Locks profit once price surges halfway (+15% gain on options), turning losing trades into risk-free winners and dramatically boosting win rate.')
-beTriggerPercentInput           = input.float(  15.0,       'Break-Even Trigger % Gain', minval = 5.0, maxval = 50.0, step = 2.5, group = SNIPER_GROUP)
+trailToBE                       = input.bool(   false,      'Auto Lock SL to Break-Even at +15% / 1R', group = SNIPER_GROUP, tooltip = 'When disabled, SL stays strictly at the institutional structural invalidation low, allowing price to breathe through normal pullbacks without premature BE cutouts.')
+beTriggerPercentInput           = input.float(  20.0,       'Break-Even Trigger % Gain (if enabled)', minval = 5.0, maxval = 50.0, step = 2.5, group = SNIPER_GROUP)
 volConfirmationInput            = input.bool(   true,       'Volume Expansion Filter (Vol > 20 SMA)', group = SNIPER_GROUP, tooltip = 'Ensures institutional order volume is flowing into the candle.')
 sniperRetraceRatio              = input.float(  0.5,        'Discount Retracement Entry (0.5 = 50%)', minval=0.2, maxval=0.79, step=0.05, group = SNIPER_GROUP)
 sniperMaxWaitBars               = input.int(    12,         'Max Wait Bars for Retest Fill', minval=3, maxval=30, group = SNIPER_GROUP)
@@ -776,17 +776,28 @@ htfMajorSell = useHtfConfluence and (htfSweepHigh or (not htfInDiscount and swee
 
 // Quality Reversal Signature:
 float lowerWick = math.min(open, close) - low
+float upperWick = high - math.max(open, close)
 float barRange   = math.max(high - low, syminfo.mintick)
-bool hasRejectionWick = (lowerWick / barRange) >= 0.15 or (close >= (high + low) / 2.0)
+bool hasRejectionWick = (lowerWick / barRange) >= 0.20 or (close >= (high + low) / 2.0)
 bool bullishReversal = (close > open) and hasRejectionWick and (close >= close[1])
+
+// High-Conviction SMC Confirmation:
+// Requires actual Institutional footprints:
+// 1) Clear Liquidity Sweep (sweepLow) OR
+// 2) Structural Breakout / CHoCH (triggeredBullShift) OR
+// 3) Retest of active institutional Demand Order Block with bullish rejection
+bool smcBullishSetup = (triggeredBullShift and close > open) or (sweepLow and bullishReversal) or (obDemandTouch and bullishReversal) or htfMajorBuy
 
 // Complete Trigger:
 // 1) Bullish Index Spot Chart -> triggers BUY CALL (CE)
 // 2) Option Premium Chart -> Only buys CALL if Index is Bullish; Only buys PUT if Index is Falling/Bearish
-sniperBuyTrigger  = ((bullTrend and (triggeredBullShift or (sweepLow and close > open) or obDemandTouch or bullishReversal)) or htfMajorBuy) and volumeConfirmed and optionUnderlyingAligned
+sniperBuyTrigger  = smcBullishSetup and bullTrend and volumeConfirmed and optionUnderlyingAligned
 
 // 3) Falling/Bearish Index Spot Chart -> triggers BUY PUT (PE)
-sniperSellTrigger = (isIndexChart or isStockChart) and ((bearTrend and (triggeredBearShift or (sweepHigh and close < open) or obSupplyTouch)) or htfMajorSell) and volumeConfirmed
+bool hasUpperRejectionWick = (upperWick / barRange) >= 0.20 or (close <= (high + low) / 2.0)
+bool bearishReversal = (close < open) and hasUpperRejectionWick and (close <= close[1])
+bool smcBearishSetup = (triggeredBearShift and close < open) or (sweepHigh and bearishReversal) or (obSupplyTouch and bearishReversal) or htfMajorSell
+sniperSellTrigger = (isIndexChart or isStockChart) and smcBearishSetup and bearTrend and volumeConfirmed
 
 // Direct Retest Execution Toggle:
 // When true, immediately enters at the current close upon demand rejection rather than waiting for an extra pullback candle.
