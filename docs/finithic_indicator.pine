@@ -176,7 +176,7 @@ htfEma   = request.security(syminfo.tickerid, htfTimeframe, ta.ema(close, 50)[1]
 // 15M HTF Liquidity Sweep & Discount Rejection
 htfSweepLow  = (low < htfLow) and (close > htfLow)
 htfSweepHigh = (high > htfHigh) and (close < htfHigh)
-htfInDiscount = close < math.avg(htfSwingHighLevel, htfSwingLowLevel)
+htfInDiscount = close < math.avg(htfHigh, htfLow)
 
 // Request 15M HTF Structure, Pivots and Order Blocks:
 [htfSwingHighLevel, htfSwingLowLevel, htfIsBullishStructure] = request.security(syminfo.tickerid, htfTimeframe, [
@@ -495,8 +495,8 @@ displayStructure(bool internal = false) =>
     var bearishBar = true
 
     if internalFilterConfluenceInput
-        bullishBar := high - math.max(close, open) > math.min(close, open - low)
-        bearishBar := high - math.max(close, open) < math.min(close, open - low)
+        bullishBar := math.min(open, close) - low > high - math.max(open, close)
+        bearishBar := high - math.max(open, close) > math.min(open, close) - low
     
     pivot p_ivot    = internal ? internalHigh : swingHigh
     trend t_rend    = internal ? internalTrend : swingTrend
@@ -577,7 +577,7 @@ drawFairValueGaps() =>
 
     barDeltaPercent     = (lastClose - lastOpen) / math.max(math.abs(lastOpen), syminfo.mintick) * 100
     newTimeframe        = timeframe.change(fairValueGapsTimeframeInput)
-    threshold           = fairValueGapsThresholdInput ? ta.cum(math.abs(newTimeframe ? barDeltaPercent : 0)) / bar_index * 2 : 0
+    threshold           = fairValueGapsThresholdInput ? ta.cum(math.abs(newTimeframe ? barDeltaPercent : 0)) / math.max(bar_index, 1) * 2 : 0
 
     bullishFairValueGap = currentLow > last2High and lastClose > last2High and barDeltaPercent > threshold and newTimeframe
     bearishFairValueGap = currentHigh < last2Low and lastClose < last2Low and -barDeltaPercent > threshold and newTimeframe
@@ -943,7 +943,7 @@ if barstate.isconfirmed
     if ictBullDisplacement
         if ictBullStage == 1
             ictBullStage := 2
-        ictBullImpulseHigh := high
+            ictBullImpulseHigh := high
         // Last bearish candle before bullish displacement = candidate bullish OB.
         for j = 1 to ictObLookback
             if close[j] < open[j]
@@ -955,7 +955,7 @@ if barstate.isconfirmed
     if ictBearDisplacement
         if ictBearStage == 1
             ictBearStage := 2
-        ictBearImpulseLow := low
+            ictBearImpulseLow := low
         // Last bullish candle before bearish displacement = candidate bearish OB.
         for j = 1 to ictObLookback
             if close[j] > open[j]
@@ -1125,6 +1125,16 @@ bool ictBearSmt = allowSmtDivergence and ictChartNewHigh and not ictOtherNewHigh
 
 // Session context (exchange local time); first-hour false break is the local Judas-style model.
 bool ictAsiaSession = not na(time(timeframe.period, '0000-0500', 'Etc/UTC'))
+var float ictAsiaHigh = na
+var float ictAsiaLow = na
+if ictNewDay
+    ictAsiaHigh := na
+    ictAsiaLow := na
+if ictAsiaSession
+    ictAsiaHigh := na(ictAsiaHigh) ? high : math.max(ictAsiaHigh, high)
+    ictAsiaLow := na(ictAsiaLow) ? low : math.min(ictAsiaLow, low)
+bool ictAsiaHighSweep = not ictAsiaSession and not na(ictAsiaHigh) and high > ictAsiaHigh and close < ictAsiaHigh
+bool ictAsiaLowSweep = not ictAsiaSession and not na(ictAsiaLow) and low < ictAsiaLow and close > ictAsiaLow
 bool ictLondonKill = not na(time(timeframe.period, '0700-1000', 'Etc/UTC'))
 bool ictNewYorkKill = not na(time(timeframe.period, '1230-1600', 'Etc/UTC'))
 bool ictIndiaOpen = not na(time(timeframe.period, '0915-1015', 'Asia/Kolkata'))
@@ -1137,13 +1147,17 @@ if ictNewDay
 if ictIndiaOpen
     ictOpenRangeHigh := na(ictOpenRangeHigh) ? high : math.max(ictOpenRangeHigh, high)
     ictOpenRangeLow := na(ictOpenRangeLow) ? low : math.min(ictOpenRangeLow, low)
-bool ictJudasBuy = useSessionContext and not na(ictOpenRangeLow) and low < ictOpenRangeLow and close > ictOpenRangeLow and ictBullReject
-bool ictJudasSell = useSessionContext and not na(ictOpenRangeHigh) and high > ictOpenRangeHigh and close < ictOpenRangeHigh and ictBearReject
+bool ictJudasBuy = useSessionContext and ((not na(ictOpenRangeLow) and low < ictOpenRangeLow and close > ictOpenRangeLow) or ictAsiaLowSweep) and ictBullReject
+bool ictJudasSell = useSessionContext and ((not na(ictOpenRangeHigh) and high > ictOpenRangeHigh and close < ictOpenRangeHigh) or ictAsiaHighSweep) and ictBearReject
 bool ictSessionAllowed = not useSessionContext or ictIndiaOpen or ictLondonKill or ictNewYorkKill or not (ictAsiaSession)
 
 // Volume imbalance approximation (price gap between adjacent candles; FVG remains the primary imbalance definition).
 bool ictBullVolumeImbalance = low > high[1]
 bool ictBearVolumeImbalance = high < low[1]
+if showIctAnnotations and barstate.isconfirmed and ictBullVolumeImbalance
+    label.new(bar_index, low, 'VOLUME IMBALANCE', style=label.style_none, textcolor=color.black, size=size.tiny)
+if showIctAnnotations and barstate.isconfirmed and ictBearVolumeImbalance
+    label.new(bar_index, high, 'VOLUME IMBALANCE', style=label.style_none, textcolor=color.black, size=size.tiny)
 
 // Target liquidity: nearest available external level in the trade direction.
 float ictLongLiquidityTarget = na
