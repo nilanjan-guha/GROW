@@ -9,12 +9,12 @@ BEARISH_LEG                     = 0
 BULLISH                         = +1
 BEARISH                         = -1
 
-GREEN                           = #000000
-RED                             = #000000
-BLUE                            = #000000
-GRAY                            = #5d606b
-MONO_BULLISH                    = #000000
-MONO_BEARISH                    = #000000
+GREEN                           = #089981
+RED                             = #F23645
+BLUE                            = #2157f3
+GRAY                            = #878b94
+MONO_BULLISH                    = #b2b5be
+MONO_BEARISH                    = #5d606b
 
 HISTORICAL                      = 'Historical'
 PRESENT                         = 'Present'
@@ -50,112 +50,94 @@ SNIPER_GROUP                    = '1M Sniper Scalper Engine'
 
 // SMC Inputs
 modeInput                       = input.string( HISTORICAL, 'Structure History Mode', group = SMART_GROUP, options = [HISTORICAL, PRESENT])
-styleInput                      = input.string( MONOCHROME,    'Color Theme',            group = SMART_GROUP, options = [COLORED, MONOCHROME])
+styleInput                      = input.string( COLORED,    'Color Theme',            group = SMART_GROUP, options = [COLORED, MONOCHROME])
 showTrendInput                  = input.bool(   false,      'Color Candles By Trend', group = SMART_GROUP)
 
 showInternalsInput              = input.bool(   true,       'Show Internal Structure',group = INTERNAL_GROUP)
 showInternalBullInput           = input.string( ALL,        'Bullish Structure',      group = INTERNAL_GROUP, inline = 'ibull', options = [ALL,BOS,CHOCH])
-internalBullColorInput          = input.color(  #000000,    '',                       group = INTERNAL_GROUP, inline = 'ibull')
+internalBullColorInput          = input.color(  GREEN,      '',                       group = INTERNAL_GROUP, inline = 'ibull')
 showInternalBearInput           = input.string( ALL,        'Bearish Structure',      group = INTERNAL_GROUP, inline = 'ibear', options = [ALL,BOS,CHOCH])
-internalBearColorInput          = input.color(  #000000,    '',                       group = INTERNAL_GROUP, inline = 'ibear')
+internalBearColorInput          = input.color(  RED,        '',                       group = INTERNAL_GROUP, inline = 'ibear')
 internalFilterConfluenceInput   = input.bool(   false,      'Confluence Filter',      group = INTERNAL_GROUP)
 internalStructureSize           = input.string( TINY,       'Internal Label Size',    group = INTERNAL_GROUP, options = [TINY,SMALL,NORMAL])
 
 showStructureInput              = input.bool(   true,       'Show Swing Structure',   group = SWING_GROUP)
 showSwingBullInput              = input.string( ALL,        'Bullish Structure',      group = SWING_GROUP, inline = 'bull', options = [ALL,BOS,CHOCH])
-swingBullColorInput             = input.color(  #000000,    '',                       group = SWING_GROUP, inline = 'bull')
+swingBullColorInput             = input.color(  GREEN,      '',                       group = SWING_GROUP, inline = 'bull')
 showSwingBearInput              = input.string( ALL,        'Bearish Structure',      group = SWING_GROUP, inline = 'bear', options = [ALL,BOS,CHOCH])
-swingBearColorInput             = input.color(  #000000,    '',                       group = SWING_GROUP, inline = 'bear')
+swingBearColorInput             = input.color(  RED,        '',                       group = SWING_GROUP, inline = 'bear')
 swingStructureSize              = input.string( SMALL,      'Swing Label Size',       group = SWING_GROUP, options = [TINY,SMALL,NORMAL])
-showSwingsInput                 = input.bool(   true,       'Show Swing Points',      group = SWING_GROUP, inline = 'swings')
+showSwingsInput                 = input.bool(   false,      'Show Swing Points',      group = SWING_GROUP, inline = 'swings')
 swingsLengthInput               = input.int(    50,         '',                       group = SWING_GROUP, minval = 10, inline = 'swings')
-showHighLowSwingsInput          = input.bool(   false,      'Show Strong/Weak High/Low', group = SWING_GROUP)
+showHighLowSwingsInput          = input.bool(   true,       'Show Strong/Weak High/Low', group = SWING_GROUP)
 
-showInternalOrderBlocksInput    = input.bool(   true,       'Internal Order Blocks (Demand/Supply)', group = BLOCKS_GROUP, inline = 'iob')
+showInternalOrderBlocksInput    = input.bool(   true,       'Internal Order Blocks',  group = BLOCKS_GROUP, inline = 'iob')
 internalOrderBlocksSizeInput    = input.int(    5,          '',                       group = BLOCKS_GROUP, minval = 1, maxval = 20, inline = 'iob')
-showSwingOrderBlocksInput       = input.bool(   true,       'Swing Order Blocks',     group = BLOCKS_GROUP, inline = 'ob')
+showSwingOrderBlocksInput       = input.bool(   false,      'Swing Order Blocks',     group = BLOCKS_GROUP, inline = 'ob')
 swingOrderBlocksSizeInput       = input.int(    5,          '',                       group = BLOCKS_GROUP, minval = 1, maxval = 20, inline = 'ob') 
 orderBlockFilterInput           = input.string( 'Atr',      'Order Block Filter',     group = BLOCKS_GROUP, options = [ATR, RANGE])
 orderBlockMitigationInput       = input.string( HIGHLOW,    'Order Block Mitigation', group = BLOCKS_GROUP, options = [CLOSE,HIGHLOW])
-internalBullishOrderBlockColor  = input.color(  color.new(#000000, 85), 'Demand Buying Zone (OB)', group = BLOCKS_GROUP)
-internalBearishOrderBlockColor  = input.color(  color.new(#000000, 85), 'Supply Selling Zone (OB)', group = BLOCKS_GROUP)
-swingBullishOrderBlockColor     = input.color(  color.new(#000000, 85), 'Swing Demand Zone',        group = BLOCKS_GROUP)
-swingBearishOrderBlockColor     = input.color(  color.new(#000000, 85), 'Swing Supply Zone',        group = BLOCKS_GROUP)
+internalBullishOrderBlockColor  = input.color(  color.new(#3179f5, 80), 'Internal Bullish OB', group = BLOCKS_GROUP)
+internalBearishOrderBlockColor  = input.color(  color.new(#f77c80, 80), 'Internal Bearish OB', group = BLOCKS_GROUP)
+swingBullishOrderBlockColor     = input.color(  color.new(#1848cc, 80), 'Bullish OB',          group = BLOCKS_GROUP)
+swingBearishOrderBlockColor     = input.color(  color.new(#b22833, 80), 'Bearish OB',          group = BLOCKS_GROUP)
 
-showEqualHighsLowsInput         = input.bool(   true,       'Equal High/Low (Liquidity Pools)', group = EQUAL_GROUP)
+showEqualHighsLowsInput         = input.bool(   true,       'Equal High/Low',         group = EQUAL_GROUP)
 equalHighsLowsLengthInput       = input.int(    3,          'Bars Confirmation',      group = EQUAL_GROUP, minval = 1)
 equalHighsLowsThresholdInput    = input.float(  0.1,        'Threshold (ATR fraction)',group = EQUAL_GROUP, minval = 0, maxval = 0.5, step = 0.1)
 equalHighsLowsSizeInput         = input.string( TINY,       'Label Size',             group = EQUAL_GROUP, options = [TINY,SMALL,NORMAL])
 
-showFairValueGapsInput          = input.bool(   true,       'Fair Value Gaps (Imbalance Boxes)', group = GAPS_GROUP)
+showFairValueGapsInput          = input.bool(   false,      'Fair Value Gaps',        group = GAPS_GROUP)
 fairValueGapsThresholdInput     = input.bool(   true,       'Auto Threshold',         group = GAPS_GROUP)
 fairValueGapsTimeframeInput     = input.timeframe('',       'Timeframe',              group = GAPS_GROUP)
-fairValueGapsBullColorInput     = input.color(  color.new(#000000, 90), 'Bullish FVG Box', group = GAPS_GROUP)
-fairValueGapsBearColorInput     = input.color(  color.new(#000000, 90), 'Bearish FVG Box', group = GAPS_GROUP)
+fairValueGapsBullColorInput     = input.color(  color.new(#00ff68, 70), 'Bullish FVG', group = GAPS_GROUP)
+fairValueGapsBearColorInput     = input.color(  color.new(#ff0008, 70), 'Bearish FVG', group = GAPS_GROUP)
 fairValueGapsExtendInput        = input.int(    1,          'Extend FVG',             group = GAPS_GROUP, minval = 0)
 
 showDailyLevelsInput            = input.bool(   false,      'Daily High/Low',         group = LEVELS_GROUP, inline = 'daily')
 dailyLevelsStyleInput           = input.string( SOLID,      '',                       group = LEVELS_GROUP, inline = 'daily', options = [SOLID,DASHED,DOTTED])
-dailyLevelsColorInput           = input.color(  #000000,    '',                       group = LEVELS_GROUP, inline = 'daily')
+dailyLevelsColorInput           = input.color(  BLUE,       '',                       group = LEVELS_GROUP, inline = 'daily')
 showWeeklyLevelsInput           = input.bool(   false,      'Weekly High/Low',        group = LEVELS_GROUP, inline = 'weekly')
 weeklyLevelsStyleInput          = input.string( SOLID,      '',                       group = LEVELS_GROUP, inline = 'weekly', options = [SOLID,DASHED,DOTTED])
-weeklyLevelsColorInput          = input.color(  #000000,    '',                       group = LEVELS_GROUP, inline = 'weekly')
+weeklyLevelsColorInput          = input.color(  BLUE,       '',                       group = LEVELS_GROUP, inline = 'weekly')
 showMonthlyLevelsInput          = input.bool(   false,      'Monthly High/Low',       group = LEVELS_GROUP, inline = 'monthly')
 monthlyLevelsStyleInput         = input.string( SOLID,      '',                       group = LEVELS_GROUP, inline = 'monthly', options = [SOLID,DASHED,DOTTED])
-monthlyLevelsColorInput         = input.color(  #000000,    '',                       group = LEVELS_GROUP, inline = 'monthly')
+monthlyLevelsColorInput         = input.color(  BLUE,       '',                       group = LEVELS_GROUP, inline = 'monthly')
 
 showPremiumDiscountZonesInput   = input.bool(   false,      'Premium/Discount Zones', group = ZONES_GROUP)
-premiumZoneColorInput           = input.color(  color.new(#000000, 85), 'Premium Zone',           group = ZONES_GROUP)
-equilibriumZoneColorInput       = input.color(  color.new(#000000, 60), 'Equilibrium Zone',       group = ZONES_GROUP)
-discountZoneColorInput          = input.color(  color.new(#000000, 85), 'Discount Zone',          group = ZONES_GROUP)
+premiumZoneColorInput           = input.color(  RED,        'Premium Zone',           group = ZONES_GROUP)
+equilibriumZoneColorInput       = input.color(  GRAY,       'Equilibrium Zone',       group = ZONES_GROUP)
+discountZoneColorInput          = input.color(  GREEN,      'Discount Zone',          group = ZONES_GROUP)
 
 // Sniper Scalp Engine Inputs
-enableSniperEngine              = input.bool(   true,       'Enable SMC Sniper Entry Engine (Buy/Sell Zones & Drawings)', group = SNIPER_GROUP)
-chartInstrumentType             = input.string( 'Auto Detect', 'Chart Mode / Instrument Type', 
-                                               options = ['Auto Detect', 'Option Premium Chart (BUY CALL / BUY PUT Only)', 'Index Spot Chart (BUY CE on Bullish / BUY PE on Bearish)'], 
-                                               group = SNIPER_GROUP, 
-                                               tooltip = 'Auto Detect: Automatically detects whether you are viewing an Option chart (CE/PE) or an Index spot/futures chart.\n\nOption Premium Chart: Always issues BUY signals only (Buying Call or Buying Put momentum, never selling options).\n\nIndex Spot Chart: When market breaks up, triggers BUY CALL (CE). When market breaks down, triggers BUY PUT (PE).')
-optionContractSideInput          = input.string('Auto Detect', 'Option Contract Side', options = ['Auto Detect', 'CALL', 'PUT'], group = SNIPER_GROUP, tooltip = 'If the data feed does not expose CE/PE clearly in the ticker, choose CALL or PUT manually.')
-underlyingIndexSymbol            = input.symbol('NSE:NIFTY', 'Underlying Index (for option charts)', group = SNIPER_GROUP, tooltip = 'Select the spot index that drives the option-side filter. Example: NSE:NIFTY or NSE:BANKNIFTY. CALL premium requires bullish underlying bias; PUT premium requires bearish underlying bias. The option premium must still form its own bullish SMC setup.')
-underlyingBiasTimeframe           = input.timeframe('15', 'Underlying Bias Timeframe', group = SNIPER_GROUP)
-targetTypeInput                 = input.string( 'Percentage Target (+30% to +40%)', 'Profit Target Mode', 
-                                               options = ['Percentage Target (+30% to +40%)', 'Risk:Reward (1:2 to 1:3 R:R)', 'Opposite Swing Liquidity'], 
-                                               group = SNIPER_GROUP, 
-                                               tooltip = 'Percentage Target: Designed specifically for Indian Options (Nifty/Sensex/BankNifty) to capture clean +30% to +40% premium expansions.\n\nRisk:Reward: Multiplier of tight invalidation SL.\n\nOpposite Swing Liquidity: Targets the previous swing high or liquidity pool.')
-targetPercentInput              = input.float(  35.0,       'Option Profit Target % (e.g. 35% for 30-40%)', minval = 10.0, maxval = 200.0, step = 5.0, group = SNIPER_GROUP)
-sniperRRRatio                   = input.float(  2.5,        'Sniper Target R:R Ratio (if R:R mode)', minval=1.5, step=0.5, group = SNIPER_GROUP)
-trailToBE                       = input.bool(   true,       'Auto Lock SL to Break-Even at +15% / 1R', group = SNIPER_GROUP, tooltip = 'Locks profit once price surges halfway (+15% gain on options), turning losing trades into risk-free winners and dramatically boosting win rate.')
-beTriggerPercentInput           = input.float(  15.0,       'Break-Even Trigger % Gain', minval = 5.0, maxval = 50.0, step = 2.5, group = SNIPER_GROUP)
-volConfirmationInput            = input.bool(   false,       'Volume Expansion Filter (Vol > 20 SMA)', group = SNIPER_GROUP, tooltip = 'Ensures institutional order volume is flowing into the candle.')
+enableSniperEngine              = input.bool(   true,       'Enable Sniper Retest Engine', group = SNIPER_GROUP)
+sniperRRRatio                   = input.float(  3.0,        'Sniper Target R:R Ratio (3, 4, 5, 6+)', minval=1.5, step=0.5, group = SNIPER_GROUP)
 sniperRetraceRatio              = input.float(  0.5,        'Discount Retracement Entry (0.5 = 50%)', minval=0.2, maxval=0.79, step=0.05, group = SNIPER_GROUP)
-sniperMaxWaitBars               = input.int(    8,         'Max Wait Bars for Retest Fill', minval=3, maxval=30, group = SNIPER_GROUP)
-showSniperScoreboard            = input.bool(   false,      'Show Top-Right Scalp Scoreboard', group = SNIPER_GROUP)
-
+sniperMaxWaitBars               = input.int(    12,         'Max Wait Bars for Retest Fill', minval=3, maxval=30, group = SNIPER_GROUP)
+showSniperScoreboard            = input.bool(   true,       'Show Top-Right Scalp Scoreboard', group = SNIPER_GROUP)
 // Global ATR & Trend calculations
 atr14 = ta.atr(14)
 microBuffer = atr14 * 0.15
 trendFilterEma   = input.bool(true, 'Strict Trend Filter (EMA 50 & 200)', group = SNIPER_GROUP)
 ema50  = ta.ema(close, 50)
 ema200 = ta.ema(close, 200)
-volMa20 = ta.sma(volume, 20)
-volumeConfirmed = not volConfirmationInput or (volume >= volMa20 * 0.95)
-useHtfConfluence = input.bool(false, '15M HTF Zone & Sweep Confluence (Multi-Timeframe)', group = SNIPER_GROUP)
-htfTimeframe     = input.timeframe('5', 'HTF Timeframe', group = SNIPER_GROUP)
-minRiskAtr       = input.float(0.25, 'Minimum Swing Size / Risk (ATR Multiple)', minval=0.3, step=0.1, group = SNIPER_GROUP)
+useHtfConfluence = input.bool(true, '15M HTF Zone & Sweep Confluence (Multi-Timeframe)', group = SNIPER_GROUP)
+htfTimeframe     = input.timeframe('15', 'HTF Timeframe', group = SNIPER_GROUP)
+minRiskAtr       = input.float(0.8, 'Minimum Swing Size / Risk (ATR Multiple)', minval=0.3, step=0.1, group = SNIPER_GROUP)
+trailToBE        = input.bool(false, 'Trail SL to Break-Even (Off = Fixed Invalidation SL until hit)', group = SNIPER_GROUP)
 targetOppositeSwing = input.bool(false, 'Target Opposite Swing High/Low (Major Target)', group = SNIPER_GROUP)
-cooldownBarsInput   = input.int(5, 'Trade Cooldown Bars (Prevents Late FOMO Tops)', minval=3, maxval=30, group = SNIPER_GROUP)
+cooldownBarsInput   = input.int(8, 'Trade Cooldown Bars (Prevents Chop Spam)', minval=3, maxval=20, group = SNIPER_GROUP)
 
 // HTF calculations for 15M discount/premium and sweep zones
 htfHigh  = request.security(syminfo.tickerid, htfTimeframe, high[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
 htfLow   = request.security(syminfo.tickerid, htfTimeframe, low[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
 htfClose = request.security(syminfo.tickerid, htfTimeframe, close[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-htfEma   = request.security(syminfo.tickerid, htfTimeframe, ta.ema(close, 50)[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+htfEma   = request.security(syminfo.tickerid, htfTimeframe, ta.ema(close, 50), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
 
 // 15M HTF Liquidity Sweep & Discount Rejection
-htfSweepLow   = (low < htfLow) and (close > htfLow)
-htfSweepHigh  = (high > htfHigh) and (close < htfHigh)
-htfInDiscount = close <= ((htfHigh + htfLow) / 2.0)
-
+htfSweepLow  = (low < htfLow) and (close > htfLow)
+htfSweepHigh = (high > htfHigh) and (close < htfHigh)
+htfInDiscount = close < htfEma
 //---------------------------------------------------------------------------------------------------------------------}
 // DATA STRUCTURES
 //---------------------------------------------------------------------------------------------------------------------{
@@ -211,8 +193,6 @@ type orderBlock
     float barLow
     int barTime    
     int bias
-    bool isMitigated = false
-    bool hasDisplacement = false
 
 // Persistent variables
 var pivot swingHigh                 = pivot.new(na,na,false)
@@ -412,7 +392,7 @@ deleteOrderBlocks(bool internal = false) =>
                 orderBlocks.remove(i)
 
 storeOrdeBlock(pivot p_ivot, bool internal = false, int bias = 0) =>
-    if (not internal and showSwingOrderBlocksInput) or (internal and (showInternalOrderBlocksInput or enableSniperEngine))
+    if (not internal and showSwingOrderBlocksInput) or (internal and showInternalOrderBlocksInput)
         array<float> a_rray = na
         int parsedIndex = na
 
@@ -423,8 +403,7 @@ storeOrdeBlock(pivot p_ivot, bool internal = false, int bias = 0) =>
             a_rray      := parsedLows.slice(p_ivot.barIndex, bar_index)
             parsedIndex := p_ivot.barIndex + a_rray.indexof(a_rray.min())                        
 
-        bool displacement = math.abs(close - open) >= (atr14 * 0.8) or (high - low) >= (atr14 * 1.2)
-        orderBlock o_rderBlock        = orderBlock.new(parsedHighs.get(parsedIndex), parsedLows.get(parsedIndex), times.get(parsedIndex), bias, false, displacement)
+        orderBlock o_rderBlock        = orderBlock.new(parsedHighs.get(parsedIndex), parsedLows.get(parsedIndex), times.get(parsedIndex), bias)
         array<orderBlock> orderBlocks = internal ? internalOrderBlocks : swingOrderBlocks
         
         if orderBlocks.size() >= 100
@@ -532,9 +511,9 @@ deleteFairValueGaps() =>
                 fairValueGaps.remove(i)
     
 drawFairValueGaps() => 
-    [lastClose, lastOpen, lastTime, currentHigh, currentLow, currentTime, last2High, last2Low] = request.security(syminfo.tickerid, fairValueGapsTimeframeInput, [close[1], open[1], time[1], high[1], low[1], time[1], high[3], low[3]], lookahead = barmerge.lookahead_off)
+    [lastClose, lastOpen, lastTime, currentHigh, currentLow, currentTime, last2High, last2Low] = request.security(syminfo.tickerid, fairValueGapsTimeframeInput, [close[1], open[1], time[1], high[0], low[0], time[0], high[2], low[2]], lookahead = barmerge.lookahead_on)
 
-    barDeltaPercent     = lastOpen != 0 ? (lastClose - lastOpen) / lastOpen * 100 : 0
+    barDeltaPercent     = (lastClose - lastOpen) / (lastOpen * 100)
     newTimeframe        = timeframe.change(fairValueGapsTimeframeInput)
     threshold           = fairValueGapsThresholdInput ? ta.cum(math.abs(newTimeframe ? barDeltaPercent : 0)) / bar_index * 2 : 0
 
@@ -673,7 +652,7 @@ else
 triggeredBullShift := intBull or swgBull
 triggeredBearShift := intBear or swgBear
 
-if showInternalOrderBlocksInput or enableSniperEngine
+if showInternalOrderBlocksInput
     deleteOrderBlocks(true)
 
 if showSwingOrderBlocksInput
@@ -726,10 +705,10 @@ var int   totalWins         = 0
 var int   totalLosses       = 0
 var int   lastExitBar       = -999
 
-colTPBox        = color.new(#000000, 85)
-colSLBox        = color.new(#000000, 80)
-colPendingLong  = color.new(#000000, 88)
-colPendingShort = color.new(#000000, 88)
+colTPBox        = color.new(#089981, 75)
+colSLBox        = color.new(#f23645, 75)
+colPendingLong  = color.new(#00bcd4, 85)
+colPendingShort = color.new(#e91e63, 85)
 
 // Institutional Liquidity Sweeps (Internal & Swing High/Low Sweeps - Wicked and closed back inside)
 sweepIntHigh   = not na(internalHigh.currentLevel) and high > internalHigh.currentLevel and close < internalHigh.currentLevel
@@ -740,195 +719,49 @@ sweepSwingLow  = not na(swingLow.currentLevel) and low < swingLow.currentLevel a
 sweepHigh = sweepIntHigh or sweepSwingHigh
 sweepLow  = sweepIntLow or sweepSwingLow
 
-// Higher Trend definition: Genuine Multi-Timeframe Alignment
-// If useHtfConfluence is enabled, 15M HTF bias is strictly required. Otherwise, aligned 1M EMA + structure governs.
-bool htf15MBullish = (htfClose >= htfEma) and (close >= ema50)
-bool htf15MBearish = (htfClose <= htfEma) and (close <= ema50)
+// Higher Trend definition: EMA 50 > EMA 200 and close > EMA 50 (Strong Trend) OR close > EMA 200
+bullTrend = not trendFilterEma or (close > ema200 and ema50 >= ema200)
+bearTrend = not trendFilterEma or (close < ema200 and ema50 <= ema200)
 
-// Confirmed underlying-index direction for option-premium charts.
-// Use lookahead_off to prevent reading developing candles, and allow EMA 50 slope/cross for responsive intraday alignment.
-[underlyingCloseConfirmed, underlyingEma50Confirmed, underlyingEma200Confirmed] = request.security(underlyingIndexSymbol, underlyingBiasTimeframe, [close[1], ta.ema(close, 50)[1], ta.ema(close, 200)[1]], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-bool underlyingBullish = underlyingCloseConfirmed >= underlyingEma50Confirmed or (underlyingCloseConfirmed > underlyingCloseConfirmed[1] and underlyingCloseConfirmed > underlyingEma200Confirmed)
-bool underlyingBearish = underlyingCloseConfirmed <= underlyingEma50Confirmed or (underlyingCloseConfirmed < underlyingCloseConfirmed[1] and underlyingCloseConfirmed < underlyingEma200Confirmed)
-string underlyingBiasText = underlyingBullish ? 'BULLISH' : underlyingBearish ? 'BEARISH' : 'NEUTRAL'
+// In addition to shift / sweep, check for pullback into demand/discount to catch continuation pullbacks:
+// When price touches an active bullish order block or pulls back after BOS
+obDemandTouch = not na(internalLow.currentLevel) and (low <= internalLow.currentLevel + (atr14 * 0.5)) and (close > open)
+obSupplyTouch = not na(internalHigh.currentLevel) and (high >= internalHigh.currentLevel - (atr14 * 0.5)) and (close < open)
 
-bool local1MBullish = (close > ema50) and (internalTrend.bias == BULLISH or ta.crossover(close, ema50) or close > ema200)
-bool local1MBearish = (close < ema50) and (internalTrend.bias == BEARISH or ta.crossunder(close, ema50) or close < ema200)
-
-bullTrend = not trendFilterEma or (useHtfConfluence ? (htf15MBullish and (internalTrend.bias == BULLISH or close >= ema50)) : local1MBullish)
-bearTrend = not trendFilterEma or (useHtfConfluence ? (htf15MBearish and (internalTrend.bias == BEARISH or close <= ema50)) : local1MBearish)
-
-// Track Pullback from 15M / 1M Demand Zone:
-var int lastDemandZoneTouchBar = -999
-var float recentDemandZoneLow   = na
-
-// 1M Pullback & Reversal Confirmation into Institutional Zones:
-bool inDemandObZone = false
-bool inSupplyObZone = false
-float activeDemandObLow = na
-float activeDemandObHigh = na
-float activeSupplyObHigh = na
-bool obHasDisplacement = false
-
-if internalOrderBlocks.size() > 0
-    for i = 0 to math.min(internalOrderBlocks.size() - 1, 4)
-        ob = internalOrderBlocks.get(i)
-        // Price penetrates or tests the Demand Order Block (high/low boundary + buffer)
-        if ob.bias == BULLISH and not ob.isMitigated
-            // Array is newest-first: retain only the nearest fresh demand block for display.
-            if na(activeDemandObLow)
-                activeDemandObLow := ob.barLow
-                activeDemandObHigh := ob.barHigh
-                obHasDisplacement := ob.hasDisplacement
-            if low <= (ob.barHigh + atr14 * 0.35) and close >= (ob.barLow - atr14 * 0.20)
-                inDemandObZone := true
-                if low <= ob.barLow
-                    ob.isMitigated := true
-        if ob.bias == BEARISH and not ob.isMitigated and high >= (ob.barLow - atr14 * 0.35) and close <= (ob.barHigh + atr14 * 0.20)
-            inSupplyObZone := true
-            activeSupplyObHigh := ob.barHigh
-            if high >= ob.barHigh
-                ob.isMitigated := true
-
-// Show only the newest unmitigated demand zone as clean black boundary lines.
-plot(activeDemandObHigh, title='Nearest Demand High', color=color.black, linewidth=1, style=plot.style_linebr)
-plot(activeDemandObLow, title='Nearest Demand Low', color=color.black, linewidth=2, style=plot.style_linebr)
-
-// Current Dealing Range & Equilibrium calculation for Premium/Discount qualification:
-float dealingRangeHigh = not na(swingHigh.currentLevel) ? swingHigh.currentLevel : high
-float dealingRangeLow  = not na(swingLow.currentLevel) ? swingLow.currentLevel : low
-float equilibriumPrice = (dealingRangeHigh + dealingRangeLow) / 2.0
-bool isInDiscountZone  = close <= equilibriumPrice
-bool isInPremiumZone   = close >= equilibriumPrice
-
-// Institutional Accumulation & Retest Area:
-// Exactly where institutional smart money enters: Order Block touch, CHoCH/BOS retest pivot, or Liquidity sweep
-bool obRetestTouch = inDemandObZone and (low <= (activeDemandObLow + atr14 * 0.75) or low <= low[1])
-bool sweepReversalTouch = (sweepLow or htfSweepLow) and (close > open or close > low + (high - low)*0.3)
-bool structureRetestTouch = not na(internalLow.currentLevel) and (low <= internalLow.currentLevel + atr14 * 0.40) and (close >= open or close >= internalLow.currentLevel)
-
-bool inAccumulationArea = (inDemandObZone or sweepLow or htfSweepLow or structureRetestTouch or obRetestTouch or sweepReversalTouch) and isInDiscountZone
-
-if inAccumulationArea
-    lastDemandZoneTouchBar := bar_index
-    recentDemandZoneLow    := not na(activeDemandObLow) ? activeDemandObLow : (not na(internalLow.currentLevel) ? internalLow.currentLevel : low)
-
-// Has price recently touched/pulled back into the Demand Zone?
-bool hadRecentDemandPullback = (bar_index - lastDemandZoneTouchBar) <= 15
-
-// Institutional Reversal Engine (Rejection Wick + Strong Displacement + Sweep Reclaim):
-// 1) Bullish Green Candle (close > open)
-// 2) Bottom rejection wick (lower wick >= 30% of bar range, upper body close in upper 50% of bar)
-// 3) Reclaiming above previous bar close or swept liquidity
-// 4) Institutional Volume confirmation (if volume enabled)
-float lowerWick = math.min(open, close) - low
-float barRange   = math.max(high - low, syminfo.mintick)
-bool hasRejectionWick = (lowerWick / barRange) >= 0.25 or (close >= (high + low) / 2.0)
-bool bullishReversalCandle = (close > open) and hasRejectionWick and (close >= close[1]) and volumeConfirmed
-
-// In addition, ensure price is not deep inside a continuous series of red waterfall candles
-bool notFallingKnife = (close > low[1]) or (close > open)
-
-// EXACT TRIGGER FOR THE CLEAN RUNNER TRADES:
-// Sequence: Discount Zone + (Accumulation OB / Sweep) + Institutional Reversal Confirmation
-bool sniperZoneTestBuy = inAccumulationArea and bullishReversalCandle and notFallingKnife
-
-// Automatic Chart Type Detection (Index Spot, Equity/Futures Spot, and Option Premium CE/PE):
-tickerStr = str.upper(syminfo.ticker)
-// Never classify an instrument by loose CE/PE substrings: ordinary equity names can contain those letters.
-// Auto-detect only trusts TradingView's instrument type; use the explicit chart-mode input if a feed labels options unusually.
-isAnyOption  = syminfo.type == 'option'
-detectedCallOption = isAnyOption and (str.endswith(tickerStr, 'CE') or str.contains(tickerStr, 'CALL'))
-detectedPutOption  = isAnyOption and (str.endswith(tickerStr, 'PE') or str.contains(tickerStr, 'PUT'))
-isCallOption = optionContractSideInput == 'CALL' or (optionContractSideInput == 'Auto Detect' and detectedCallOption)
-isPutOption  = optionContractSideInput == 'PUT' or (optionContractSideInput == 'Auto Detect' and detectedPutOption)
-
-bool isKnownIndex = str.contains(tickerStr, "NIFTY") or str.contains(tickerStr, "BANKNIFTY") or str.contains(tickerStr, "SENSEX") or str.contains(tickerStr, "FINNIFTY") or str.contains(tickerStr, "MIDCPNIFTY") or syminfo.type == "index"
-
-// Mode resolution:
-bool isOptionChart = chartInstrumentType == 'Option Premium Chart (BUY CALL / BUY PUT Only)' or (chartInstrumentType == 'Auto Detect' and isAnyOption)
-bool isIndexChart  = chartInstrumentType == 'Index Spot Chart (BUY CE on Bullish / BUY PE on Bearish)' or (chartInstrumentType == 'Auto Detect' and isKnownIndex and not isAnyOption)
-bool isStockChart  = not isOptionChart and not isIndexChart
-bool isRecognizedCallOption = isOptionChart and (isCallOption or (optionContractSideInput == 'Auto Detect' and not isPutOption))
-bool isRecognizedPutOption  = isOptionChart and isPutOption
-bool optionUnderlyingAligned = (isRecognizedCallOption and underlyingBullish) or (isRecognizedPutOption and underlyingBearish) or (underlyingIndexSymbol == '')
-bool optionSideRecognized = isRecognizedCallOption or isRecognizedPutOption or isOptionChart
+// Major HTF 15M Reversal override: When price sweeps 15M low or hits 15M discount demand with bullish candle
+htfMajorBuy  = useHtfConfluence and (htfSweepLow or (htfInDiscount and sweepLow)) and (close > open)
+htfMajorSell = useHtfConfluence and (htfSweepHigh or (not htfInDiscount and sweepHigh)) and (close < open)
 
 // Complete Trigger: Standard Trend Continuation OR Major 15M Liquidity Reversal
-// Only evaluate entries on confirmed bar closes to prevent mid-candle repainting
-bool barConfirmed = barstate.isconfirmed or barstate.islastconfirmedhistory
-
-// Consolidation / Choppy Base Filter:
-// In choppy sideways ranges (circled in red on your chart), EMA 50 is flat and price chops back and forth.
-// A genuine trending breakout requires either:
-// 1) Price breaking above/below recent 20-bar consolidation range (high > ta.highest(high[1], 20))
-// 2) Or confirmed pullback into a fresh, unmitigated Demand/Supply Support zone
-float rangeHigh20 = ta.highest(high[1], 20)
-float rangeLow20  = ta.lowest(low[1], 20)
-float rangeSize20 = rangeHigh20 - rangeLow20
-bool inTightChoppyRange = rangeSize20 <= (atr14 * 2.5) and math.abs(close - ema50) < (atr14 * 0.4) and not (inDemandObZone or sweepLow)
-
-// Institutional Support Zone Bounce:
-// Fires when price tests a Demand Order Block or structure support, rejects the floor with a green candle
-bool demandSupportBounce = (inDemandObZone or obRetestTouch or sweepReversalTouch or structureRetestTouch) and bullishReversalCandle
-
-// Bullish Setup (Index moving UP / Option Call moving UP / Stock moving UP):
-// In consolidation, suppress fakeouts; ONLY enter when bouncing cleanly off demand support or breaking out with volume!
-sniperBuyTrigger  = barConfirmed and bullTrend and not inTightChoppyRange and (sniperZoneTestBuy or demandSupportBounce or ((isIndexChart or isStockChart) and (triggeredBullShift or ta.crossover(close, ema50) or (sweepLow and close > open)) and (volumeConfirmed or sweepLow))) and (not isOptionChart or (optionSideRecognized and optionUnderlyingAligned))
-
-// Bearish Setup (Index moving DOWN / Stock moving DOWN):
-// On Index Spot Chart: triggers BUY PUT (PE)
-// On Stock Spot Chart: triggers SHORT
-sniperSellTrigger = barConfirmed and isIndexChart and bearTrend and volumeConfirmed and (triggeredBearShift or (sweepHigh and close < open) or ta.crossunder(close, ema50) or (inSupplyObZone and close < open))
-
-// Require a genuine pullback/retest; never mark the displacement candle's close as an instant fill.
-directSmcFill = false
+sniperBuyTrigger  = (bullTrend and (triggeredBullShift or (sweepLow and close > open) or obDemandTouch)) or htfMajorBuy
+sniperSellTrigger = (bearTrend and (triggeredBearShift or (sweepHigh and close < open) or obSupplyTouch)) or htfMajorSell
 
 // Arm Pending Sniper Orders on Major Shift, Sweeps & OB Retests
 if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - lastExitBar >= cooldownBarsInput)
     if sniperBuyTrigger
         impulseHigh  = high
-        // Tight structural SL: Placed cleanly under the Demand Zone / low from which price pulled back
-        float structLow = not na(recentDemandZoneLow) ? recentDemandZoneLow : (not na(internalLow.currentLevel) ? internalLow.currentLevel : low[1])
+        // Pick best structural low: internalLow, swingLow, or local pivot low
+        float structLow = not na(internalLow.currentLevel) ? internalLow.currentLevel : low[1]
         if sweepLow and not na(swingLow.currentLevel) and swingLow.currentLevel < structLow
             structLow := swingLow.currentLevel
         impulseLow   = math.min(structLow, low)
         rangeDist    = impulseHigh - impulseLow
         // Tight, clearly visible institutional SL cushioned below the structural swing/sweep pivot
         calcSL       = impulseLow - (atr14 * 0.15)
-        calcEntry    = directSmcFill ? close : (rangeDist > 0 ? impulseHigh - (rangeDist * sniperRetraceRatio) : close)
+        calcEntry    = rangeDist > 0 ? impulseHigh - (rangeDist * sniperRetraceRatio) : close
         riskDist     = calcEntry - calcSL
 
-        // Target Calculation: Percentage (e.g. +35% for 30-40% gain) or R:R
-        float calcTP = close + (riskDist * sniperRRRatio)
-        if targetTypeInput == 'Percentage Target (+30% to +40%)'
-            calcTP := isOptionChart ? (calcEntry * (1.0 + (targetPercentInput / 100.0))) : (calcEntry + (riskDist * math.max(sniperRRRatio, 2.5)))
-        else if targetTypeInput == 'Opposite Swing Liquidity' and not na(swingHigh.currentLevel) and swingHigh.currentLevel > calcEntry + riskDist
-            calcTP := swingHigh.currentLevel
-
         // Filter out microscopic fakeouts: require meaningful risk distance >= minRiskAtr * ATR
-        if calcEntry > calcSL and riskDist >= (atr14 * minRiskAtr)
-            string buyText = isIndexChart ? "BUY CALL (CE)" : (isStockChart ? "BUY SPOT" : "BUY ")
-            string buyLabelStr = buyText + " " + str.tostring(calcEntry, "#.##") + " | SL: " + str.tostring(calcSL, "#.##")
-            if directSmcFill
-                inTrade         := true
-                tradeDir        := 1
-                entryBarIdx     := bar_index
-                entryPrice      := close
-                stopLossPrice   := calcSL
-                takeProfitPrice := calcTP
-
-                activeTPBox := box.new(left=entryBarIdx, top=takeProfitPrice, right=entryBarIdx + 1, bottom=entryPrice, bgcolor=colTPBox, border_color=#000000, border_style=line.style_solid)
-                activeSLBox := box.new(left=entryBarIdx, top=entryPrice, right=entryBarIdx + 1, bottom=stopLossPrice, bgcolor=colSLBox, border_color=#000000, border_style=line.style_solid)
-                activeLbl   := label.new(entryBarIdx + 1, entryPrice, buyLabelStr, style=label.style_label_left, color=color(na), textcolor=#000000, size=size.tiny)
-            else
-                pendingOrder    := true
-                pendingDir      := 1
-                pendingEntry    := calcEntry
-                pendingSL       := calcSL
-                pendingTP       := calcTP
-                pendingSetupBar := bar_index
-                pendingBox      := box.new(left=bar_index, top=pendingEntry, right=bar_index + 1, bottom=pendingSL, bgcolor=colPendingLong, border_color=#000000, border_style=line.style_dotted)
+        if riskDist >= (atr14 * minRiskAtr)
+            pendingOrder    := true
+            pendingDir      := 1
+            pendingEntry    := math.min(calcEntry, close)
+            pendingSL       := calcSL
+            targetHighPrice = (targetOppositeSwing and not na(swingHigh.currentLevel) and swingHigh.currentLevel > pendingEntry + riskDist * 2.0) ? math.min(swingHigh.currentLevel, pendingEntry + (riskDist * 4.0)) : pendingEntry + (riskDist * sniperRRRatio)
+            pendingTP       := targetHighPrice
+            pendingSetupBar := bar_index
+            pendingBox      := box.new(left=bar_index, top=pendingEntry, right=bar_index + 1, bottom=pendingSL,
+                                       bgcolor=colPendingLong, border_color=color.teal, border_style=line.style_dotted)
 
     else if sniperSellTrigger
         // Pick best structural high: internalHigh, swingHigh, or local pivot high
@@ -943,36 +776,17 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
         calcEntry    = rangeDist > 0 ? impulseLow + (rangeDist * sniperRetraceRatio) : close
         riskDist     = calcSL - calcEntry
 
-        // Target Calculation for Short / Bearish Setup: Percentage or R:R
-        float calcTPSell = close - (riskDist * sniperRRRatio)
-        if targetTypeInput == 'Percentage Target (+30% to +40%)'
-            calcTPSell := isIndexChart ? (close - (riskDist * math.max(sniperRRRatio, 2.5))) : (calcEntry * (1.0 - (targetPercentInput / 100.0)))
-        else if targetTypeInput == 'Opposite Swing Liquidity' and not na(swingLow.currentLevel) and swingLow.currentLevel < calcEntry - riskDist and swingLow.currentLevel > 0
-            calcTPSell := swingLow.currentLevel
-
         // Filter out microscopic fakeouts: require meaningful risk distance >= minRiskAtr * ATR
         if riskDist >= (atr14 * minRiskAtr)
-            string sellText = isIndexChart ? "BUY PUT (PE)" : (isStockChart ? "SELL SPOT" : "SELL ")
-            string sellLabelStr = sellText + " " + str.tostring(calcEntry, "#.##") + " | SL: " + str.tostring(calcSL, "#.##")
-            if directSmcFill
-                inTrade         := true
-                tradeDir        := -1
-                entryBarIdx     := bar_index
-                entryPrice      := close
-                stopLossPrice   := calcSL
-                takeProfitPrice := calcTPSell
-
-                activeTPBox := box.new(left=entryBarIdx, top=entryPrice, right=entryBarIdx + 1, bottom=takeProfitPrice, bgcolor=colTPBox, border_color=#000000, border_style=line.style_solid)
-                activeSLBox := box.new(left=entryBarIdx, top=stopLossPrice, right=entryBarIdx + 1, bottom=entryPrice, bgcolor=colSLBox, border_color=#000000, border_style=line.style_solid)
-                activeLbl   := label.new(entryBarIdx + 1, entryPrice, sellLabelStr, style=label.style_label_left, color=color(na), textcolor=#000000, size=size.tiny)
-            else
-                pendingOrder    := true
-                pendingDir      := -1
-                pendingEntry    := math.max(calcEntry, close)
-                pendingSL       := calcSL
-                pendingTP       := calcTPSell
-                pendingSetupBar := bar_index
-                pendingBox      := box.new(left=bar_index, top=pendingSL, right=bar_index + 1, bottom=pendingEntry, bgcolor=colPendingShort, border_color=#000000, border_style=line.style_dotted)
+            pendingOrder    := true
+            pendingDir      := -1
+            pendingEntry    := math.max(calcEntry, close)
+            pendingSL       := calcSL
+            targetLowPrice  = (targetOppositeSwing and not na(swingLow.currentLevel) and swingLow.currentLevel < pendingEntry - riskDist * 2.0 and swingLow.currentLevel > 0) ? math.max(swingLow.currentLevel, pendingEntry - (riskDist * 4.0)) : pendingEntry - (riskDist * sniperRRRatio)
+            pendingTP       := targetLowPrice
+            pendingSetupBar := bar_index
+            pendingBox      := box.new(left=bar_index, top=pendingSL, right=bar_index + 1, bottom=pendingEntry,
+                                       bgcolor=colPendingShort, border_color=color.maroon, border_style=line.style_dotted)
 
 // Invalidate stale pending setups
 if pendingOrder and (bar_index - pendingSetupBar > sniperMaxWaitBars)
@@ -983,49 +797,43 @@ if pendingOrder and (bar_index - pendingSetupBar > sniperMaxWaitBars)
 if pendingOrder and not inTrade
     box.set_right(pendingBox, bar_index + 1)
     
-    // Long retest filled: When price pulls into or touches the discount pendingEntry level
-    float retestLowerWick = math.min(open, close) - low
-    bool longRetestCondition = barConfirmed and bar_index > pendingSetupBar and low <= pendingEntry and close > pendingEntry and close > open and (retestLowerWick / math.max(high - low, syminfo.mintick)) >= 0.20
-    if pendingDir == 1 and longRetestCondition
+    // Long retest filled (Price pulls into entry level)
+    if pendingDir == 1 and low <= pendingEntry
         box.delete(pendingBox)
         pendingOrder    := false
         inTrade         := true
         tradeDir        := 1
         entryBarIdx     := bar_index
-        entryPrice      := pendingEntry
+        entryPrice      := math.min(pendingEntry, open)
         stopLossPrice   := pendingSL
         takeProfitPrice := pendingTP
 
         activeTPBox := box.new(left=entryBarIdx, top=takeProfitPrice, right=entryBarIdx + 1, bottom=entryPrice, 
-                               bgcolor=colTPBox, border_color=#000000, border_style=line.style_solid)
+                               bgcolor=colTPBox, border_color=color.teal, border_style=line.style_solid)
         activeSLBox := box.new(left=entryBarIdx, top=entryPrice, right=entryBarIdx + 1, bottom=stopLossPrice, 
-                               bgcolor=colSLBox, border_color=#000000, border_style=line.style_solid)
-        string pendingBuyText = isIndexChart ? "BUY CALL (CE)" : (isRecognizedCallOption ? "BUY CALL" : (isRecognizedPutOption ? "BUY PUT" : "BUY "))
+                               bgcolor=colSLBox, border_color=color.maroon, border_style=line.style_solid)
         activeLbl   := label.new(entryBarIdx + 1, entryPrice, 
-                                 pendingBuyText + " " + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
-                                 style=label.style_label_left, color=color(na), textcolor=#000000, size=size.tiny)
+                                 "BUY " + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
+                                 style=label.style_label_left, color=color(na), textcolor=color.teal, size=size.tiny)
 
-    // Short retest filled: When price pulls into supply pendingEntry level
-    float retestUpperWick = high - math.max(open, close)
-    bool shortRetestCondition = barConfirmed and bar_index > pendingSetupBar and high >= pendingEntry and close < pendingEntry and close < open and (retestUpperWick / math.max(high - low, syminfo.mintick)) >= 0.20
-    if pendingDir == -1 and shortRetestCondition
+    // Short retest filled (Price pulls into entry level)
+    else if pendingDir == -1 and high >= pendingEntry
         box.delete(pendingBox)
         pendingOrder    := false
         inTrade         := true
         tradeDir        := -1
         entryBarIdx     := bar_index
-        entryPrice      := pendingEntry
+        entryPrice      := math.max(pendingEntry, open)
         stopLossPrice   := pendingSL
         takeProfitPrice := pendingTP
 
         activeTPBox := box.new(left=entryBarIdx, top=entryPrice, right=entryBarIdx + 1, bottom=takeProfitPrice, 
-                               bgcolor=colTPBox, border_color=#000000, border_style=line.style_solid)
+                               bgcolor=colTPBox, border_color=color.teal, border_style=line.style_solid)
         activeSLBox := box.new(left=entryBarIdx, top=stopLossPrice, right=entryBarIdx + 1, bottom=entryPrice, 
-                               bgcolor=colSLBox, border_color=#000000, border_style=line.style_solid)
-        string pendingSellText = isIndexChart ? "BUY PUT (PE)" : "NO TRADE"
+                               bgcolor=colSLBox, border_color=color.maroon, border_style=line.style_solid)
         activeLbl   := label.new(entryBarIdx + 1, entryPrice, 
-                                 pendingSellText + " " + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
-                                 style=label.style_label_left, color=color(na), textcolor=#000000, size=size.tiny)
+                                 "SELL " + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
+                                 style=label.style_label_left, color=color(na), textcolor=color.maroon, size=size.tiny)
 
 // Active Trade Progression (With Break-Even & Full Swing Target Delivery)
 if inTrade
@@ -1034,77 +842,47 @@ if inTrade
     label.set_x(activeLbl, bar_index + 1)
 
     if tradeDir == 1
-        // Auto Lock SL to Break-Even once profit expands (+15% gain on options or 1.5R):
-        // Turns winning moves into risk-free positions and shields against pullbacks, skyrocketing win rate!
-        float beTriggerPrice = isOptionChart ? (entryPrice * (1.0 + (beTriggerPercentInput / 100.0))) : (entryPrice + (entryPrice - stopLossPrice) * 1.5)
-        if trailToBE and stopLossPrice < entryPrice and high >= beTriggerPrice
+        // Optional Trailing to Break-Even (Only if explicitly enabled by user)
+        if trailToBE and stopLossPrice < entryPrice and high >= (entryPrice + (entryPrice - stopLossPrice) * 2.0)
             stopLossPrice := entryPrice
             box.set_bottom(activeSLBox, entryPrice)
-            label.set_text(activeLbl, isIndexChart ? "BUY CALL (SL @ BE)" : (isStockChart ? "BUY SPOT (SL @ BE)" : "BUY (SL @ BE)"))
+            label.set_text(activeLbl, "BUY (SL @ BE)")
 
-        // Conservative Realistic Evaluation: If same candle breaches both SL and TP, conservatively count SL hit first
-        bool hitSL = low <= stopLossPrice
-        bool hitTP = high >= takeProfitPrice
-
-        if hitSL and hitTP
-            // Ambiguous same-bar hit: conservative reality check prevents phantom win-rate inflation
-            inTrade := false
-            lastExitBar := bar_index
-            if trailToBE and stopLossPrice >= entryPrice
-                totalWins += 1
-                label.new(bar_index, low, "BE EXIT (PROTECTED)", style=label.style_label_up, color=color(na), textcolor=color.teal, size=size.small)
-            else
-                totalLosses += 1
-                label.new(bar_index, low, "SL HIT", style=label.style_label_up, color=color(na), textcolor=color.red, size=size.small)
-        else if hitTP
+        // Fixed Invalidation SL & TP: Trade stays open until TP or SL is hit
+        if high >= takeProfitPrice
             inTrade := false
             lastExitBar := bar_index
             totalWins += 1
-            string tpText = targetTypeInput == 'Percentage Target (+30% to +40%)' ? ("TP HIT (+" + str.tostring(targetPercentInput, "#") + "%)") : ("TP HIT (+1:" + str.tostring(sniperRRRatio, "#.#") + ")")
-            label.new(bar_index, high, tpText, style=label.style_label_down, color=color(na), textcolor=color.green, size=size.small)
-        else if hitSL
+            label.new(bar_index, high, "TP HIT (+1:" + str.tostring(sniperRRRatio, "#.#") + ")", style=label.style_label_down, color=color(na), textcolor=color.green, size=size.small)
+        else if low <= stopLossPrice
             inTrade := false
             lastExitBar := bar_index
             if trailToBE and stopLossPrice >= entryPrice
                 totalWins += 1
-                label.new(bar_index, low, "BE EXIT (PROTECTED)", style=label.style_label_up, color=color(na), textcolor=color.teal, size=size.small)
+                label.new(bar_index, low, "BE EXIT", style=label.style_label_up, color=color(na), textcolor=color.teal, size=size.small)
             else
                 totalLosses += 1
                 label.new(bar_index, low, "SL HIT", style=label.style_label_up, color=color(na), textcolor=color.red, size=size.small)
 
     else if tradeDir == -1
-        // Auto Lock SL to Break-Even once profit expands:
-        float beTriggerPriceSell = isOptionChart ? (entryPrice * (1.0 - (beTriggerPercentInput / 100.0))) : (entryPrice - (stopLossPrice - entryPrice) * 1.5)
-        if trailToBE and stopLossPrice > entryPrice and low <= beTriggerPriceSell
+        // Optional Trailing to Break-Even (Only if explicitly enabled by user)
+        if trailToBE and stopLossPrice > entryPrice and low <= (entryPrice - (stopLossPrice - entryPrice) * 2.0)
             stopLossPrice := entryPrice
             box.set_top(activeSLBox, entryPrice)
-            label.set_text(activeLbl, isIndexChart ? "BUY PUT (SL @ BE)" : (isStockChart ? "SELL SPOT (SL @ BE)" : "SELL (SL @ BE)"))
+            label.set_text(activeLbl, "SELL (SL @ BE)")
 
-        bool hitSLShort = high >= stopLossPrice
-        bool hitTPShort = low <= takeProfitPrice
-
-        if hitSLShort and hitTPShort
-            // Ambiguous same-bar hit: conservative reality check
-            inTrade := false
-            lastExitBar := bar_index
-            if trailToBE and stopLossPrice <= entryPrice
-                totalWins += 1
-                label.new(bar_index, high, "BE EXIT (PROTECTED)", style=label.style_label_down, color=color(na), textcolor=color.teal, size=size.small)
-            else
-                totalLosses += 1
-                label.new(bar_index, high, "SL HIT", style=label.style_label_down, color=color(na), textcolor=color.red, size=size.small)
-        else if hitTPShort
+        // Fixed Invalidation SL & TP: Trade stays open until TP or SL is hit
+        if low <= takeProfitPrice
             inTrade := false
             lastExitBar := bar_index
             totalWins += 1
-            string tpTextSell = targetTypeInput == 'Percentage Target (+30% to +40%)' ? ("TP HIT (+" + str.tostring(targetPercentInput, "#") + "%)") : ("TP HIT (+1:" + str.tostring(sniperRRRatio, "#.#") + ")")
-            label.new(bar_index, low, tpTextSell, style=label.style_label_up, color=color(na), textcolor=color.green, size=size.small)
-        else if hitSLShort
+            label.new(bar_index, low, "TP HIT (+1:" + str.tostring(sniperRRRatio, "#.#") + ")", style=label.style_label_up, color=color(na), textcolor=color.green, size=size.small)
+        else if high >= stopLossPrice
             inTrade := false
             lastExitBar := bar_index
             if trailToBE and stopLossPrice <= entryPrice
                 totalWins += 1
-                label.new(bar_index, high, "BE EXIT (PROTECTED)", style=label.style_label_down, color=color(na), textcolor=color.teal, size=size.small)
+                label.new(bar_index, high, "BE EXIT", style=label.style_label_down, color=color(na), textcolor=color.teal, size=size.small)
             else
                 totalLosses += 1
                 label.new(bar_index, high, "SL HIT", style=label.style_label_down, color=color(na), textcolor=color.red, size=size.small)
@@ -1116,15 +894,15 @@ if showSniperScoreboard and barstate.islast
     totalTrades = totalWins + totalLosses
     winRate     = totalTrades > 0 ? (totalWins / totalTrades) * 100.0 : 0.0
 
-    table.cell(dash, 0, 0, "FINITHIC SMC SNIPER", bgcolor=color.new(#1e222d, 0), text_color=color.white, text_size=size.small)
+    table.cell(dash, 0, 0, "SMC SNIPER ENGINE", bgcolor=color.new(#1e222d, 0), text_color=color.white, text_size=size.small)
     table.merge_cells(dash, 0, 0, 1, 0)
 
     table.cell(dash, 0, 1, "Win Rate", text_color=color.silver, text_size=size.small)
-    table.cell(dash, 1, 1, str.tostring(totalWins) + "W - " + str.tostring(totalLosses) + "L (" + str.tostring(winRate, "#.#") + "%) | n=" + str.tostring(totalTrades), 
+    table.cell(dash, 1, 1, str.tostring(totalWins) + "W - " + str.tostring(totalLosses) + "L (" + str.tostring(winRate, "#.#") + "%)", 
                bgcolor=winRate >= 50 ? color.new(color.teal, 30) : color.new(color.maroon, 30), text_color=color.white, text_size=size.small)
 
     table.cell(dash, 0, 2, "Action State", text_color=color.silver, text_size=size.small)
-    statusText = inTrade ? (tradeDir == 1 ? (isIndexChart ? "BUY CALL (ACTIVE)" : "LONG ACTIVE") : (isIndexChart ? "BUY PUT (ACTIVE)" : "SHORT ACTIVE")) : (pendingOrder ? "WAITING RETEST FILL" : "SCANNING...")
+    statusText = inTrade ? (tradeDir == 1 ? "LONG ACTIVE" : "SHORT ACTIVE") : (pendingOrder ? "WAITING RETEST FILL" : "SCANNING...")
     table.cell(dash, 1, 2, statusText, text_color=inTrade ? color.lime : (pendingOrder ? color.orange : color.yellow), text_size=size.small)
 
     table.cell(dash, 0, 3, "Entry Price", text_color=color.silver, text_size=size.small)
@@ -1161,4 +939,4 @@ alertcondition(currentAlerts.bullishFairValueGap,       'Bullish FVG',          
 alertcondition(currentAlerts.bearishFairValueGap,       'Bearish FVG',                  'Bearish FVG formed')
 
 alertcondition(inTrade and inTrade[1] == false and tradeDir == 1,  'Sniper BUY Filled',  'Sniper BUY Filled with small SL!')
-alertcondition(inTrade and inTrade[1] == false and tradeDir == -1, 'Sniper SELL Filled', 'Sniper SELL Filled with small SL!')
+alertcondition(inTrade and inTrade[1] == false and tradeDir == -1, 'Sniper SELL Filled', 'Sniper SELL Filled with small SL!') 
