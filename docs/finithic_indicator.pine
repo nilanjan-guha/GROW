@@ -766,6 +766,7 @@ var float recentDemandZoneLow   = na
 bool inDemandObZone = false
 bool inSupplyObZone = false
 float activeDemandObLow = na
+float activeDemandObHigh = na
 float activeSupplyObHigh = na
 bool obHasDisplacement = false
 
@@ -773,17 +774,25 @@ if internalOrderBlocks.size() > 0
     for i = 0 to math.min(internalOrderBlocks.size() - 1, 4)
         ob = internalOrderBlocks.get(i)
         // Price penetrates or tests the Demand Order Block (high/low boundary + buffer)
-        if ob.bias == BULLISH and not ob.isMitigated and low <= (ob.barHigh + atr14 * 0.35) and close >= (ob.barLow - atr14 * 0.20)
-            inDemandObZone := true
-            activeDemandObLow := ob.barLow
-            obHasDisplacement := ob.hasDisplacement
-            if low <= ob.barLow
-                ob.isMitigated := true
+        if ob.bias == BULLISH and not ob.isMitigated
+            // Array is newest-first: retain only the nearest fresh demand block for display.
+            if na(activeDemandObLow)
+                activeDemandObLow := ob.barLow
+                activeDemandObHigh := ob.barHigh
+                obHasDisplacement := ob.hasDisplacement
+            if low <= (ob.barHigh + atr14 * 0.35) and close >= (ob.barLow - atr14 * 0.20)
+                inDemandObZone := true
+                if low <= ob.barLow
+                    ob.isMitigated := true
         if ob.bias == BEARISH and not ob.isMitigated and high >= (ob.barLow - atr14 * 0.35) and close <= (ob.barHigh + atr14 * 0.20)
             inSupplyObZone := true
             activeSupplyObHigh := ob.barHigh
             if high >= ob.barHigh
                 ob.isMitigated := true
+
+// Show only the newest unmitigated demand zone as clean black boundary lines.
+plot(activeDemandObHigh, title='Nearest Demand High', color=color.black, linewidth=1, style=plot.style_linebr)
+plot(activeDemandObLow, title='Nearest Demand Low', color=color.black, linewidth=2, style=plot.style_linebr)
 
 // Current Dealing Range & Equilibrium calculation for Premium/Discount qualification:
 float dealingRangeHigh = not na(swingHigh.currentLevel) ? swingHigh.currentLevel : high
