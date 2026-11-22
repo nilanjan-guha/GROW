@@ -1,5 +1,5 @@
 //@version=6
-indicator("SMC Sniper Scalper Engine", "SMC Sniper Scalper", overlay = true, max_labels_count = 500, max_lines_count = 500, max_boxes_count = 500)
+indicator("Finithic Indicator", "Finithic Indicator", overlay = true, max_labels_count = 500, max_lines_count = 500, max_boxes_count = 500)
 
 //---------------------------------------------------------------------------------------------------------------------}
 // CONSTANTS & SETTINGS
@@ -82,12 +82,12 @@ internalBearishOrderBlockColor  = input.color(  color.new(#000000, 95), 'Interna
 swingBullishOrderBlockColor     = input.color(  color.new(#000000, 95), 'Bullish OB',          group = BLOCKS_GROUP)
 swingBearishOrderBlockColor     = input.color(  color.new(#000000, 95), 'Bearish OB',          group = BLOCKS_GROUP)
 
-showEqualHighsLowsInput         = input.bool(   false,      'Equal High/Low (Liquidity Pools)', group = EQUAL_GROUP)
+showEqualHighsLowsInput         = input.bool(   true,       'Equal High/Low (Liquidity Pools EQH/EQL)', group = EQUAL_GROUP)
 equalHighsLowsLengthInput       = input.int(    3,          'Bars Confirmation',      group = EQUAL_GROUP, minval = 1)
 equalHighsLowsThresholdInput    = input.float(  0.1,        'Threshold (ATR fraction)',group = EQUAL_GROUP, minval = 0, maxval = 0.5, step = 0.1)
 equalHighsLowsSizeInput         = input.string( TINY,       'Label Size',             group = EQUAL_GROUP, options = [TINY,SMALL,NORMAL])
 
-showFairValueGapsInput          = input.bool(   false,      'Fair Value Gaps',        group = GAPS_GROUP)
+showFairValueGapsInput          = input.bool(   true,       'Fair Value Gaps (FVG Outline)', group = GAPS_GROUP)
 fairValueGapsThresholdInput     = input.bool(   true,       'Auto Threshold',         group = GAPS_GROUP)
 fairValueGapsTimeframeInput     = input.timeframe('15',     'FVG Higher Timeframe',   group = GAPS_GROUP, tooltip = 'Projects 15-Minute Institutional Fair Value Gaps directly onto your 1-minute execution chart.')
 fairValueGapsBullColorInput     = input.color(  color.new(#000000, 95), 'Bullish FVG', group = GAPS_GROUP)
