@@ -1032,6 +1032,27 @@ if ictAPlusBuy
 if ictAPlusSell
     ictBearStage := 0
     ictBearFvgActive := false
+// Consume one-shot zones after a qualifying retest so the same zone cannot fire repeatedly.
+if ictBullFvgRetest
+    ictBullFvgActive := false
+if ictBearFvgRetest
+    ictBearFvgActive := false
+if ictBullObRetest
+    ictBullObActive := false
+if ictBearObRetest
+    ictBearObActive := false
+if ictBullBreakerRetest
+    ictBullBreakerActive := false
+if ictBearBreakerRetest
+    ictBearBreakerActive := false
+if ictBullMitigationRetest
+    ictBullMitigationActive := false
+if ictBearMitigationRetest
+    ictBearMitigationActive := false
+if ictBullBosRetest
+    ictBullBosLevel := na
+if ictBearBosRetest
+    ictBearBosLevel := na
 
 // OTE from the sweep extreme to displacement extreme (0.62-0.79; 0.705 reference).
 float ictBullRange = ictBullImpulseHigh - ictBullSweepExtreme
