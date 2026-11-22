@@ -773,10 +773,10 @@ var int   totalWins         = 0
 var int   totalLosses       = 0
 var int   lastExitBar       = -999
 
-colTPBox        = color.new(#089981, 88)
-colSLBox        = color.new(#f23645, 88)
-colPendingLong  = color.new(#000000, 92)
-colPendingShort = color.new(#000000, 92)
+colTPBox        = color.new(#089981, 75)
+colSLBox        = color.new(#f23645, 75)
+colPendingLong  = color.new(#00bcd4, 85)
+colPendingShort = color.new(#e91e63, 85)
 
 // Institutional Liquidity Sweeps (Internal & Swing High/Low Sweeps - Wicked and closed back inside)
 sweepIntHigh   = not na(internalHigh.currentLevel) and high > internalHigh.currentLevel and close < internalHigh.currentLevel
