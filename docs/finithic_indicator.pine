@@ -728,7 +728,7 @@ sweepLow  = sweepIntLow or sweepSwingLow
 
 // Higher Trend definition: In SMC, a bullish master structure is defined by 15M trend + 1M structural alignment
 bool htfBullishTrend = htfClose >= htfEma or (close > ema50) or (internalTrend.bias == BULLISH) or (ta.crossover(close, ema50))
-bool htfBearishTrend = (htfClose < htfEma) and (close < ema50)
+bool htfBearishTrend = htfClose < htfEma or (close < ema50) or (internalTrend.bias == BEARISH) or (ta.crossunder(close, ema50))
 
 bullTrend = not trendFilterEma or htfBullishTrend
 bearTrend = not trendFilterEma or htfBearishTrend
@@ -793,11 +793,13 @@ bool isOptionChart = chartInstrumentType == 'Option Premium Chart (BUY CALL / BU
 bool isIndexChart  = chartInstrumentType == 'Index Spot Chart (BUY CE on Bullish / BUY PE on Bearish)' or (chartInstrumentType == 'Auto Detect' and not isAnyOption)
 
 // Complete Trigger: Standard Trend Continuation OR Major 15M Liquidity Reversal
-// Bullish Setup (Index moving UP / Option Call moving UP)
-sniperBuyTrigger  = bullTrend and (sniperZoneTestBuy or (isIndexChart and (triggeredBullShift or ta.crossover(close, ema50))))
+// Bullish Setup (Index moving UP / Option Call moving UP):
+// On Option Chart: Price tests Demand OB / Sweep and forms Green Reversal Candle
+// On Index Spot Chart: Index breaks bullish (BOS/CHoCH, EMA cross, or Demand bounce) -> triggers BUY CALL (CE)
+sniperBuyTrigger  = bullTrend and (sniperZoneTestBuy or (isIndexChart and (triggeredBullShift or ta.crossover(close, ema50) or (sweepLow and close > open))))
 
-// Bearish Setup (Index moving DOWN)
-// Triggers "BUY PUT (PE)" when applied on an Index spot chart
+// Bearish Setup (Index moving DOWN):
+// On Index Spot Chart: Index breaks bearish (BOS/CHoCH, EMA crossunder, Supply OB rejection, or Sweep High rejection) -> triggers BUY PUT (PE)
 sniperSellTrigger = isIndexChart and bearTrend and (triggeredBearShift or (sweepHigh and close < open) or ta.crossunder(close, ema50) or (inSupplyObZone and close < open))
 
 // Direct immediate execution at the zone bottom so the trade is filled right where circled
@@ -913,8 +915,9 @@ if pendingOrder and not inTrade
                                bgcolor=colTPBox, border_color=color.teal, border_style=line.style_solid)
         activeSLBox := box.new(left=entryBarIdx, top=entryPrice, right=entryBarIdx + 1, bottom=stopLossPrice, 
                                bgcolor=colSLBox, border_color=color.maroon, border_style=line.style_solid)
+        string pendingBuyText = isIndexChart ? "BUY CALL (CE)" : "BUY "
         activeLbl   := label.new(entryBarIdx + 1, entryPrice, 
-                                 "BUY " + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
+                                 pendingBuyText + " " + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
                                  style=label.style_label_left, color=color(na), textcolor=color.teal, size=size.tiny)
 
     // Short retest filled (Price pulls into entry level)
@@ -932,8 +935,9 @@ if pendingOrder and not inTrade
                                bgcolor=colTPBox, border_color=color.teal, border_style=line.style_solid)
         activeSLBox := box.new(left=entryBarIdx, top=stopLossPrice, right=entryBarIdx + 1, bottom=entryPrice, 
                                bgcolor=colSLBox, border_color=color.maroon, border_style=line.style_solid)
+        string pendingSellText = isIndexChart ? "BUY PUT (PE)" : "SELL "
         activeLbl   := label.new(entryBarIdx + 1, entryPrice, 
-                                 "SELL " + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
+                                 pendingSellText + " " + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
                                  style=label.style_label_left, color=color(na), textcolor=color.maroon, size=size.tiny)
 
 // Active Trade Progression (With Break-Even & Full Swing Target Delivery)
