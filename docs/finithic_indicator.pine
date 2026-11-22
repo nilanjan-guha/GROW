@@ -147,6 +147,11 @@ cooldownBarsInput   = input.int(8, 'Trade Cooldown Bars (Prevents Chop Spam)', m
  
 // Complete ICT/SMC engine controls
 ICT_GROUP                       = 'ICT / SMC Institutional Engine'
+ORDERFLOW_GROUP                 = 'Order Flow / CVD & Absorption'
+useCvdFilter                    = input.bool(true, 'Enable CVD & Absorption Footprint Filter', group=ORDERFLOW_GROUP, tooltip='Validates that buyers are aggressively absorbing sellers on sweeps via positive Volume Delta.')
+cvdLength                       = input.int(14, 'CVD Smoothing Period', minval=3, maxval=50, group=ORDERFLOW_GROUP)
+showAbsorptionSignals           = input.bool(true, 'Show Institutional Absorption Wick Signals', group=ORDERFLOW_GROUP)
+
 strictAPlusOnly                 = input.bool(true, 'Strict A+ Checklist Only (Sweep + Displacement + MSS + FVG Retest)', group=ICT_GROUP, tooltip='When enabled, only takes the pristine institutional 7-point A+ setups. Filters out lower probability secondary setups.')
 useSequencedAPlus                = input.bool(true, 'Require Sweep → Displacement → MSS → FVG → Retest', group=ICT_GROUP)
 allowFvgMitigationSetup          = input.bool(false, 'Enable Standalone FVG 50% Mitigation', group=ICT_GROUP)
@@ -847,6 +852,34 @@ bool smcBearishSetup = (sweepHigh and bearishReversal) or (triggeredBearShift an
 sniperSellTrigger = (isIndexChart or isStockChart) and smcBearishSetup and bearTrend and volumeConfirmed and (close <= ema50)
 
 //---------------------------------------------------------------------------------------------------------------------}
+// ORDER FLOW / CVD (CUMULATIVE VOLUME DELTA) & INSTITUTIONAL ABSORPTION
+// Intra-bar buy/sell volume allocation using true price action kinematics & session tracking
+//---------------------------------------------------------------------------------------------------------------------{
+var float cvdSession = 0.0
+bool isNewCvdSession = timeframe.change("D")
+if isNewCvdSession
+    cvdSession := 0.0
+
+// Relative buy/sell pressure allocation based on candle body & wick dynamics:
+float candleRange = math.max(high - low, syminfo.mintick)
+float buyVolumeWeight = ((close - low) + (close - open)) / (2.0 * candleRange)
+buyVolumeWeight := math.max(0.0, math.min(1.0, buyVolumeWeight))
+float estBuyVol  = volume * buyVolumeWeight
+float estSellVol = volume * (1.0 - buyVolumeWeight)
+float barDelta   = estBuyVol - estSellVol
+cvdSession      := cvdSession + barDelta
+float cvdEma     = ta.ema(cvdSession, cvdLength)
+
+// Institutional Absorption Footprints:
+// Bullish Absorption: Price makes a new low or sweeps low, but heavy volume is absorbed with a lower rejection wick and delta flips positive
+bool cvdBullishAbsorption = (low <= ta.lowest(low[1], 5) or sweepLow) and hasRejectionWick and (barDelta > 0 or cvdSession > cvdEma) and close > open
+// Bearish Absorption: Price tests high, but heavy selling absorbs buyers, printing an upper wick with delta flipping negative
+bool cvdBearishAbsorption = (high >= ta.highest(high[1], 5) or sweepHigh) and hasUpperRejectionWick and (barDelta < 0 or cvdSession < cvdEma) and close < open
+
+bool cvdLongConfirmed  = not useCvdFilter or (cvdSession >= cvdEma or barDelta > 0 or cvdBullishAbsorption)
+bool cvdShortConfirmed = not useCvdFilter or (cvdSession <= cvdEma or barDelta < 0 or cvdBearishAbsorption)
+
+//---------------------------------------------------------------------------------------------------------------------}
 // COMPLETE ICT / SMC EVENT ENGINE
 // Confirmed-bar event sequencing; independent setup modules feed one execution layer.
 //---------------------------------------------------------------------------------------------------------------------{
@@ -1237,8 +1270,8 @@ bool ictUnderlyingBullOnly = not isOptionChart or (isRecognizedCallOption and un
 bool ictUnderlyingBearOnly = not isOptionChart or (isRecognizedPutOption and underlyingBearish)
 bool ictLongInstrumentAllowed = isIndexChart or isStockChart or (isOptionChart and isRecognizedCallOption)
 bool ictShortInstrumentAllowed = isIndexChart or isStockChart or (isOptionChart and isRecognizedPutOption)
-bool ictLongConfirmed = barstate.isconfirmed and ictLongSetup and ictLongContext and bullTrend and volumeConfirmed and ictUnderlyingBullOnly and ictLongInstrumentAllowed
-bool ictShortConfirmed = barstate.isconfirmed and ictShortSetup and ictShortContext and bearTrend and volumeConfirmed and ictUnderlyingBearOnly and ictShortInstrumentAllowed
+bool ictLongConfirmed = barstate.isconfirmed and ictLongSetup and ictLongContext and bullTrend and volumeConfirmed and cvdLongConfirmed and ictUnderlyingBullOnly and ictLongInstrumentAllowed
+bool ictShortConfirmed = barstate.isconfirmed and ictShortSetup and ictShortContext and bearTrend and volumeConfirmed and cvdShortConfirmed and ictUnderlyingBearOnly and ictShortInstrumentAllowed
 
 // Use the actual sweep extreme for reversal stops; otherwise use the relevant OB / structure boundary.
 float ictPlannedLongEntry = ictBullFvgRetest or ictAPlusBuy ? ictBullFvgMid : ictBullObRetest ? math.avg(ictBullObTop, ictBullObBottom) : ictBullBreakerRetest ? math.avg(ictBullBreakerTop, ictBullBreakerBottom) : ictBullMitigationRetest ? math.avg(ictBullMitigationTop, ictBullMitigationBottom) : ictBullBosRetest ? ictBullBosLevel : close
@@ -1272,6 +1305,10 @@ if showIctAnnotations and barstate.isconfirmed
         label.new(bar_index, low, 'A+ BUY', style=label.style_label_up, color=color.white, textcolor=color.black, size=size.small)
     if ictAPlusSell
         label.new(bar_index, high, 'A+ SELL', style=label.style_label_down, color=color.white, textcolor=color.black, size=size.small)
+    if showAbsorptionSignals and cvdBullishAbsorption and not ictAPlusBuy
+        label.new(bar_index, low, 'ABSORPTION WICK', style=label.style_none, textcolor=color.teal, size=size.tiny)
+    if showAbsorptionSignals and cvdBearishAbsorption and not ictAPlusSell
+        label.new(bar_index, high, 'ABSORPTION WICK', style=label.style_none, textcolor=color.maroon, size=size.tiny)
 //---------------------------------------------------------------------------------------------------------------------}
 
 
