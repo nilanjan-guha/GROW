@@ -460,13 +460,12 @@ drawOrderBlocks(bool internal = false) =>
         array<box> b_oxes = internal ? internalOrderBlocksBoxes : swingOrderBlocksBoxes        
 
         for [index, eachOrderBlock] in parsedOrdeBlocks
-            orderBlockColor = styleInput == MONOCHROME ? (eachOrderBlock.bias == BEARISH ? color.new(MONO_BEARISH,80) : color.new(MONO_BULLISH,80)) : internal ? (eachOrderBlock.bias == BEARISH ? internalBearishOrderBlockColor : internalBullishOrderBlockColor) : (eachOrderBlock.bias == BEARISH ? swingBearishOrderBlockColor : swingBullishOrderBlockColor)
-
             box b_ox = b_oxes.get(index)
             b_ox.set_top_left_point(chart.point.new(eachOrderBlock.barTime, na, eachOrderBlock.barHigh))
             b_ox.set_bottom_right_point(chart.point.new(last_bar_time, na, eachOrderBlock.barLow))        
-            b_ox.set_border_color(internal ? na : orderBlockColor)
-            b_ox.set_bgcolor(orderBlockColor)
+            b_ox.set_border_color(color.new(#5d606b, 30))
+            b_ox.set_bgcolor(color(na))
+            b_ox.set_border_style(line.style_dotted)
 
 displayStructure(bool internal = false) =>
     var bullishBar = true
@@ -539,7 +538,7 @@ displayStructure(bool internal = false) =>
     [bullShift, bearShift]
 
 fairValueGapBox(leftTime, rightTime, topPrice, bottomPrice, boxColor) => 
-    box.new(chart.point.new(leftTime, na, topPrice), chart.point.new(rightTime + fairValueGapsExtendInput * (time-time[1]), na, bottomPrice), xloc=xloc.bar_time, border_color = boxColor, bgcolor = boxColor)
+    box.new(chart.point.new(leftTime, na, topPrice), chart.point.new(rightTime + fairValueGapsExtendInput * (time-time[1]), na, bottomPrice), xloc=xloc.bar_time, border_color = color.new(#5d606b, 40), bgcolor = color(na), border_style = line.style_dashed)
 
 deleteFairValueGaps() =>
     if fairValueGaps.size() > 0
