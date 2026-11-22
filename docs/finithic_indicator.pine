@@ -816,13 +816,13 @@ bool smcBullishSetup = (htfSweepLow and bullishReversal) or (tap15mBullFvg and b
 // Complete Trigger:
 // 1) Bullish Index Spot Chart -> triggers BUY CALL (CE)
 // 2) Option Premium Chart -> Only buys CALL if Index is Bullish; Only buys PUT if Index is Falling/Bearish
-sniperBuyTrigger  = smcBullishSetup and bullTrend and volumeConfirmed and optionUnderlyingAligned
+sniperBuyTrigger  = smcBullishSetup and bullTrend and volumeConfirmed and optionUnderlyingAligned and (close >= ema50)
 
 // 3) Falling/Bearish Index Spot Chart -> triggers BUY PUT (PE)
 bool hasUpperRejectionWick = (upperWick / barRange) >= 0.20 or (close <= (high + low) / 2.0)
 bool bearishReversal = (close < open) and hasUpperRejectionWick and (close <= close[1])
 bool smcBearishSetup = (htfSweepHigh and bearishReversal) or (tap15mBearFvg and bearishReversal) or (tap15mSupply and bearishReversal) or htfMajorSell
-sniperSellTrigger = (isIndexChart or isStockChart) and smcBearishSetup and bearTrend and volumeConfirmed
+sniperSellTrigger = (isIndexChart or isStockChart) and smcBearishSetup and bearTrend and volumeConfirmed and (close <= ema50)
 
 // Direct Retest Execution Toggle:
 // When true, immediately enters at the current close upon demand rejection rather than waiting for an extra pullback candle.
@@ -832,15 +832,11 @@ directSmcFill = input.bool(true, 'Direct Entry at Rejection Close (Zero Delay)',
 if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - lastExitBar >= cooldownBarsInput)
     if sniperBuyTrigger
         impulseHigh  = high
-        // Tight, surgical 1-Minute entry SL: placed just beneath the current bounce/reversal candle low
-        float tightLocalLow = math.min(low, low[1])
-        float structLow     = not na(internalLow.currentLevel) ? internalLow.currentLevel : tightLocalLow
-        if sweepLow and not na(swingLow.currentLevel) and swingLow.currentLevel < structLow
-            structLow := swingLow.currentLevel
-        // Clamp SL risk so it stays minimal (cushioned tight to the entry candle's rejection low)
-        calcSL       = math.max(tightLocalLow - (atr14 * 0.10), impulseHigh - (atr14 * 1.5))
-        calcEntry    = directSmcFill ? close : impulseHigh
-        riskDist     = math.max(calcEntry - calcSL, atr14 * 0.25)
+        // Give structural breathing room below the local rejection base (at least 0.35 * ATR buffer)
+        float localFloor = math.min(low, math.min(low[1], low[2]))
+        float calcSL     = localFloor - (atr14 * 0.35)
+        float calcEntry  = directSmcFill ? close : impulseHigh
+        float riskDist   = calcEntry - calcSL
 
         // Target Calculation: Percentage (e.g. +35% for 30-40% gain) or R:R
         float calcTP = calcEntry + (riskDist * sniperRRRatio)
@@ -850,7 +846,7 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
             calcTP := swingHigh.currentLevel
 
         // Execute entry:
-        if riskDist >= (atr14 * 0.2)
+        if riskDist >= (atr14 * 0.3)
             if directSmcFill
                 inTrade         := true
                 tradeDir        := 1
@@ -873,15 +869,11 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
                 pendingBox      := box.new(left=bar_index, top=pendingEntry, right=bar_index + 1, bottom=pendingSL, bgcolor=colPendingLong, border_color=color.teal, border_style=line.style_dotted)
 
     else if sniperSellTrigger
-        // Tight, surgical 1-Minute entry SL: placed just above the current bounce/reversal candle high
-        float tightLocalHigh = math.max(high, high[1])
-        float structHigh     = not na(internalHigh.currentLevel) ? internalHigh.currentLevel : tightLocalHigh
-        if sweepHigh and not na(swingHigh.currentLevel) and swingHigh.currentLevel > structHigh
-            structHigh := swingHigh.currentLevel
-        // Clamp SL risk so it stays minimal (cushioned tight to the entry candle's rejection high)
-        calcSL       = math.min(tightLocalHigh + (atr14 * 0.10), low + (atr14 * 1.5))
-        calcEntry    = directSmcFill ? close : low
-        riskDist     = math.max(calcSL - calcEntry, atr14 * 0.25)
+        impulseLow   = low
+        float localCeiling = math.max(high, math.max(high[1], high[2]))
+        float calcSL       = localCeiling + (atr14 * 0.35)
+        float calcEntry    = directSmcFill ? close : impulseLow
+        float riskDist     = calcSL - calcEntry
 
         // Target Calculation for Short / Bearish Setup: Percentage or R:R
         float calcTPSell = calcEntry - (riskDist * sniperRRRatio)
@@ -890,8 +882,7 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
         else if targetTypeInput == 'Opposite Swing Liquidity' and not na(swingLow.currentLevel) and swingLow.currentLevel < calcEntry - riskDist and swingLow.currentLevel > 0
             calcTPSell := swingLow.currentLevel
 
-        // Filter out microscopic fakeouts: require meaningful risk distance >= minRiskAtr * ATR
-        if riskDist >= (atr14 * minRiskAtr)
+        if riskDist >= (atr14 * 0.3)
             if directSmcFill
                 inTrade         := true
                 tradeDir        := -1
