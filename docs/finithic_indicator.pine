@@ -211,6 +211,8 @@ type orderBlock
     float barLow
     int barTime    
     int bias
+    bool isMitigated = false
+    bool hasDisplacement = false
 
 // Persistent variables
 var pivot swingHigh                 = pivot.new(na,na,false)
@@ -421,7 +423,8 @@ storeOrdeBlock(pivot p_ivot, bool internal = false, int bias = 0) =>
             a_rray      := parsedLows.slice(p_ivot.barIndex, bar_index)
             parsedIndex := p_ivot.barIndex + a_rray.indexof(a_rray.min())                        
 
-        orderBlock o_rderBlock        = orderBlock.new(parsedHighs.get(parsedIndex), parsedLows.get(parsedIndex), times.get(parsedIndex), bias)
+        bool displacement = math.abs(close - open) >= (atr14 * 0.8) or (high - low) >= (atr14 * 1.2)
+        orderBlock o_rderBlock        = orderBlock.new(parsedHighs.get(parsedIndex), parsedLows.get(parsedIndex), times.get(parsedIndex), bias, false, displacement)
         array<orderBlock> orderBlocks = internal ? internalOrderBlocks : swingOrderBlocks
         
         if orderBlocks.size() >= 100
@@ -529,7 +532,7 @@ deleteFairValueGaps() =>
                 fairValueGaps.remove(i)
     
 drawFairValueGaps() => 
-    [lastClose, lastOpen, lastTime, currentHigh, currentLow, currentTime, last2High, last2Low] = request.security(syminfo.tickerid, fairValueGapsTimeframeInput, [close[1], open[1], time[1], high[1], low[1], time[1], high[3], low[3]], lookahead = barmerge.lookahead_on)
+    [lastClose, lastOpen, lastTime, currentHigh, currentLow, currentTime, last2High, last2Low] = request.security(syminfo.tickerid, fairValueGapsTimeframeInput, [close[1], open[1], time[1], high[1], low[1], time[1], high[3], low[3]], lookahead = barmerge.lookahead_off)
 
     barDeltaPercent     = lastOpen != 0 ? (lastClose - lastOpen) / lastOpen * 100 : 0
     newTimeframe        = timeframe.change(fairValueGapsTimeframeInput)
@@ -763,24 +766,39 @@ var float recentDemandZoneLow   = na
 bool inDemandObZone = false
 bool inSupplyObZone = false
 float activeDemandObLow = na
+float activeSupplyObHigh = na
+bool obHasDisplacement = false
 
 if internalOrderBlocks.size() > 0
     for i = 0 to math.min(internalOrderBlocks.size() - 1, 4)
         ob = internalOrderBlocks.get(i)
         // Price penetrates or tests the Demand Order Block (high/low boundary + buffer)
-        if ob.bias == BULLISH and low <= (ob.barHigh + atr14 * 0.35) and close >= (ob.barLow - atr14 * 0.20)
+        if ob.bias == BULLISH and not ob.isMitigated and low <= (ob.barHigh + atr14 * 0.35) and close >= (ob.barLow - atr14 * 0.20)
             inDemandObZone := true
             activeDemandObLow := ob.barLow
-        if ob.bias == BEARISH and high >= (ob.barLow - atr14 * 0.35) and close <= (ob.barHigh + atr14 * 0.20)
+            obHasDisplacement := ob.hasDisplacement
+            if low <= ob.barLow
+                ob.isMitigated := true
+        if ob.bias == BEARISH and not ob.isMitigated and high >= (ob.barLow - atr14 * 0.35) and close <= (ob.barHigh + atr14 * 0.20)
             inSupplyObZone := true
+            activeSupplyObHigh := ob.barHigh
+            if high >= ob.barHigh
+                ob.isMitigated := true
+
+// Current Dealing Range & Equilibrium calculation for Premium/Discount qualification:
+float dealingRangeHigh = not na(swingHigh.currentLevel) ? swingHigh.currentLevel : high
+float dealingRangeLow  = not na(swingLow.currentLevel) ? swingLow.currentLevel : low
+float equilibriumPrice = (dealingRangeHigh + dealingRangeLow) / 2.0
+bool isInDiscountZone  = close <= equilibriumPrice
+bool isInPremiumZone   = close >= equilibriumPrice
 
 // Institutional Accumulation & Retest Area:
-// Exactly where the red circles sit: Order Block touch, CHoCH/BOS retest pivot, or Liquidity sweep
+// Exactly where institutional smart money enters: Order Block touch, CHoCH/BOS retest pivot, or Liquidity sweep
 bool obRetestTouch = inDemandObZone and (low <= (activeDemandObLow + atr14 * 0.75) or low <= low[1])
 bool sweepReversalTouch = (sweepLow or htfSweepLow) and (close > open or close > low + (high - low)*0.3)
 bool structureRetestTouch = not na(internalLow.currentLevel) and (low <= internalLow.currentLevel + atr14 * 0.40) and (close >= open or close >= internalLow.currentLevel)
 
-bool inAccumulationArea = inDemandObZone or sweepLow or htfSweepLow or structureRetestTouch
+bool inAccumulationArea = (inDemandObZone or sweepLow or htfSweepLow or structureRetestTouch or obRetestTouch or sweepReversalTouch) and isInDiscountZone
 
 if inAccumulationArea
     lastDemandZoneTouchBar := bar_index
@@ -789,20 +807,21 @@ if inAccumulationArea
 // Has price recently touched/pulled back into the Demand Zone?
 bool hadRecentDemandPullback = (bar_index - lastDemandZoneTouchBar) <= 15
 
-// Reversal Wick & Confirmation Filter:
-// In a downtrend pullback, NEVER catch a falling red knife without a bottom rejection candle.
-// Valid reversal signature:
+// Institutional Reversal Engine (Rejection Wick + Strong Displacement + Sweep Reclaim):
 // 1) Bullish Green Candle (close > open)
-// 2) Bottom rejection wick (close is in the upper half of the bar range: close >= (high + low)/2.0)
-// 3) Reclaiming above previous bar close or high (close >= close[1])
+// 2) Bottom rejection wick (lower wick >= 30% of bar range, upper body close in upper 50% of bar)
+// 3) Reclaiming above previous bar close or swept liquidity
 // 4) Institutional Volume confirmation (if volume enabled)
-bool bullishReversalCandle = (close > open) and (close >= (high + low) / 2.0) and (close >= close[1]) and volumeConfirmed
+float lowerWick = math.min(open, close) - low
+float barRange   = math.max(high - low, syminfo.mintick)
+bool hasRejectionWick = (lowerWick / barRange) >= 0.25 or (close >= (high + low) / 2.0)
+bool bullishReversalCandle = (close > open) and hasRejectionWick and (close >= close[1]) and volumeConfirmed
 
 // In addition, ensure price is not deep inside a continuous series of red waterfall candles
 bool notFallingKnife = (close > low[1]) or (close > open)
 
 // EXACT TRIGGER FOR THE CLEAN RUNNER TRADES:
-// Only fires when price is in an accumulation area AND confirms with a green reversal rejection
+// Sequence: Discount Zone + (Accumulation OB / Sweep) + Institutional Reversal Confirmation
 bool sniperZoneTestBuy = inAccumulationArea and bullishReversalCandle and notFallingKnife
 
 // Automatic Chart Type Detection (Index Spot, Equity/Futures Spot, and Option Premium CE/PE):
