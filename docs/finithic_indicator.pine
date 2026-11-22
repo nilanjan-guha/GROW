@@ -13,8 +13,8 @@ GREEN                           = #089981
 RED                             = #F23645
 BLUE                            = #2157f3
 GRAY                            = #878b94
-MONO_BULLISH                    = #b2b5be
-MONO_BEARISH                    = #5d606b
+MONO_BULLISH                    = #202124
+MONO_BEARISH                    = #202124
 
 HISTORICAL                      = 'Historical'
 PRESENT                         = 'Present'
@@ -50,10 +50,10 @@ SNIPER_GROUP                    = '1M Sniper Scalper Engine'
 
 // SMC Inputs
 modeInput                       = input.string( HISTORICAL, 'Structure History Mode', group = SMART_GROUP, options = [HISTORICAL, PRESENT])
-styleInput                      = input.string( COLORED,    'Color Theme',            group = SMART_GROUP, options = [COLORED, MONOCHROME])
+styleInput                      = input.string( MONOCHROME,    'Color Theme',            group = SMART_GROUP, options = [COLORED, MONOCHROME])
 showTrendInput                  = input.bool(   false,      'Color Candles By Trend', group = SMART_GROUP)
 
-showInternalsInput              = input.bool(   true,       'Show Internal Structure',group = INTERNAL_GROUP)
+showInternalsInput              = input.bool(   false,       'Show Internal Structure',group = INTERNAL_GROUP)
 showInternalBullInput           = input.string( ALL,        'Bullish Structure',      group = INTERNAL_GROUP, inline = 'ibull', options = [ALL,BOS,CHOCH])
 internalBullColorInput          = input.color(  GREEN,      '',                       group = INTERNAL_GROUP, inline = 'ibull')
 showInternalBearInput           = input.string( ALL,        'Bearish Structure',      group = INTERNAL_GROUP, inline = 'ibear', options = [ALL,BOS,CHOCH])
@@ -69,9 +69,9 @@ swingBearColorInput             = input.color(  RED,        '',                 
 swingStructureSize              = input.string( SMALL,      'Swing Label Size',       group = SWING_GROUP, options = [TINY,SMALL,NORMAL])
 showSwingsInput                 = input.bool(   false,      'Show Swing Points',      group = SWING_GROUP, inline = 'swings')
 swingsLengthInput               = input.int(    50,         '',                       group = SWING_GROUP, minval = 10, inline = 'swings')
-showHighLowSwingsInput          = input.bool(   true,       'Show Strong/Weak High/Low', group = SWING_GROUP)
+showHighLowSwingsInput          = input.bool(   false,       'Show Strong/Weak High/Low', group = SWING_GROUP)
 
-showInternalOrderBlocksInput    = input.bool(   true,       'Internal Order Blocks',  group = BLOCKS_GROUP, inline = 'iob')
+showInternalOrderBlocksInput    = input.bool(   false,       'Internal Order Blocks',  group = BLOCKS_GROUP, inline = 'iob')
 internalOrderBlocksSizeInput    = input.int(    5,          '',                       group = BLOCKS_GROUP, minval = 1, maxval = 20, inline = 'iob')
 showSwingOrderBlocksInput       = input.bool(   false,      'Swing Order Blocks',     group = BLOCKS_GROUP, inline = 'ob')
 swingOrderBlocksSizeInput       = input.int(    5,          '',                       group = BLOCKS_GROUP, minval = 1, maxval = 20, inline = 'ob') 
@@ -82,7 +82,7 @@ internalBearishOrderBlockColor  = input.color(  color.new(#f77c80, 80), 'Interna
 swingBullishOrderBlockColor     = input.color(  color.new(#1848cc, 80), 'Bullish OB',          group = BLOCKS_GROUP)
 swingBearishOrderBlockColor     = input.color(  color.new(#b22833, 80), 'Bearish OB',          group = BLOCKS_GROUP)
 
-showEqualHighsLowsInput         = input.bool(   true,       'Equal High/Low',         group = EQUAL_GROUP)
+showEqualHighsLowsInput         = input.bool(   false,       'Equal High/Low',         group = EQUAL_GROUP)
 equalHighsLowsLengthInput       = input.int(    3,          'Bars Confirmation',      group = EQUAL_GROUP, minval = 1)
 equalHighsLowsThresholdInput    = input.float(  0.1,        'Threshold (ATR fraction)',group = EQUAL_GROUP, minval = 0, maxval = 0.5, step = 0.1)
 equalHighsLowsSizeInput         = input.string( TINY,       'Label Size',             group = EQUAL_GROUP, options = [TINY,SMALL,NORMAL])
@@ -126,9 +126,9 @@ targetPercentInput              = input.float(  35.0,       'Option Profit Targe
 sniperRRRatio                   = input.float(  2.5,        'Sniper Target R:R Ratio (if R:R mode)', minval=1.5, step=0.5, group = SNIPER_GROUP)
 trailToBE                       = input.bool(   true,       'Auto Lock SL to Break-Even at +15% / 1R', group = SNIPER_GROUP, tooltip = 'Locks profit once price surges halfway (+15% gain on options), turning losing trades into risk-free winners and dramatically boosting win rate.')
 beTriggerPercentInput           = input.float(  15.0,       'Break-Even Trigger % Gain', minval = 5.0, maxval = 50.0, step = 2.5, group = SNIPER_GROUP)
-volConfirmationInput            = input.bool(   true,       'Volume Expansion Filter (Vol > 20 SMA)', group = SNIPER_GROUP, tooltip = 'Ensures institutional order volume is flowing into the candle.')
+volConfirmationInput            = input.bool(   false,       'Volume Expansion Filter (Vol > 20 SMA)', group = SNIPER_GROUP, tooltip = 'Ensures institutional order volume is flowing into the candle.')
 sniperRetraceRatio              = input.float(  0.5,        'Discount Retracement Entry (0.5 = 50%)', minval=0.2, maxval=0.79, step=0.05, group = SNIPER_GROUP)
-sniperMaxWaitBars               = input.int(    12,         'Max Wait Bars for Retest Fill', minval=3, maxval=30, group = SNIPER_GROUP)
+sniperMaxWaitBars               = input.int(    8,         'Max Wait Bars for Retest Fill', minval=3, maxval=30, group = SNIPER_GROUP)
 showSniperScoreboard            = input.bool(   true,       'Show Top-Right Scalp Scoreboard', group = SNIPER_GROUP)
 
 // Global ATR & Trend calculations
@@ -139,11 +139,11 @@ ema50  = ta.ema(close, 50)
 ema200 = ta.ema(close, 200)
 volMa20 = ta.sma(volume, 20)
 volumeConfirmed = not volConfirmationInput or (volume >= volMa20 * 0.95)
-useHtfConfluence = input.bool(true, '15M HTF Zone & Sweep Confluence (Multi-Timeframe)', group = SNIPER_GROUP)
-htfTimeframe     = input.timeframe('15', 'HTF Timeframe', group = SNIPER_GROUP)
-minRiskAtr       = input.float(0.8, 'Minimum Swing Size / Risk (ATR Multiple)', minval=0.3, step=0.1, group = SNIPER_GROUP)
+useHtfConfluence = input.bool(false, '15M HTF Zone & Sweep Confluence (Multi-Timeframe)', group = SNIPER_GROUP)
+htfTimeframe     = input.timeframe('5', 'HTF Timeframe', group = SNIPER_GROUP)
+minRiskAtr       = input.float(0.25, 'Minimum Swing Size / Risk (ATR Multiple)', minval=0.3, step=0.1, group = SNIPER_GROUP)
 targetOppositeSwing = input.bool(false, 'Target Opposite Swing High/Low (Major Target)', group = SNIPER_GROUP)
-cooldownBarsInput   = input.int(15, 'Trade Cooldown Bars (Prevents Late FOMO Tops)', minval=3, maxval=30, group = SNIPER_GROUP)
+cooldownBarsInput   = input.int(5, 'Trade Cooldown Bars (Prevents Late FOMO Tops)', minval=3, maxval=30, group = SNIPER_GROUP)
 
 // HTF calculations for 15M discount/premium and sweep zones
 htfHigh  = request.security(syminfo.tickerid, htfTimeframe, high[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
@@ -412,7 +412,7 @@ deleteOrderBlocks(bool internal = false) =>
                 orderBlocks.remove(i)
 
 storeOrdeBlock(pivot p_ivot, bool internal = false, int bias = 0) =>
-    if (not internal and showSwingOrderBlocksInput) or (internal and showInternalOrderBlocksInput)
+    if (not internal and showSwingOrderBlocksInput) or (internal and (showInternalOrderBlocksInput or enableSniperEngine))
         array<float> a_rray = na
         int parsedIndex = na
 
@@ -673,7 +673,7 @@ else
 triggeredBullShift := intBull or swgBull
 triggeredBearShift := intBear or swgBear
 
-if showInternalOrderBlocksInput
+if showInternalOrderBlocksInput or enableSniperEngine
     deleteOrderBlocks(true)
 
 if showSwingOrderBlocksInput
@@ -861,11 +861,11 @@ bool inTightChoppyRange = rangeSize20 <= (atr14 * 2.5) and math.abs(close - ema5
 
 // Institutional Support Zone Bounce:
 // Fires when price tests a Demand Order Block or structure support, rejects the floor with a green candle
-bool demandSupportBounce = inDemandObZone or obRetestTouch or sweepReversalTouch or (structureRetestTouch and bullishReversalCandle)
+bool demandSupportBounce = (inDemandObZone or obRetestTouch or sweepReversalTouch or structureRetestTouch) and bullishReversalCandle
 
 // Bullish Setup (Index moving UP / Option Call moving UP / Stock moving UP):
 // In consolidation, suppress fakeouts; ONLY enter when bouncing cleanly off demand support or breaking out with volume!
-sniperBuyTrigger  = barConfirmed and bullTrend and not inTightChoppyRange and (sniperZoneTestBuy or demandSupportBounce or ((isIndexChart or isStockChart) and volumeConfirmed and (triggeredBullShift or ta.crossover(close, ema50) or (sweepLow and close > open)))) and (not isOptionChart or (optionSideRecognized and optionUnderlyingAligned))
+sniperBuyTrigger  = barConfirmed and bullTrend and not inTightChoppyRange and (sniperZoneTestBuy or demandSupportBounce or ((isIndexChart or isStockChart) and (triggeredBullShift or ta.crossover(close, ema50) or (sweepLow and close > open)) and (volumeConfirmed or sweepLow))) and (not isOptionChart or (optionSideRecognized and optionUnderlyingAligned))
 
 // Bearish Setup (Index moving DOWN / Stock moving DOWN):
 // On Index Spot Chart: triggers BUY PUT (PE)
@@ -886,7 +886,7 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
         impulseLow   = math.min(structLow, low)
         rangeDist    = impulseHigh - impulseLow
         // Tight, clearly visible institutional SL cushioned below the structural swing/sweep pivot
-        calcSL       = math.max(impulseLow - (atr14 * 0.15), impulseHigh - (atr14 * 1.5))
+        calcSL       = impulseLow - (atr14 * 0.15)
         calcEntry    = directSmcFill ? close : (rangeDist > 0 ? impulseHigh - (rangeDist * sniperRetraceRatio) : close)
         riskDist     = calcEntry - calcSL
 
@@ -898,7 +898,7 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
             calcTP := swingHigh.currentLevel
 
         // Filter out microscopic fakeouts: require meaningful risk distance >= minRiskAtr * ATR
-        if riskDist >= (atr14 * minRiskAtr)
+        if calcEntry > calcSL and riskDist >= (atr14 * minRiskAtr)
             if directSmcFill
                 inTrade         := true
                 tradeDir        := 1
@@ -918,7 +918,7 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
             else
                 pendingOrder    := true
                 pendingDir      := 1
-                pendingEntry    := math.min(calcEntry, close)
+                pendingEntry    := calcEntry
                 pendingSL       := calcSL
                 pendingTP       := calcTP
                 pendingSetupBar := bar_index
@@ -983,14 +983,15 @@ if pendingOrder and not inTrade
     box.set_right(pendingBox, bar_index + 1)
     
     // Long retest filled: When price pulls into or touches the discount pendingEntry level
-    bool longRetestCondition = (low <= pendingEntry) and (bar_index > pendingSetupBar or (close > open and low <= pendingEntry))
+    float retestLowerWick = math.min(open, close) - low
+    bool longRetestCondition = barConfirmed and bar_index > pendingSetupBar and low <= pendingEntry and close > pendingEntry and close > open and (retestLowerWick / math.max(high - low, syminfo.mintick)) >= 0.20
     if pendingDir == 1 and longRetestCondition
         box.delete(pendingBox)
         pendingOrder    := false
         inTrade         := true
         tradeDir        := 1
         entryBarIdx     := bar_index
-        entryPrice      := math.min(pendingEntry, open)
+        entryPrice      := pendingEntry
         stopLossPrice   := pendingSL
         takeProfitPrice := pendingTP
 
@@ -1004,14 +1005,15 @@ if pendingOrder and not inTrade
                                  style=label.style_label_left, color=color(na), textcolor=color.teal, size=size.tiny)
 
     // Short retest filled: When price pulls into supply pendingEntry level
-    bool shortRetestCondition = (high >= pendingEntry) and (bar_index > pendingSetupBar or (close < open and high >= pendingEntry))
+    float retestUpperWick = high - math.max(open, close)
+    bool shortRetestCondition = barConfirmed and bar_index > pendingSetupBar and high >= pendingEntry and close < pendingEntry and close < open and (retestUpperWick / math.max(high - low, syminfo.mintick)) >= 0.20
     if pendingDir == -1 and shortRetestCondition
         box.delete(pendingBox)
         pendingOrder    := false
         inTrade         := true
         tradeDir        := -1
         entryBarIdx     := bar_index
-        entryPrice      := math.max(pendingEntry, open)
+        entryPrice      := pendingEntry
         stopLossPrice   := pendingSL
         takeProfitPrice := pendingTP
 
@@ -1117,7 +1119,7 @@ if showSniperScoreboard and barstate.islast
     table.merge_cells(dash, 0, 0, 1, 0)
 
     table.cell(dash, 0, 1, "Win Rate", text_color=color.silver, text_size=size.small)
-    table.cell(dash, 1, 1, str.tostring(totalWins) + "W - " + str.tostring(totalLosses) + "L (" + str.tostring(winRate, "#.#") + "%)", 
+    table.cell(dash, 1, 1, str.tostring(totalWins) + "W - " + str.tostring(totalLosses) + "L (" + str.tostring(winRate, "#.#") + "%) | n=" + str.tostring(totalTrades), 
                bgcolor=winRate >= 50 ? color.new(color.teal, 30) : color.new(color.maroon, 30), text_color=color.white, text_size=size.small)
 
     table.cell(dash, 0, 2, "Action State", text_color=color.silver, text_size=size.small)
