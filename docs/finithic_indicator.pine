@@ -1037,22 +1037,6 @@ if ictBullFvgRetest
     ictBullFvgActive := false
 if ictBearFvgRetest
     ictBearFvgActive := false
-if ictBullObRetest
-    ictBullObActive := false
-if ictBearObRetest
-    ictBearObActive := false
-if ictBullBreakerRetest
-    ictBullBreakerActive := false
-if ictBearBreakerRetest
-    ictBearBreakerActive := false
-if ictBullMitigationRetest
-    ictBullMitigationActive := false
-if ictBearMitigationRetest
-    ictBearMitigationActive := false
-if ictBullBosRetest
-    ictBullBosLevel := na
-if ictBearBosRetest
-    ictBearBosLevel := na
 
 // OTE from the sweep extreme to displacement extreme (0.62-0.79; 0.705 reference).
 float ictBullRange = ictBullImpulseHigh - ictBullSweepExtreme
@@ -1135,6 +1119,24 @@ if triggeredBearShift and swingTrend.bias == BEARISH
     ictBearBosLevel := swingLow.currentLevel
 bool ictBullBosRetest = allowBosContinuation and not na(ictBullBosLevel) and low <= ictBullBosLevel and close > ictBullBosLevel and ictBullReject
 bool ictBearBosRetest = allowBosContinuation and not na(ictBearBosLevel) and high >= ictBearBosLevel and close < ictBearBosLevel and ictBearReject
+
+// Consume zones after retest is detected so each zone acts once
+if ictBullObRetest
+    ictBullObActive := false
+if ictBearObRetest
+    ictBearObActive := false
+if ictBullBreakerRetest
+    ictBullBreakerActive := false
+if ictBearBreakerRetest
+    ictBearBreakerActive := false
+if ictBullMitigationRetest
+    ictBullMitigationActive := false
+if ictBearMitigationRetest
+    ictBearMitigationActive := false
+if ictBullBosRetest
+    ictBullBosLevel := na
+if ictBearBosRetest
+    ictBearBosLevel := na
 
 // SMT divergence: compare relative swing extremes with a correlated index.
 float ictOtherHigh = request.security(smtComparisonSymbol, timeframe.period, high, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
