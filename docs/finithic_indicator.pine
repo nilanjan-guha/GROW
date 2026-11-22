@@ -155,6 +155,13 @@ htfSweepLow  = (low < htfLow) and (close > htfLow)
 htfSweepHigh = (high > htfHigh) and (close < htfHigh)
 htfInDiscount = close < htfEma
 
+// Request 15M HTF Structure, Pivots and Order Blocks:
+[htfSwingHighLevel, htfSwingLowLevel, htfIsBullishStructure] = request.security(syminfo.tickerid, htfTimeframe, [
+     ta.highest(high, 10)[1],
+     ta.lowest(low, 10)[1],
+     ta.ema(close, 20)[1] > ta.ema(close, 50)[1]
+     ], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+
 // 15M Higher Timeframe Fair Value Gap (FVG) and Demand/Supply Imbalance
 [htfFvgTop, htfFvgBottom, htfFvgBias] = request.security(syminfo.tickerid, htfTimeframe, [
      (low[0] > high[2] and close[1] > high[2]) ? low[0] : ((high[0] < low[2] and close[1] < low[2]) ? high[0] : float(na)),
@@ -167,6 +174,10 @@ htfInDiscount = close < htfEma
 bool tap15mBullFvg = not na(htfFvgTop) and htfFvgBias == 1 and low <= htfFvgTop and close >= htfFvgBottom
 // Bearish: 1M candle rises into or touches 15M Bearish FVG zone and prints rejection/breakdown
 bool tap15mBearFvg = not na(htfFvgBottom) and htfFvgBias == -1 and high >= htfFvgBottom and close <= htfFvgTop
+
+// 15M Demand Zone Tap on 1M chart:
+bool tap15mDemand = low <= (htfSwingLowLevel + atr14 * 1.0) and close >= htfSwingLowLevel
+bool tap15mSupply = high >= (htfSwingHighLevel - atr14 * 1.0) and close <= htfSwingHighLevel
 //---------------------------------------------------------------------------------------------------------------------}
 // DATA STRUCTURES
 //---------------------------------------------------------------------------------------------------------------------{
@@ -794,14 +805,13 @@ float barRange   = math.max(high - low, syminfo.mintick)
 bool hasRejectionWick = (lowerWick / barRange) >= 0.20 or (close >= (high + low) / 2.0)
 bool bullishReversal = (close > open) and hasRejectionWick and (close >= close[1])
 
-// High-Conviction SMC Confirmation:
-// Requires actual Institutional footprints:
-// 1) Clear Liquidity Sweep (sweepLow) OR
-// 2) Structural Breakout / CHoCH (triggeredBullShift) OR
-// 3) Retest of active institutional Demand Order Block with bullish rejection OR
-// 4) 15-Minute Institutional FVG tap/bounce on 1-Minute chart OR
-// 5) 15-Minute HTF Reversal Confluence
-bool smcBullishSetup = (triggeredBullShift and close > open) or (sweepLow and bullishReversal) or (obDemandTouch and bullishReversal) or (tap15mBullFvg and bullishReversal) or htfMajorBuy
+// High-Conviction 15M Institutional SMC Setup:
+// Requires genuine 15-Minute macro confluence:
+// 1) Price sweeps 15M liquidity or sweeps swing low with rejection wick, OR
+// 2) Price taps 15M Bullish Fair Value Gap and rejects upward, OR
+// 3) Price taps 15M Institutional Demand Zone and bounces, OR
+// 4) 15M Major Discount Reversal
+bool smcBullishSetup = (htfSweepLow and bullishReversal) or (tap15mBullFvg and bullishReversal) or (tap15mDemand and bullishReversal) or htfMajorBuy
 
 // Complete Trigger:
 // 1) Bullish Index Spot Chart -> triggers BUY CALL (CE)
@@ -811,7 +821,7 @@ sniperBuyTrigger  = smcBullishSetup and bullTrend and volumeConfirmed and option
 // 3) Falling/Bearish Index Spot Chart -> triggers BUY PUT (PE)
 bool hasUpperRejectionWick = (upperWick / barRange) >= 0.20 or (close <= (high + low) / 2.0)
 bool bearishReversal = (close < open) and hasUpperRejectionWick and (close <= close[1])
-bool smcBearishSetup = (triggeredBearShift and close < open) or (sweepHigh and bearishReversal) or (obSupplyTouch and bearishReversal) or (tap15mBearFvg and bearishReversal) or htfMajorSell
+bool smcBearishSetup = (htfSweepHigh and bearishReversal) or (tap15mBearFvg and bearishReversal) or (tap15mSupply and bearishReversal) or htfMajorSell
 sniperSellTrigger = (isIndexChart or isStockChart) and smcBearishSetup and bearTrend and volumeConfirmed
 
 // Direct Retest Execution Toggle:
