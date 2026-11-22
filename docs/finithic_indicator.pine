@@ -788,6 +788,10 @@ sniperBuyTrigger  = ((bullTrend and (triggeredBullShift or (sweepLow and close >
 // 3) Falling/Bearish Index Spot Chart -> triggers BUY PUT (PE)
 sniperSellTrigger = (isIndexChart or isStockChart) and ((bearTrend and (triggeredBearShift or (sweepHigh and close < open) or obSupplyTouch)) or htfMajorSell) and volumeConfirmed
 
+// Direct Retest Execution Toggle:
+// When true, immediately enters at the current close upon demand rejection rather than waiting for an extra pullback candle.
+directSmcFill = input.bool(true, 'Direct Entry at Rejection Close (Zero Delay)', group = SNIPER_GROUP, tooltip = 'Synchronizes entry right at the bounce candle close so you never miss fast option spikes or get hurt by theta decay.')
+
 // Arm Pending Sniper Orders on Major Shift, Sweeps & OB Retests
 if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - lastExitBar >= cooldownBarsInput)
     if sniperBuyTrigger
@@ -800,7 +804,7 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
         rangeDist    = impulseHigh - impulseLow
         // Tight, clearly visible institutional SL cushioned below the structural swing/sweep pivot
         calcSL       = impulseLow - (atr14 * 0.15)
-        calcEntry    = rangeDist > 0 ? impulseHigh - (rangeDist * sniperRetraceRatio) : close
+        calcEntry    = directSmcFill ? close : (rangeDist > 0 ? impulseHigh - (rangeDist * sniperRetraceRatio) : close)
         riskDist     = calcEntry - calcSL
 
         // Target Calculation: Percentage (e.g. +35% for 30-40% gain) or R:R
@@ -812,14 +816,26 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
 
         // Filter out microscopic fakeouts: require meaningful risk distance >= minRiskAtr * ATR
         if riskDist >= (atr14 * minRiskAtr)
-            pendingOrder    := true
-            pendingDir      := 1
-            pendingEntry    := math.min(calcEntry, close)
-            pendingSL       := calcSL
-            pendingTP       := calcTP
-            pendingSetupBar := bar_index
-            pendingBox      := box.new(left=bar_index, top=pendingEntry, right=bar_index + 1, bottom=pendingSL,
-                                       bgcolor=colPendingLong, border_color=color.teal, border_style=line.style_dotted)
+            if directSmcFill
+                inTrade         := true
+                tradeDir        := 1
+                entryBarIdx     := bar_index
+                entryPrice      := close
+                stopLossPrice   := calcSL
+                takeProfitPrice := calcTP
+
+                activeTPBox := box.new(left=entryBarIdx, top=takeProfitPrice, right=entryBarIdx + 1, bottom=entryPrice, bgcolor=colTPBox, border_color=color.teal, border_style=line.style_solid)
+                activeSLBox := box.new(left=entryBarIdx, top=entryPrice, right=entryBarIdx + 1, bottom=stopLossPrice, bgcolor=colSLBox, border_color=color.maroon, border_style=line.style_solid)
+                string buyLabelText = isIndexChart ? "BUY CALL (CE)" : (isRecognizedCallOption ? "BUY CALL" : (isRecognizedPutOption ? "BUY PUT" : "BUY "))
+                activeLbl   := label.new(entryBarIdx + 1, entryPrice, buyLabelText + " " + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), style=label.style_label_left, color=color(na), textcolor=color.teal, size=size.tiny)
+            else
+                pendingOrder    := true
+                pendingDir      := 1
+                pendingEntry    := math.min(calcEntry, close)
+                pendingSL       := calcSL
+                pendingTP       := calcTP
+                pendingSetupBar := bar_index
+                pendingBox      := box.new(left=bar_index, top=pendingEntry, right=bar_index + 1, bottom=pendingSL, bgcolor=colPendingLong, border_color=color.teal, border_style=line.style_dotted)
 
     else if sniperSellTrigger
         // Pick best structural high: internalHigh, swingHigh, or local pivot high
@@ -831,7 +847,7 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
         rangeDist    = impulseHigh - impulseLow
         // Tight, clearly visible institutional SL cushioned above the structural swing/sweep pivot
         calcSL       = impulseHigh + (atr14 * 0.15)
-        calcEntry    = rangeDist > 0 ? impulseLow + (rangeDist * sniperRetraceRatio) : close
+        calcEntry    = directSmcFill ? close : (rangeDist > 0 ? impulseLow + (rangeDist * sniperRetraceRatio) : close)
         riskDist     = calcSL - calcEntry
 
         // Target Calculation for Short / Bearish Setup: Percentage or R:R
@@ -843,14 +859,26 @@ if enableSniperEngine and not pendingOrder and not inTrade and (bar_index - last
 
         // Filter out microscopic fakeouts: require meaningful risk distance >= minRiskAtr * ATR
         if riskDist >= (atr14 * minRiskAtr)
-            pendingOrder    := true
-            pendingDir      := -1
-            pendingEntry    := math.max(calcEntry, close)
-            pendingSL       := calcSL
-            pendingTP       := calcTPSell
-            pendingSetupBar := bar_index
-            pendingBox      := box.new(left=bar_index, top=pendingSL, right=bar_index + 1, bottom=pendingEntry,
-                                       bgcolor=colPendingShort, border_color=color.maroon, border_style=line.style_dotted)
+            if directSmcFill
+                inTrade         := true
+                tradeDir        := -1
+                entryBarIdx     := bar_index
+                entryPrice      := close
+                stopLossPrice   := calcSL
+                takeProfitPrice := calcTPSell
+
+                activeTPBox := box.new(left=entryBarIdx, top=entryPrice, right=entryBarIdx + 1, bottom=takeProfitPrice, bgcolor=colTPBox, border_color=color.teal, border_style=line.style_solid)
+                activeSLBox := box.new(left=entryBarIdx, top=stopLossPrice, right=entryBarIdx + 1, bottom=entryPrice, bgcolor=colSLBox, border_color=color.maroon, border_style=line.style_solid)
+                string sellLabelText = isIndexChart ? "BUY PUT (PE)" : (isStockChart ? "SELL SPOT" : "SELL ")
+                activeLbl   := label.new(entryBarIdx + 1, entryPrice, sellLabelText + " " + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), style=label.style_label_left, color=color(na), textcolor=color.maroon, size=size.tiny)
+            else
+                pendingOrder    := true
+                pendingDir      := -1
+                pendingEntry    := math.max(calcEntry, close)
+                pendingSL       := calcSL
+                pendingTP       := calcTPSell
+                pendingSetupBar := bar_index
+                pendingBox      := box.new(left=bar_index, top=pendingSL, right=bar_index + 1, bottom=pendingEntry, bgcolor=colPendingShort, border_color=color.maroon, border_style=line.style_dotted)
 
 // Invalidate stale pending setups
 if pendingOrder and (bar_index - pendingSetupBar > sniperMaxWaitBars)
