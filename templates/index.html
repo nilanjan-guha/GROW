@@ -1387,7 +1387,7 @@
             }
         }
 
-        // Automated continuous background scanning loop
+        // Automated continuous background scanning loop (pure monitoring & live price sync)
         async function cycleStockScan() {
             if (activeWatchlist.length === 0) return;
             watchlistIndex = (watchlistIndex + 1) % activeWatchlist.length;
@@ -1405,19 +1405,7 @@
                         renderConfirmedBanner();
                     }
 
-                    if (smc.action && (smc.action.includes('BUY') || smc.action.includes('SELL'))) {
-                        // Strict Gate: Do not automatically promote background cycle scans to active confirmed trades
-                        // unless it is confirmed completed candle and actionable (ENTRY READY / IGNITION).
-                        if (smc.is_actionable !== false && smc.signal_status && smc.signal_status.includes('CONFIRMED')) {
-                            log(`🎯 [INSTITUTIONAL SIGNAL] ${target.symbol} => ${smc.action} | SL: ₹${smc.suggested_sl} | TP1: ₹${smc.suggested_tp1}`, 'ENTRY');
-                            addOrUpdateConfirmedTrade(target.symbol, smc);
-                        } else {
-                            log(`[AI SCAN: ${target.symbol}] Non-actionable or provisional signal (${smc.action}). Monitoring only.`, 'INFO');
-                        }
-                    } else {
-                        log(`[AI SCAN: ${target.symbol}] Price: ₹${smc.current_price.toFixed(1)} - Monitoring OB / Coil levels.`, 'NO_ENTRY');
-                    }
-
+                    // Cycle loop is strictly for observation / price syncing; it NEVER automatically opens new trades from watchlists!
                     if (target.symbol === currentStockSymbol) {
                         renderRadarData(target.symbol, smc);
                     }

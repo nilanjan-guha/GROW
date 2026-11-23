@@ -572,14 +572,22 @@ def background_screener_worker():
                         # Always cache raw OHLCV DataFrame if valid and non-empty (do not discard if momentum res is None!)
                         if cdf is not None and not cdf.empty and len(cdf) >= 15:
                             existing_entry = screener_state.get("raw_market_cache", {}).get(sym, {})
+                            curr_stock_candle_ts = str(cdf.index[-1])
+                            
+                            # CRITICAL: Invalidate stale fno_filter_data if it belongs to an older completed candle!
                             existing_fno = existing_entry.get("fno_filter_data")
+                            if existing_fno:
+                                fno_eval_ts = existing_fno.get("evaluated_completed_candle_ts")
+                                if fno_eval_ts and fno_eval_ts != curr_stock_candle_ts:
+                                    existing_fno = None  # Stale setup expired; clear to prevent false standalone bypass
+
                             res = evaluate_explosive_momentum(cdf, sym)
                             
                             screener_state.setdefault("raw_market_cache", {})[sym] = {
                                 "timestamp": time.time(),
-                                "raw_latest_candle_ts": str(cdf.index[-1]),
-                                "evaluated_completed_candle_ts": str(cdf.index[-1]),
-                                "rvol_candle_ts": existing_entry.get("rvol_candle_ts"),
+                                "raw_latest_candle_ts": curr_stock_candle_ts,
+                                "evaluated_completed_candle_ts": curr_stock_candle_ts,
+                                "rvol_candle_ts": existing_fno.get("rvol_candle_ts") if existing_fno else None,
                                 "data": res if res else existing_entry.get("data"),
                                 "df": cdf,
                                 "fno_filter_data": existing_fno
