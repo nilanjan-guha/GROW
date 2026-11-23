@@ -496,10 +496,27 @@ class OpportunityRankingEngine:
             below_vwap
         )
 
-        # Low-priority Early Observation Stage (Watch-only: coiling near VWAP or volume rising, but without confirmed swing structure)
+        # Low-priority Early Observation Stage (Watch-only: strictly requires true accumulation evidence):
+        # Must meet at least 2 independent criteria:
+        # 1. 3-bar consecutively rising volume (v[-1] > v[-2] > v[-3]) with constructive candle (not heavy dump candle)
+        # 2. Positive / improving directional RS acceleration (rs_accel_3 > 0 for bull, < 0 for bear)
+        # 3. Volatility squeeze (NR4/NR7/BB squeeze) or proximity (< 0.5%) to key structural level (ORH/ORL/PDH/PDL)
+        # 4. Aligned with VWAP
+        bull_accum_signals = 0
+        if vol_consecutive_rise and curr_c >= curr_o: bull_accum_signals += 1
+        if rs_accel_3 > 0.15: bull_accum_signals += 1
+        if is_range_squeezed or is_coiling_near_orh or is_coiling_near_pdh: bull_accum_signals += 1
+        if above_vwap: bull_accum_signals += 1
+
+        bear_accum_signals = 0
+        if vol_consecutive_rise and curr_c <= curr_o: bear_accum_signals += 1
+        if rs_accel_3 < -0.15: bear_accum_signals += 1
+        if is_range_squeezed or is_coiling_near_orl or is_coiling_near_pdl: bear_accum_signals += 1
+        if below_vwap: bear_accum_signals += 1
+
         is_early_observing = (
-            (direction == "BULLISH" and (is_coiling_near_orh or is_range_squeezed or above_vwap) and early_bull_score >= 25) or
-            (direction == "BEARISH" and (is_coiling_near_orl or is_range_squeezed or below_vwap) and early_bear_score >= 25)
+            (direction == "BULLISH" and bull_accum_signals >= 2 and early_bull_score >= 30) or
+            (direction == "BEARISH" and bear_accum_signals >= 2 and early_bear_score >= 30)
         )
 
         if is_strictly_confirmed:
@@ -590,11 +607,11 @@ class OpportunityRankingEngine:
         bearish = [c for c in candidates if c and c.get("direction") == "BEARISH"]
 
         # Sort priority:
-        # 1. Stage (CONFIRMED > IGNITION > PREPARING > MONITORING)
+        # 1. Stage (CONFIRMED > IGNITION > PREPARING > OBSERVING > MONITORING)
         # 2. Stage-appropriate scoring:
         #    - For CONFIRMED/IGNITION: weighted by confirmation_score and rs_accel_6
-        #    - For PREPARING: weighted by early_opportunity_score and rs_accel_3
-        stage_weights = {"CONFIRMED": 400, "IGNITION": 250, "PREPARING": 150, "MONITORING": 0}
+        #    - For PREPARING/OBSERVING: weighted by early_opportunity_score and rs_accel_3
+        stage_weights = {"CONFIRMED": 400, "IGNITION": 250, "PREPARING": 150, "OBSERVING": 80, "MONITORING": 0}
 
         def score_candidate(cand, is_bull=True):
             stg = cand.get("stage", "MONITORING")
@@ -650,12 +667,14 @@ class OpportunityRankingEngine:
         ][:5]
 
         # 5. WATCHLIST / MONITORING ONLY: Explicitly marked as non-actionable watchlists
-        # Never allow MONITORING to look like an entry signal in directional lists!
+        # Distinguish actionable setups from pure sector monitoring watchlists
         watchlist_bullish = [
-            c for c in bullish[:top_n]
+            {**c, "watchlist_type": "SECTOR_WATCHLIST_ONLY", "is_actionable": (c.get("stage") in ("CONFIRMED", "IGNITION"))}
+            for c in bullish[:top_n]
         ]
         watchlist_bearish = [
-            c for c in bearish[:top_n]
+            {**c, "watchlist_type": "SECTOR_WATCHLIST_ONLY", "is_actionable": (c.get("stage") in ("CONFIRMED", "IGNITION"))}
+            for c in bearish[:top_n]
         ]
 
         return {

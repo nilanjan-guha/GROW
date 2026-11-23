@@ -85,7 +85,9 @@ class GrowwSectorEngine:
                     "gainers": s.get('positiveStocks', len(constituents)),
                     "losers": s.get('negativeStocks', 0),
                     "top_5": constituents[:5],
-                    "all_constituents": constituents
+                    "all_constituents": constituents,
+                    "fno_coverage_count": len(constituents),
+                    "last_updated": now
                 }
                 for stk in constituents:
                     new_stock_to_sector_map[stk["symbol"]] = {
@@ -116,7 +118,9 @@ class GrowwSectorEngine:
                     "gainers": s.get('positiveStocks', 0),
                     "losers": s.get('negativeStocks', len(constituents)),
                     "top_5": constituents[:5],
-                    "all_constituents": constituents
+                    "all_constituents": constituents,
+                    "fno_coverage_count": len(constituents),
+                    "last_updated": now
                 }
                 for stk in constituents:
                     new_stock_to_sector_map[stk["symbol"]] = {
@@ -135,7 +139,10 @@ class GrowwSectorEngine:
         return sector_results
 
     def _fetch_sector_constituents(self, sector_name, industry_code, norm_fno_set, is_bullish, sec_pct):
-        """Fetches individual stocks from Groww sector page and filters only moving F&O constituents"""
+        """
+        Fetches individual stocks from Groww sector page and extracts ALL tradeable F&O constituents.
+        Does NOT drop flat, quiet, or coiling stocks! Preserves all F&O constituents for pre-move discovery.
+        """
         # Safely URL-encode the sector name
         safe_sector_name = urllib.parse.quote(sector_name)
         url = f'https://groww.in/stocks/sectors-trending/{safe_sector_name}?industryCodes={industry_code}'
@@ -153,7 +160,7 @@ class GrowwSectorEngine:
             print(f"[GROWW SECTOR PARSE ERROR] {sector_name}: {e}")
             return []
 
-        qualified_fno = []
+        all_fno_constituents = []
         for item in stocks_raw:
             code = str(item.get('nseScriptCode', '')).strip().upper()
             if not code or code not in norm_fno_set:
@@ -166,38 +173,25 @@ class GrowwSectorEngine:
             except (ValueError, TypeError):
                 continue
             
-            # Directional alignment:
-            # Bullish sectors only take stocks with pct > 0
-            # Bearish sectors only take stocks with pct < 0
-            if is_bullish and pct > 0:
-                qualified_fno.append({
-                    "symbol": f"{code}.NS",
-                    "price": ltp,
-                    "change": pct,
-                    "velocity": round(max(1.0, abs(pct) * 1.3), 1),
-                    "relative_strength": round(pct - sec_pct, 2)
-                })
-            elif not is_bullish and pct < 0:
-                qualified_fno.append({
-                    "symbol": f"{code}.NS",
-                    "price": ltp,
-                    "change": pct,
-                    "velocity": round(max(1.0, abs(pct) * 1.3), 1),
-                    "relative_strength": round(pct - sec_pct, 2)
-                })
-
-        # Multi-factor ranking:
-        # Instead of simple stock_pct - sec_pct, we compute multi-factor momentum & relative strength acceleration
-        for stk in qualified_fno:
-            pct = stk["change"]
-            # Outperformance component over sector baseline
+            # Keep ALL valid F&O constituents regardless of daily sign so quiet/flat pre-breakout coils are NEVER discarded!
             alpha_over_sector = pct - sec_pct
-            # Relative strength momentum weight
-            stk["momentum_score"] = round(abs(pct) * 1.5 + abs(alpha_over_sector) * 1.2, 2)
+            momentum_score = round(abs(pct) * 1.5 + abs(alpha_over_sector) * 1.2, 2)
+            all_fno_constituents.append({
+                "symbol": f"{code}.NS",
+                "price": ltp,
+                "change": pct,
+                "velocity": round(max(0.8, abs(pct) * 1.3), 1),
+                "relative_strength": round(alpha_over_sector, 2),
+                "momentum_score": momentum_score,
+                "is_directional_aligned": (pct > 0 if is_bullish else pct < 0)
+            })
 
         if is_bullish:
-            qualified_fno.sort(key=lambda x: (x.get("momentum_score", 0.0), x["change"]), reverse=True)
+            all_fno_constituents.sort(key=lambda x: (x.get("is_directional_aligned", False), x.get("momentum_score", 0.0), x["change"]), reverse=True)
         else:
+            all_fno_constituents.sort(key=lambda x: (x.get("is_directional_aligned", False), x.get("momentum_score", 0.0), -x["change"]), reverse=True)
+
+        return all_fno_constituents
             qualified_fno.sort(key=lambda x: (x.get("momentum_score", 0.0), -x["change"]), reverse=True)
 
         return qualified_fno
