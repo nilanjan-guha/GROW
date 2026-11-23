@@ -1084,9 +1084,13 @@ def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
         # Sector-First Priority with Stock-Level Discovery Exception:
         # Prioritize top sector constituents, BUT allow stocks with exceptional 5m momentum/coils (pre_coil or high RVOL)
         # CRITICAL: Verify that the standalone setup data matches the EXACT current completed candle timestamp!
+        # Both evaluated_completed_candle_ts and rvol_candle_ts must match stock_candle_ts.
         fno_data_item = item.get("fno_filter_data", {})
-        fno_data_ts = fno_data_item.get("evaluated_completed_candle_ts") or fno_data_item.get("rvol_candle_ts")
-        is_fno_fresh = (fno_data_ts == stock_candle_ts)
+        fno_eval_ts = fno_data_item.get("evaluated_completed_candle_ts")
+        fno_rvol_ts = fno_data_item.get("rvol_candle_ts")
+        
+        # Mandatory freshness: must have valid evaluated candle timestamp equal to current completed candle
+        is_fno_fresh = (fno_eval_ts == stock_candle_ts) and (fno_rvol_ts is None or fno_rvol_ts == stock_candle_ts)
 
         has_standalone_setup = (
             is_fno_fresh and (
@@ -1284,10 +1288,14 @@ def log_confirmed_signal_endpoint():
         if not sym:
             return jsonify({"success": False, "error": "No symbol provided"}), 400
 
+        # Reject logging if candidate is explicitly non-actionable or watch-only
+        if data.get("is_actionable") is False:
+            return jsonify({"success": False, "error": "Candidate is watch-only / non-actionable. Trade creation blocked."}), 400
+
         action = data.get("action", "")
         direction = "BUY" if "BUY" in action else ("SELL" if "SELL" in action else "NEUTRAL")
-        if direction == "NEUTRAL":
-            return jsonify({"success": False, "error": "Direction is neutral"}), 400
+        if direction == "NEUTRAL" or "WAIT" in action or "MONITORING" in action:
+            return jsonify({"success": False, "error": "Direction is neutral or waiting for trigger"}), 400
 
         sig_id = log_signal({
             "symbol": sym,

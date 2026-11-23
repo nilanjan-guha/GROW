@@ -1114,6 +1114,11 @@
             if (!smc || !smc.action || (!smc.action.includes('BUY') && !smc.action.includes('SELL'))) {
                 return;
             }
+            // Strict Gate: Never create or update active confirmed trades for non-actionable watch candidates
+            // (PREPARING, OBSERVING, SECTOR_WATCHLIST_ONLY, or provisional uncompleted candles)
+            if (smc.is_actionable === false || (smc.signal_status && smc.signal_status.includes('WATCH_ONLY'))) {
+                return;
+            }
             const existing = activeConfirmedTrades[symbol];
             const isNew = !existing || !notifiedTradesSet.has(symbol);
             
@@ -1563,8 +1568,12 @@
                     renderRadarData(symbol, smc);
 
                     if (smc.action.includes('BUY') || smc.action.includes('SELL')) {
-                        log(`🎯 [EXACT ENTRY ACTIVE] ${symbol} => ${smc.action} | SL: ₹${smc.suggested_sl} | TP1: ₹${smc.suggested_tp1}`, 'ENTRY');
-                        addOrUpdateConfirmedTrade(symbol, smc);
+                        if (smc.is_actionable !== false && (!smc.signal_status || !smc.signal_status.includes('WATCH_ONLY'))) {
+                            log(`🎯 [EXACT ENTRY ACTIVE] ${symbol} => ${smc.action} | SL: ₹${smc.suggested_sl} | TP1: ₹${smc.suggested_tp1}`, 'ENTRY');
+                            addOrUpdateConfirmedTrade(symbol, smc);
+                        } else {
+                            log(`[${symbol} STATUS] ${smc.action} - ${smc.reasoning}`, 'NO_ENTRY');
+                        }
                     } else {
                         log(`[${symbol} STATUS] ${smc.action} - ${smc.reasoning}`, 'NO_ENTRY');
                     }
