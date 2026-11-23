@@ -81,14 +81,19 @@ class OpportunityRankingEngine:
 
             today_nifty = n_df[n_df.index.date == today_date] if today_date else n_df
             if not today_nifty.empty and len(today_nifty) >= 2:
-                n_open = float(today_nifty['Open'].iloc[0])
-                n_close = float(today_nifty['Close'].iloc[-1])
-                nifty_change_pct = float(((n_close - n_open) / n_open) * 100) if n_open > 0 else 0.0
-
-                # Strict timestamp inner alignment to avoid row-shift distortions
+                # Strict timestamp inner alignment to avoid row-shift or unaligned session comparisons
                 joined = pd.DataFrame({"stock_c": today_stock['Close']}).join(
                     pd.DataFrame({"nifty_c": today_nifty['Close']}), how="inner"
                 ).dropna()
+
+                if not joined.empty:
+                    s_open = float(today_stock['Open'].iloc[0])
+                    s_sync_c = float(joined['stock_c'].iloc[-1])
+                    stock_change_pct = float(((s_sync_c - s_open) / s_open) * 100) if s_open > 0 else 0.0
+
+                    n_open = float(today_nifty['Open'].iloc[0])
+                    n_sync_c = float(joined['nifty_c'].iloc[-1])
+                    nifty_change_pct = float(((n_sync_c - n_open) / n_open) * 100) if n_open > 0 else 0.0
 
                 if len(joined) >= 4:
                     s_last = float(joined['stock_c'].iloc[-1])

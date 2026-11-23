@@ -468,16 +468,19 @@ def background_screener_worker():
                     bull_watchlist = [{"symbol": x["symbol"], "change": x["change_pct"], "velocity": x["velocity"]} for x in top_bull]
                     bear_watchlist = [{"symbol": x["symbol"], "change": x["change_pct"], "velocity": x["velocity"]} for x in top_bear]
                     latest_dfs.update(fetched_dfs)
-                    for r in filter_results:
-                        sym = r["symbol"]
-                        cdf = fetched_dfs.get(sym)
-                        if cdf is not None and not cdf.empty:
-                            screener_state.setdefault("raw_market_cache", {})[sym] = {
-                                "timestamp": now,
-                                "candle_ts": str(cdf.index[-1]),
-                                "df": cdf,
-                                "fno_filter_data": r
-                            }
+                    
+                    # Store fresh OHLCV data for EVERY successfully fetched F&O symbol (not only initial filter passes!)
+                    filter_map = {r["symbol"]: r for r in filter_results}
+                    for sym, cdf in fetched_dfs.items():
+                        existing_entry = screener_state.setdefault("raw_market_cache", {}).get(sym, {})
+                        fno_data = filter_map.get(sym) or existing_entry.get("fno_filter_data", {})
+                        screener_state["raw_market_cache"][sym] = {
+                            "timestamp": now,
+                            "candle_ts": str(cdf.index[-1]),
+                            "df": cdf,
+                            "fno_filter_data": fno_data,
+                            "data": existing_entry.get("data")
+                        }
 
                 screener_state["bullish_momentum_watchlist"] = bull_watchlist
                 screener_state["bearish_momentum_watchlist"] = bear_watchlist
@@ -543,68 +546,21 @@ def background_screener_worker():
                             cdf = cdf.xs(sym, axis=1, level=1) if sym in cdf.columns.levels[1] else cdf
                         res = evaluate_explosive_momentum(cdf, sym)
                         if res:
+                            existing_fno = screener_state.get("raw_market_cache", {}).get(sym, {}).get("fno_filter_data")
                             screener_state["raw_market_cache"][sym] = {
                                 "timestamp": time.time(),
+                                "candle_ts": str(cdf.index[-1]),
                                 "data": res,
-                                "df": cdf
+                                "df": cdf,
+                                "fno_filter_data": existing_fno
                             }
                             latest_dfs[sym] = cdf
-
-                            # ONLY include in Ranked Opportunities if the stock is part of the latest 5-min sector scan!
-                            if sym not in current_watchlist_set:
-                                continue
-
-                            # Enforce strict feed validation: Reject stale, unvalidated, or corrupt feeds before ranking
-                            feed_val = MarketValidator.validate_feed_freshness(cdf, max_delay_seconds=300, candle_duration_seconds=300)
-                            if not feed_val.get("is_valid", False):
-                                continue
-
-                            is_comp = feed_val.get("is_completed_candle", False)
-                            eval_cdf = cdf if is_comp else cdf.iloc[:-1]
-                            if len(eval_cdf) < 15:
-                                continue
-
-                            # Execute OpportunityRankingEngine live across candidate
-                            # Look up sector mapping: Groww trending map or classify_stock_sector
-                            sec_info = groww_sector_engine.stock_to_sector_map.get(sym, {})
-                            sec_name = sec_info.get("sector")
-                            sec_chg = sec_info.get("sector_change", 0.0)
-                            if not sec_name:
-                                sec_name = classify_stock_sector(sym)
-                                sec_data = screener_state.get("sectors", {}).get(sec_name, {})
-                                sec_chg = sec_data.get("change", 0.0)
-                            
-                            # Retrieve enriched cache if present
-                            enriched = screener_state.get("enriched_signals_cache", {}).get(sym, {}).get("data", {})
-                            opp_eval = {
-                                "is_viable": enriched.get("is_viable", False),
-                                "potential_pct": enriched.get("potential_pct", 0.0),
-                                "risk_reward_ratio": enriched.get("risk_reward_ratio", 0.0),
-                                "stop_loss": enriched.get("suggested_sl"),
-                                "tp1": enriched.get("suggested_tp1"),
-                                "tp2": enriched.get("suggested_tp2"),
-                                "exhaustion_risk": enriched.get("exhaustion_risk", "LOW")
-                            }
-                            eval_res = OpportunityRankingEngine.evaluate_stock_opportunity(
-                                stock_df=eval_cdf,
-                                symbol=sym,
-                                sector_name=sec_name,
-                                sector_change=sec_chg,
-                                nifty_df=nifty_cached_df,
-                                vwap=res.get("vwap"),
-                                opp_eval=opp_eval
-                            )
-                            if eval_res:
-                                candidates_for_ranking.append(eval_res)
                     except Exception:
                         pass
                     time.sleep(0.15)
 
-                # Rank and update top opportunities globally
-                if candidates_for_ranking:
-                    screener_state["ranked_opportunities"] = OpportunityRankingEngine.rank_top_opportunities(
-                        candidates_for_ranking, top_n=3
-                    )
+                # Recompute unified rankings using single source of truth function
+                compute_and_update_ranked_opportunities()
 
                 last_market_poll = now
 
@@ -962,6 +918,113 @@ def smc_scan():
         traceback.print_exc()
         return jsonify({"success": False, "error": str(e)}), 500
 
+def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
+    """
+    Unified ranking pipeline used identically by background worker and API endpoint.
+    Guarantees consistent timestamp validation, RVOL confidence, and structural gates.
+    """
+    now = time.time()
+    
+    # Determine latest completed candle timestamp from NIFTY or market cache
+    nifty_cached = screener_state.get("raw_market_cache", {}).get("^NSEI", {})
+    nifty_df = nifty_cached.get("df")
+    current_candle_ts = None
+    eval_nifty = None
+    if nifty_df is not None and not nifty_df.empty:
+        nifty_val = MarketValidator.validate_feed_freshness(nifty_df, max_delay_seconds=300, candle_duration_seconds=300)
+        is_nifty_comp = nifty_val.get("is_completed_candle", False)
+        eval_nifty = nifty_df if is_nifty_comp else nifty_df.iloc[:-1]
+        if not eval_nifty.empty:
+            current_candle_ts = str(eval_nifty.index[-1])
+    
+    if not current_candle_ts:
+        for s, item in screener_state.get("raw_market_cache", {}).items():
+            if item.get("df") is not None and not item["df"].empty:
+                s_val = MarketValidator.validate_feed_freshness(item["df"], max_delay_seconds=300, candle_duration_seconds=300)
+                is_s_comp = s_val.get("is_completed_candle", False)
+                eval_s = item["df"] if is_s_comp else item["df"].iloc[:-1]
+                if not eval_s.empty:
+                    current_candle_ts = str(eval_s.index[-1])
+                    break
+
+    candidates = []
+    valid_fno_set = set(screener_state.get("fno_universe", []))
+    norm_fno_set = {s.upper().replace(".NS", "") for s in valid_fno_set}
+
+    raw_items = screener_state.get("raw_market_cache", {})
+    for sym, item in raw_items.items():
+        if sym == "^NSEI" or item.get("df") is None:
+            continue
+        clean_sym = sym.replace(".NS", "").upper()
+        if norm_fno_set and clean_sym not in norm_fno_set:
+            continue
+        df_sym = item["df"]
+        
+        # Enforce unified 5m feed validation
+        f_val = MarketValidator.validate_feed_freshness(df_sym, max_delay_seconds=300, candle_duration_seconds=300)
+        if not f_val.get("is_valid", False):
+            continue
+        is_comp = f_val.get("is_completed_candle", False)
+        eval_df_sym = df_sym if is_comp else df_sym.iloc[:-1]
+        if len(eval_df_sym) < 15:
+            continue
+
+        stock_candle_ts = str(eval_df_sym.index[-1])
+
+        sec_info = groww_sector_engine.stock_to_sector_map.get(sym, {})
+        sec_name = sec_info.get("sector")
+        sec_chg = sec_info.get("sector_change", 0.0)
+        if not sec_name:
+            sec_name = classify_stock_sector(sym)
+            sec_data = screener_state.get("sectors", {}).get(sec_name, {})
+            sec_chg = sec_data.get("change", 0.0)
+        
+        # Retrieve enriched cache ONLY if its evaluated completed candle timestamp matches exactly
+        enriched_entry = screener_state.get("enriched_signals_cache", {}).get(sym, {})
+        enriched_candle_ts = str(enriched_entry.get("last_candle_ts", ""))
+        enriched = enriched_entry.get("data", {}) if (enriched_candle_ts and enriched_candle_ts == stock_candle_ts) else {}
+        
+        opp_eval = {
+            "is_viable": enriched.get("is_viable", False),
+            "potential_pct": enriched.get("potential_pct", 0.0),
+            "risk_reward_ratio": enriched.get("risk_reward_ratio", 0.0),
+            "stop_loss": enriched.get("suggested_sl"),
+            "tp1": enriched.get("suggested_tp1"),
+            "tp2": enriched.get("suggested_tp2"),
+            "exhaustion_risk": enriched.get("exhaustion_risk", "LOW")
+        }
+
+        # Retrieve time-slot RVOL and observation count directly from F&O filter cache
+        fno_data = item.get("fno_filter_data", {})
+        time_slot_rvol = fno_data.get("rvol") if fno_data else item.get("data", {}).get("rvol")
+        rvol_obs = fno_data.get("rvol_obs", 0) if fno_data else 0
+
+        eval_res = OpportunityRankingEngine.evaluate_stock_opportunity(
+            stock_df=eval_df_sym,
+            symbol=sym,
+            sector_name=sec_name,
+            sector_change=sec_chg,
+            nifty_df=eval_nifty if eval_nifty is not None and not eval_nifty.empty else nifty_df,
+            vwap=enriched.get("vwap") or (fno_data.get("vwap") if fno_data else None),
+            opp_eval=opp_eval,
+            time_slot_rvol=time_slot_rvol,
+            rvol_obs=rvol_obs
+        )
+        if eval_res:
+            candidates.append(eval_res)
+
+    if not candidates:
+        ranked = {
+            "top_bullish": [], "top_bearish": [], "entry_ready": [], "ignition": [], "preparing": []
+        }
+    else:
+        ranked = OpportunityRankingEngine.rank_top_opportunities(candidates, top_n=3)
+
+    screener_state["ranked_opportunities"] = ranked
+    screener_state["ranked_opportunities_ts"] = now
+    screener_state["ranked_candle_ts"] = current_candle_ts
+    return ranked, current_candle_ts
+
 @app.route("/api/opportunities/ranked")
 def get_ranked_opportunities_endpoint():
     """
@@ -977,24 +1040,12 @@ def get_ranked_opportunities_endpoint():
         nifty_df = nifty_cached.get("df")
         current_candle_ts = None
         if nifty_df is not None and not nifty_df.empty:
-            # Strictly validate and trim NIFTY to its completed candle timestamp
             nifty_val = MarketValidator.validate_feed_freshness(nifty_df, max_delay_seconds=300, candle_duration_seconds=300)
             is_nifty_comp = nifty_val.get("is_completed_candle", False)
             eval_nifty = nifty_df if is_nifty_comp else nifty_df.iloc[:-1]
             if not eval_nifty.empty:
                 current_candle_ts = str(eval_nifty.index[-1])
         
-        if not current_candle_ts:
-            # Fallback to any completed stock df index
-            for s, item in screener_state.get("raw_market_cache", {}).items():
-                if item.get("df") is not None and not item["df"].empty:
-                    s_val = MarketValidator.validate_feed_freshness(item["df"], max_delay_seconds=300, candle_duration_seconds=300)
-                    is_s_comp = s_val.get("is_completed_candle", False)
-                    eval_s = item["df"] if is_s_comp else item["df"].iloc[:-1]
-                    if not eval_s.empty:
-                        current_candle_ts = str(eval_s.index[-1])
-                        break
-
         cached_ranked = screener_state.get("ranked_opportunities")
         cached_candle_ts = screener_state.get("ranked_candle_ts")
         cached_wall_ts = screener_state.get("ranked_opportunities_ts", 0)
@@ -1012,82 +1063,8 @@ def get_ranked_opportunities_endpoint():
                 }
             })
 
-        candidates = []
-        valid_fno_set = set(screener_state.get("fno_universe", []))
-        norm_fno_set = {s.upper().replace(".NS", "") for s in valid_fno_set}
-
-        # High Recall Discovery: Scan all valid F&O stocks present in raw_market_cache (not restricted only to high velocity watchlist)
-        # This guarantees pre-breakout coils quietly accumulating before moving are evaluated!
-        raw_items = screener_state.get("raw_market_cache", {})
-        for sym, item in raw_items.items():
-            if sym == "^NSEI" or item.get("df") is None:
-                continue
-            clean_sym = sym.replace(".NS", "").upper()
-            if norm_fno_set and clean_sym not in norm_fno_set:
-                continue
-            df_sym = item["df"]
-            
-            # Enforce unified 5m feed validation
-            f_val = MarketValidator.validate_feed_freshness(df_sym, max_delay_seconds=300, candle_duration_seconds=300)
-            if not f_val.get("is_valid", False):
-                continue
-            is_comp = f_val.get("is_completed_candle", False)
-            eval_df_sym = df_sym if is_comp else df_sym.iloc[:-1]
-            if len(eval_df_sym) < 15:
-                continue
-
-            stock_candle_ts = str(eval_df_sym.index[-1])
-
-            sec_info = groww_sector_engine.stock_to_sector_map.get(sym, {})
-            sec_name = sec_info.get("sector")
-            sec_chg = sec_info.get("sector_change", 0.0)
-            if not sec_name:
-                sec_name = classify_stock_sector(sym)
-                sec_data = screener_state.get("sectors", {}).get(sec_name, {})
-                sec_chg = sec_data.get("change", 0.0)
-            
-            # Retrieve enriched cache ONLY if its evaluated completed candle timestamp matches exactly
-            # (Do NOT fallback to wall-clock time if candle does not match!)
-            enriched_entry = screener_state.get("enriched_signals_cache", {}).get(sym, {})
-            enriched_candle_ts = str(enriched_entry.get("last_candle_ts", ""))
-            enriched = enriched_entry.get("data", {}) if (enriched_candle_ts and enriched_candle_ts == stock_candle_ts) else {}
-            
-            opp_eval = {
-                "is_viable": enriched.get("is_viable", False),
-                "potential_pct": enriched.get("potential_pct", 0.0),
-                "risk_reward_ratio": enriched.get("risk_reward_ratio", 0.0),
-                "stop_loss": enriched.get("suggested_sl"),
-                "tp1": enriched.get("suggested_tp1"),
-                "tp2": enriched.get("suggested_tp2"),
-                "exhaustion_risk": enriched.get("exhaustion_risk", "LOW")
-            }
-
-            # Retrieve time-slot RVOL and observation count directly from F&O filter cache
-            fno_data = item.get("fno_filter_data", {})
-            time_slot_rvol = fno_data.get("rvol") if fno_data else item.get("data", {}).get("rvol")
-            rvol_obs = fno_data.get("rvol_obs", 0) if fno_data else 0
-
-            eval_res = OpportunityRankingEngine.evaluate_stock_opportunity(
-                stock_df=eval_df_sym,
-                symbol=sym,
-                sector_name=sec_name,
-                sector_change=sec_chg,
-                nifty_df=eval_nifty if 'eval_nifty' in locals() and not eval_nifty.empty else nifty_df,
-                vwap=enriched.get("vwap") or fno_data.get("vwap"),
-                opp_eval=opp_eval,
-                time_slot_rvol=time_slot_rvol,
-                rvol_obs=rvol_obs
-            )
-            if eval_res:
-                candidates.append(eval_res)
-
-        if not candidates:
-            # Explicit fresh scan empty state: clear old memory ranking so stale candidates never persist
-            screener_state["ranked_opportunities"] = {
-                "top_bullish": [], "top_bearish": [], "entry_ready": [], "ignition": [], "preparing": []
-            }
-            screener_state["ranked_opportunities_ts"] = now
-            screener_state["ranked_candle_ts"] = current_candle_ts
+        ranked, current_candle_ts = compute_and_update_ranked_opportunities()
+        if not ranked or not any(ranked.values()):
             return jsonify({
                 "success": True,
                 "status": "NO_TRADE",
@@ -1096,11 +1073,9 @@ def get_ranked_opportunities_endpoint():
                 }
             })
 
-        ranked = OpportunityRankingEngine.rank_top_opportunities(candidates, top_n=3)
-        screener_state["ranked_opportunities"] = ranked
-        screener_state["ranked_opportunities_ts"] = now
-        screener_state["ranked_candle_ts"] = current_candle_ts
         return jsonify({"success": True, "ranked": ranked})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e), "ranked": {"top_bullish": [], "top_bearish": []}})
     except Exception as e:
         return jsonify({"success": False, "error": str(e), "ranked": {"top_bullish": [], "top_bearish": []}})
 

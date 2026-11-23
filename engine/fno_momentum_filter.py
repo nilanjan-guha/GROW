@@ -129,18 +129,23 @@ class FNOMomentumFilter:
             # We look for the last 2 confirmed swing lows / swing highs up to index -2 (excluding unconfirmed forming bars)
             confirmed_swing_lows = []
             confirmed_swing_highs = []
+            confirmed_swing_low_ts = []
+            confirmed_swing_high_ts = []
             low_vals = [float(x) for x in l.values]
             high_vals = [float(x) for x in h.values]
+            ts_vals = [str(x) for x in eval_df.index]
             n_bars = len(low_vals)
-            # Scan backwards from n_bars - 3 down to max(0, n_bars - 30)
+            # Scan backwards from n_bars - 3 down to max(0, n_bars - 35)
             for i in range(n_bars - 3, max(1, n_bars - 35), -1):
                 if (i >= 2 and i + 2 < n_bars):
                     if (low_vals[i] <= low_vals[i-1] and low_vals[i] <= low_vals[i-2] and
                         low_vals[i] <= low_vals[i+1] and low_vals[i] <= low_vals[i+2]):
                         confirmed_swing_lows.append(low_vals[i])
+                        confirmed_swing_low_ts.append(ts_vals[i])
                     if (high_vals[i] >= high_vals[i-1] and high_vals[i] >= high_vals[i-2] and
                         high_vals[i] >= high_vals[i+1] and high_vals[i] >= high_vals[i+2]):
                         confirmed_swing_highs.append(high_vals[i])
+                        confirmed_swing_high_ts.append(ts_vals[i])
                 if len(confirmed_swing_lows) >= 2 and len(confirmed_swing_highs) >= 2:
                     break
 
@@ -159,32 +164,52 @@ class FNOMomentumFilter:
                 if has_lower_highs:
                     structure_status = "CONFIRMED_LOWER_HIGHS"
 
-            # 6. Directional Pre-Breakout / Compression Filters (No Ambiguous Dual Qualification):
-            # Bullish Coil: Price firmly above VWAP, higher-lows or EMA9 > EMA21, volatility compression (NR4/NR7/BB Squeeze)
-            is_pre_coil_bull = (
+            # 6. Directional Pre-Breakout / Compression Discovery:
+            # Two distinct discovery paths:
+            # Path A: Structural Coil (Requires confirmed swing structure + compression + above/below VWAP)
+            # Path B: Early Activity (Improving RVOL + compression near VWAP, explicitly tagged as EARLY_ACTIVITY)
+            is_structural_coil_bull = (
                 (curr_c > curr_vwap) and 
                 (ema9 >= ema21) and 
-                (has_higher_lows or curr_c > curr_o) and 
+                has_higher_lows and 
                 (is_nr4 or is_nr7 or is_bb_squeeze)
             )
-            # Bearish Coil: Price firmly below VWAP, lower-highs or EMA9 < EMA21, volatility compression (NR4/NR7/BB Squeeze)
-            is_pre_coil_bear = (
+            is_structural_coil_bear = (
                 (curr_c < curr_vwap) and 
                 (ema9 <= ema21) and 
-                (has_lower_highs or curr_c < curr_o) and 
+                has_lower_highs and 
                 (is_nr4 or is_nr7 or is_bb_squeeze)
+            )
+
+            is_early_activity_bull = (
+                (curr_c > curr_vwap) and
+                (rvol >= 1.25) and
+                (is_nr4 or is_nr7 or is_bb_squeeze) and
+                not is_structural_coil_bull
+            )
+            is_early_activity_bear = (
+                (curr_c < curr_vwap) and
+                (rvol >= 1.25) and
+                (is_nr4 or is_nr7 or is_bb_squeeze) and
+                not is_structural_coil_bear
             )
 
             # Active Momentum Breakout Path:
             is_bull_momentum = (curr_c >= curr_vwap) and (ema9 >= ema21 * 0.998) and (change_pct >= 0.20 or (rvol >= 1.25 and curr_c > curr_o))
             is_bear_momentum = (curr_c <= curr_vwap) and (ema9 <= ema21 * 1.002) and (change_pct <= -0.20 or (rvol >= 1.25 and curr_c < curr_o))
 
-            is_bull = is_bull_momentum or is_pre_coil_bull
-            is_bear = is_bear_momentum or is_pre_coil_bear
+            is_bull = is_bull_momentum or is_structural_coil_bull or is_early_activity_bull
+            is_bear = is_bear_momentum or is_structural_coil_bear or is_early_activity_bear
 
             # Mutual Exclusivity: If both evaluate true or neither, discard ambiguous chop
             if (is_bull and is_bear) or (not is_bull and not is_bear):
                 return None
+
+            discovery_type = "MOMENTUM"
+            if is_structural_coil_bull or is_structural_coil_bear:
+                discovery_type = "STRUCTURAL_COIL"
+            elif is_early_activity_bull or is_early_activity_bear:
+                discovery_type = "EARLY_ACTIVITY"
 
             # Real momentum velocity: based strictly on price expansion and genuine relative volume (no artificial inflations)
             velocity = round(abs(change_pct) * max(1.0, rvol), 2)
@@ -202,7 +227,15 @@ class FNOMomentumFilter:
                 "vwap": curr_vwap,
                 "is_bull": is_bull,
                 "is_bear": is_bear,
-                "is_pre_coil": is_pre_coil_bull or is_pre_coil_bear,
+                "is_pre_coil": is_structural_coil_bull or is_structural_coil_bear,
+                "discovery_type": discovery_type,
+                "structure_status": structure_status,
+                "confirmed_pivots": {
+                    "swing_lows": confirmed_swing_lows[:2],
+                    "swing_highs": confirmed_swing_highs[:2],
+                    "swing_low_ts": confirmed_swing_low_ts[:2],
+                    "swing_high_ts": confirmed_swing_high_ts[:2]
+                },
                 "is_nr4": is_nr4,
                 "is_nr7": is_nr7,
                 "bb_width": round(bb_width, 2),
