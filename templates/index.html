@@ -246,9 +246,9 @@
                     </div>
 
                     <!-- Tab 3: Closed Trades & AI Learning Journal -->
-                    <div id="tabContentClosed" style="display:none; padding:8px 10px; max-height:280px; overflow-y:auto;">
-                        <div id="closedTradesList" style="display:flex; flex-direction:column; gap:6px; padding-bottom:6px;">
-                            <div style="font-size:0.72rem; color:var(--text-muted); text-align:center; padding:15px;">Loading closed trades & learning data...</div>
+                    <div id="tabContentClosed" style="display:none; padding:10px 12px; max-height:300px; overflow-y:auto; background:rgba(3,7,18,0.95);">
+                        <div id="closedTradesList" style="display:flex; flex-direction:column; gap:8px; padding-bottom:8px;">
+                            <div style="font-size:0.75rem; color:#94a3b8; text-align:center; padding:16px;">Loading closed trades & learning data...</div>
                         </div>
                     </div>
                 </div>
@@ -498,23 +498,27 @@
                         const isLoss = c.outcome === 'LOSS';
                         const isEod = c.outcome.includes('EOD') || c.outcome.includes('STALE');
                         
-                        let tagCol = isWin ? 'var(--neon-green)' : (isLoss ? 'var(--neon-red)' : 'var(--neon-amber)');
+                        let tagBg = isWin ? 'rgba(16,185,129,0.18)' : (isLoss ? 'rgba(239,68,68,0.18)' : 'rgba(245,158,11,0.18)');
+                        let tagCol = isWin ? '#34d399' : (isLoss ? '#f87171' : '#fbbf24');
+                        let tagBorder = isWin ? '#059669' : (isLoss ? '#dc2626' : '#d97706');
                         let tagLabel = isWin ? 'WIN / TARGET HIT' : (isLoss ? 'LOSS / STOP HIT' : 'CLOSED / EOD CHOP');
                         let learnNote = isWin ? 'Strategy Weight Boosted (+Alpha)' : (isLoss ? 'Stop Loss Analysed: Down-weighted Strategy' : 'Sideways Filter Calibrated');
 
                         const pnl = Number(c.net_pnl || c.final_pnl || 0).toFixed(1);
                         const pnlSign = Number(pnl) >= 0 ? '+' : '';
-                        const pnlCol = Number(pnl) >= 0 ? 'var(--neon-green)' : 'var(--neon-red)';
+                        const pnlCol = Number(pnl) >= 0 ? '#34d399' : '#f87171';
+                        const cardBg = isWin ? 'rgba(16,185,129,0.06)' : (isLoss ? 'rgba(239,68,68,0.06)' : 'rgba(255,255,255,0.04)');
+                        const cardBorder = isWin ? 'rgba(16,185,129,0.25)' : (isLoss ? 'rgba(239,68,68,0.25)' : 'rgba(255,255,255,0.12)');
 
                         html += `
-                        <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:6px; padding:7px 10px; display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:2px; flex-shrink:0;">
-                            <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; flex:1; min-width:0;">
-                                <span style="font-weight:800; color:#fff; font-size:0.76rem; letter-spacing:0.5px;">${c.symbol.replace('.NS', '')}</span>
-                                <span style="font-size:0.60rem; color:${tagCol}; border:1px solid ${tagCol}; background:rgba(255,255,255,0.02); padding:1px 5px; border-radius:3px; font-weight:700; white-space:nowrap;">${tagLabel}</span>
-                                <span style="font-size:0.63rem; color:#94a3b8; font-weight:600; white-space:nowrap;">${c.strategy || 'SMC'}</span>
-                                <span style="font-size:0.62rem; color:var(--neon-cyan); background:rgba(0,240,255,0.08); padding:1px 6px; border-radius:3px; white-space:nowrap;">AI: ${learnNote}</span>
+                        <div style="background:${cardBg}; border:1px solid ${cardBorder}; border-radius:6px; padding:8px 12px; display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:4px; flex-shrink:0;">
+                            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; flex:1; min-width:0;">
+                                <span style="font-weight:800; color:#f8fafc; font-size:0.80rem; letter-spacing:0.5px;">${c.symbol.replace('.NS', '')}</span>
+                                <span style="font-size:0.65rem; color:${tagCol}; border:1px solid ${tagBorder}; background:${tagBg}; padding:2px 7px; border-radius:4px; font-weight:800; letter-spacing:0.3px; white-space:nowrap;">${tagLabel}</span>
+                                <span style="font-size:0.68rem; color:#cbd5e1; font-weight:700; background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:3px; white-space:nowrap;">${c.strategy || 'SMC'}</span>
+                                <span style="font-size:0.66rem; color:#38bdf8; background:rgba(14,165,233,0.15); border:1px solid rgba(56,189,248,0.3); padding:2px 7px; border-radius:4px; font-weight:600; white-space:nowrap;">AI: ${learnNote}</span>
                             </div>
-                            <div style="font-size:0.80rem; font-weight:800; color:${pnlCol}; white-space:nowrap; padding-left:8px; flex-shrink:0;">
+                            <div style="font-size:0.85rem; font-weight:800; color:${pnlCol}; white-space:nowrap; padding-left:10px; flex-shrink:0; font-family:'Roboto Mono', monospace;">
                                 ${pnlSign}₹${pnl}
                             </div>
                         </div>`;
