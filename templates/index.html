@@ -703,6 +703,25 @@
                 const s = t.symbol;
                 const smc = t.smc;
                 const isBuy = smc.action.includes('BUY');
+                const entryPrice = Number(smc.entry_price || smc.current_price || 0);
+                const currentPrice = Number(smc.live_price || smc.current_price || entryPrice);
+                
+                // Calculate real-time Gain / Loss % from Entry Price
+                let pnlPct = 0;
+                let pnlDiff = 0;
+                if (entryPrice > 0) {
+                    if (isBuy) {
+                        pnlDiff = currentPrice - entryPrice;
+                        pnlPct = (pnlDiff / entryPrice) * 100;
+                    } else {
+                        // Short: profit when price falls
+                        pnlDiff = entryPrice - currentPrice;
+                        pnlPct = (pnlDiff / entryPrice) * 100;
+                    }
+                }
+
+                const pnlSign = pnlPct >= 0 ? '+' : '';
+                const pnlColor = pnlPct >= 0 ? 'var(--neon-green)' : 'var(--neon-red)';
                 const sign = isBuy ? '+' : '-';
                 const pot1 = smc.potential_pct ? `(${sign}${smc.potential_pct}% room)` : '';
                 const pot2 = smc.potential_tp2_pct ? `(${sign}${smc.potential_tp2_pct}%)` : '';
@@ -710,13 +729,23 @@
                 const borderBottom = idx < sortedTrades.length - 1 ? 'border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 6px; margin-bottom: 6px;' : '';
 
                 html += `
-                <div style="cursor:pointer; ${borderBottom}" onclick="selectStock('${s}')" title="Click to open radar for ${s}">
-                    <span style="color:${isBuy ? 'var(--neon-green)' : 'var(--neon-red)'}">🔥 #${idx + 1} ${isBuy ? 'BUY / CALL (CE)' : 'SELL / PUT (PE)'}</span> 
-                    <strong>${s.replace('.NS', '')}</strong> @ ₹${Number(smc.current_price).toFixed(1)} 
-                    &nbsp;|&nbsp; SL: <span style="color:var(--neon-amber);">₹${smc.suggested_sl}</span> 
-                    &nbsp;|&nbsp; Target 1: <span style="color:var(--neon-cyan);">₹${smc.suggested_tp1} ${pot1}</span> 
-                    ${smc.suggested_tp2 ? '&nbsp;|&nbsp; Target 2: ₹' + smc.suggested_tp2 + ' ' + pot2 : ''} 
-                    ${rrText}
+                <div style="cursor:pointer; ${borderBottom} display:flex; justify-content:space-between; align-items:center;" onclick="selectStock('${s}')" title="Click to open radar for ${s}">
+                    <div>
+                        <span style="color:${isBuy ? 'var(--neon-green)' : 'var(--neon-red)'}">🔥 #${idx + 1} ${isBuy ? 'BUY / CALL (CE)' : 'SELL / PUT (PE)'}</span> 
+                        <strong>${s.replace('.NS', '')}</strong> 
+                        &nbsp;Entry: ₹${entryPrice.toFixed(1)} 
+                        &nbsp;|&nbsp; SL: <span style="color:var(--neon-amber);">₹${smc.suggested_sl}</span> 
+                        &nbsp;|&nbsp; Target 1: <span style="color:var(--neon-cyan);">₹${smc.suggested_tp1} ${pot1}</span> 
+                        ${smc.suggested_tp2 ? '&nbsp;|&nbsp; Target 2: ₹' + smc.suggested_tp2 + ' ' + pot2 : ''} 
+                        ${rrText}
+                    </div>
+                    <div style="text-align:right; min-width:140px; margin-left:12px;">
+                        <span style="font-size:0.68rem; color:#94a3b8;">LTP: </span>
+                        <strong style="font-size:0.85rem; color:#fff;">₹${currentPrice.toFixed(1)}</strong>
+                        <span style="background:${pnlPct >= 0 ? 'rgba(0,255,170,0.15)' : 'rgba(255,51,102,0.15)'}; border:1px solid ${pnlColor}; color:${pnlColor}; padding:1px 6px; border-radius:4px; font-size:0.75rem; font-weight:800; margin-left:6px;">
+                            ${pnlSign}${pnlPct.toFixed(2)}%
+                        </span>
+                    </div>
                 </div>`;
             });
             alertDetails.innerHTML = html;
@@ -834,12 +863,19 @@
             if (!smc || !smc.action || (!smc.action.includes('BUY') && !smc.action.includes('SELL'))) {
                 return;
             }
-            const isNew = !activeConfirmedTrades[symbol] || !notifiedTradesSet.has(symbol);
+            const existing = activeConfirmedTrades[symbol];
+            const isNew = !existing || !notifiedTradesSet.has(symbol);
+            
+            // Preserve the original entry price once confirmed!
+            const entryPrice = (existing && existing.smc && existing.smc.entry_price) ? existing.smc.entry_price : (smc.entry_price || smc.current_price);
+            smc.entry_price = entryPrice;
+            smc.live_price = smc.current_price || entryPrice;
+
             activeConfirmedTrades[symbol] = {
-                signal_id: smc.signal_id || null,
+                signal_id: smc.signal_id || (existing ? existing.signal_id : null),
                 symbol: symbol,
                 smc: smc,
-                time: Date.now()
+                time: existing ? existing.time : Date.now()
             };
 
             if (isNew) {
@@ -867,22 +903,26 @@
 
                     activeDbList.forEach(item => {
                         const sym = item.symbol;
-                        if (!activeConfirmedTrades[sym]) {
-                            activeConfirmedTrades[sym] = {
-                                signal_id: item.id,
-                                symbol: sym,
-                                smc: {
-                                    action: item.direction,
-                                    current_price: item.entry_price,
-                                    suggested_sl: item.stop_loss,
-                                    suggested_tp1: item.target_1,
-                                    suggested_tp2: item.target_2,
-                                    composite_score: item.score,
-                                    signal_status: 'CONFIRMED (Completed Candle)'
-                                },
-                                time: Date.now()
-                            };
-                        }
+                        const existing = activeConfirmedTrades[sym];
+                        const entryPrice = item.entry_price || (existing && existing.smc ? existing.smc.entry_price : 0);
+                        const livePrice = (existing && existing.smc && existing.smc.live_price) ? existing.smc.live_price : entryPrice;
+                        
+                        activeConfirmedTrades[sym] = {
+                            signal_id: item.id,
+                            symbol: sym,
+                            smc: {
+                                action: item.direction,
+                                entry_price: entryPrice,
+                                live_price: livePrice,
+                                current_price: livePrice,
+                                suggested_sl: item.stop_loss,
+                                suggested_tp1: item.target_1,
+                                suggested_tp2: item.target_2,
+                                composite_score: item.score,
+                                signal_status: 'CONFIRMED (Completed Candle)'
+                            },
+                            time: existing ? existing.time : Date.now()
+                        };
                     });
 
                     // Keep confirmed trades persistent until Target or Stop Loss is officially hit
@@ -1027,6 +1067,12 @@
                 const data = await res.json();
                 if (data.success && data.smc) {
                     const smc = data.smc;
+                    // If target is an active confirmed trade, refresh its live price for PnL calculation!
+                    if (activeConfirmedTrades[target.symbol]) {
+                        activeConfirmedTrades[target.symbol].smc.live_price = smc.current_price;
+                        renderConfirmedBanner();
+                    }
+
                     if (smc.action.includes('BUY') || smc.action.includes('SELL')) {
                         log(`🎯 [INSTITUTIONAL SIGNAL] ${target.symbol} => ${smc.action} | SL: ₹${smc.suggested_sl} | TP1: ₹${smc.suggested_tp1}`, 'ENTRY');
                         addOrUpdateConfirmedTrade(target.symbol, smc);
