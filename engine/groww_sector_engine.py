@@ -18,53 +18,76 @@ HEADERS = {
 class GrowwSectorEngine:
     def __init__(self):
         self.cached_sectors = {}
-        self.stock_to_sector_map = {}  # Symbol -> {"sector": name, "bias": "BULLISH"/"BEARISH", "relative_strength": float}
+        self.stock_to_sector_map = {}  # Symbol -> {"sector": name, "bias": "BULLISH"/"BEARISH"/"NEUTRAL", "relative_strength": float}
         self.last_fetch_time = 0
         self.cache_ttl = 300  # 5 minutes TTL
+        self.is_stale = False
+        self.last_error = None
+        self.expected_fno_coverage = 219
+        self.actual_fno_coverage = 0
 
     def fetch_groww_trending_sectors(self, fno_universe_set):
         """
         Fetches all 60 Groww trending sectors directly from Groww.
         Enforces a 300-second cache TTL.
-        Identifies top 3 bullish and top 3 bearish sectors that have active F&O stocks.
-        If a sector has no moving F&O stocks, it checks the next sector (e.g. 4th, 5th, 6th).
-        Maintains a comprehensive stock_to_sector_map across all scanned constituents.
+        Identifies top 3 bullish, top 3 bearish, and neutral sectors that have active F&O stocks.
+        If a sector has no moving F&O stocks, it checks the next sector.
+        Tracks explicit stale status and actual F&O coverage count.
         """
         now = time.time()
-        if self.cached_sectors and (now - self.last_fetch_time < self.cache_ttl):
-            return self.cached_sectors
+        # Stale check: if cache exists but is older than cache_ttl (300s), mark stale
+        if self.cached_sectors:
+            if now - self.last_fetch_time > self.cache_ttl:
+                self.is_stale = True
+            else:
+                self.is_stale = False
+                return self.cached_sectors
 
         url = 'https://groww.in/stocks/sectors-trending'
+        sectors_raw = []
         try:
             r = requests.get(url, headers=HEADERS, timeout=8)
             if r.status_code != 200:
                 print(f"[GROWW SECTORS] Error HTTP {r.status_code}")
+                self.is_stale = True
+                self.last_error = f"HTTP_{r.status_code}"
                 return self.cached_sectors
             
             soup = BeautifulSoup(r.text, 'html.parser')
             script = soup.find('script', id='__NEXT_DATA__')
             if not script:
                 print("[GROWW SECTORS] __NEXT_DATA__ script tag not found")
+                self.is_stale = True
+                self.last_error = "MISSING_NEXT_DATA"
                 return self.cached_sectors
                 
             data = json.loads(script.string)
             sectors_raw = data.get('props', {}).get('pageProps', {}).get('sectors', [])
             if not sectors_raw:
+                self.is_stale = True
+                self.last_error = "EMPTY_SECTOR_DATA"
                 return self.cached_sectors
         except Exception as e:
             print("[GROWW SECTORS] Network exception:", e)
+            self.is_stale = True
+            self.last_error = str(e)
             return self.cached_sectors
 
         # Normalize F&O set symbols
         norm_fno = {s.upper().replace(".NS", "") for s in fno_universe_set}
+        if fno_universe_set:
+            self.expected_fno_coverage = len(fno_universe_set)
 
-        # Sort all sectors strictly by Groww's official 1D price change percent
+        # Sort all sectors by Groww's official 1D price change percent
         sorted_bullish = sorted([s for s in sectors_raw if s.get('dayChangePercent', 0) > 0], key=lambda x: x.get('dayChangePercent', 0), reverse=True)
         sorted_bearish = sorted([s for s in sectors_raw if s.get('dayChangePercent', 0) < 0], key=lambda x: x.get('dayChangePercent', 0))
+        # Neutral / Flat sectors (|dayChangePercent| <= 0.3% or near flat)
+        sorted_neutral = sorted([s for s in sectors_raw if abs(s.get('dayChangePercent', 0)) <= 0.35], key=lambda x: abs(x.get('dayChangePercent', 0)))
 
         sector_results = {}
         # Build local dictionary first to ensure atomic replacement on completion
         new_stock_to_sector_map = {}
+        unique_fno_covered = set()
 
         # 1. Evaluate Bullish Sectors
         bull_count = 0
@@ -74,20 +97,23 @@ class GrowwSectorEngine:
             change_pct = round(s.get('dayChangePercent', 0.0), 2)
             
             constituents = self._fetch_sector_constituents(s_name, s_code, norm_fno, is_bullish=True, sec_pct=change_pct)
-            # Only qualify if it has at least 1 moving positive F&O stock
             if constituents:
                 bull_count += 1
+                for c in constituents:
+                    unique_fno_covered.add(c["symbol"].replace(".NS", "").upper())
                 sector_results[s_name] = {
                     "ticker": s_code,
                     "groww_code": s_code,
                     "change": change_pct,
                     "is_bullish": True,
+                    "is_neutral": False,
                     "gainers": s.get('positiveStocks', len(constituents)),
                     "losers": s.get('negativeStocks', 0),
                     "top_5": constituents[:5],
                     "all_constituents": constituents,
                     "fno_coverage_count": len(constituents),
-                    "last_updated": now
+                    "last_updated": now,
+                    "is_stale": False
                 }
                 for stk in constituents:
                     new_stock_to_sector_map[stk["symbol"]] = {
@@ -99,7 +125,7 @@ class GrowwSectorEngine:
                 if bull_count >= 3:
                     break
 
-        # 2. Evaluate Bearish Sectors (Skip sectors with 0 moving F&O losers)
+        # 2. Evaluate Bearish Sectors
         bear_count = 0
         for s in sorted_bearish:
             s_name = s['sectorName']
@@ -107,20 +133,23 @@ class GrowwSectorEngine:
             change_pct = round(s.get('dayChangePercent', 0.0), 2)
             
             constituents = self._fetch_sector_constituents(s_name, s_code, norm_fno, is_bullish=False, sec_pct=change_pct)
-            # Skip if no negative moving F&O stock
             if constituents:
                 bear_count += 1
+                for c in constituents:
+                    unique_fno_covered.add(c["symbol"].replace(".NS", "").upper())
                 sector_results[s_name] = {
                     "ticker": s_code,
                     "groww_code": s_code,
                     "change": change_pct,
                     "is_bullish": False,
+                    "is_neutral": False,
                     "gainers": s.get('positiveStocks', 0),
                     "losers": s.get('negativeStocks', len(constituents)),
                     "top_5": constituents[:5],
                     "all_constituents": constituents,
                     "fno_coverage_count": len(constituents),
-                    "last_updated": now
+                    "last_updated": now,
+                    "is_stale": False
                 }
                 for stk in constituents:
                     new_stock_to_sector_map[stk["symbol"]] = {
@@ -132,10 +161,57 @@ class GrowwSectorEngine:
                 if bear_count >= 3:
                     break
 
+        # 3. Evaluate Neutral Sectors (Top 2 Neutral / Sideways Sectors for stock-level discovery)
+        neutral_count = 0
+        for s in sorted_neutral:
+            s_name = s['sectorName']
+            if s_name in sector_results:
+                continue
+            s_code = s['industryCode']
+            change_pct = round(s.get('dayChangePercent', 0.0), 2)
+            
+            constituents = self._fetch_sector_constituents(s_name, s_code, norm_fno, is_bullish=True, sec_pct=change_pct)
+            if constituents:
+                neutral_count += 1
+                for c in constituents:
+                    unique_fno_covered.add(c["symbol"].replace(".NS", "").upper())
+                sector_results[s_name] = {
+                    "ticker": s_code,
+                    "groww_code": s_code,
+                    "change": change_pct,
+                    "is_bullish": False,
+                    "is_neutral": True,
+                    "gainers": s.get('positiveStocks', 0),
+                    "losers": s.get('negativeStocks', 0),
+                    "top_5": constituents[:5],
+                    "all_constituents": constituents,
+                    "fno_coverage_count": len(constituents),
+                    "last_updated": now,
+                    "is_stale": False
+                }
+                for stk in constituents:
+                    if stk["symbol"] not in new_stock_to_sector_map:
+                        new_stock_to_sector_map[stk["symbol"]] = {
+                            "sector": s_name,
+                            "bias": "NEUTRAL",
+                            "sector_change": change_pct,
+                            "relative_strength": stk.get("relative_strength", 0.0)
+                        }
+                if neutral_count >= 2:
+                    break
+
+        self.actual_fno_coverage = len(unique_fno_covered)
+        # Check coverage vs expected (warn if coverage is abnormally low)
+        if self.expected_fno_coverage > 0 and (self.actual_fno_coverage / self.expected_fno_coverage) < 0.25:
+            self.is_stale = True
+        else:
+            self.is_stale = False
+
         # Atomic replacement: assign once rebuild is completely finished
         self.stock_to_sector_map = new_stock_to_sector_map
         self.cached_sectors = sector_results
         self.last_fetch_time = now
+        self.last_error = None
         return sector_results
 
     def _fetch_sector_constituents(self, sector_name, industry_code, norm_fno_set, is_bullish, sec_pct):

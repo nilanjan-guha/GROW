@@ -480,7 +480,9 @@ def background_screener_worker():
                     filter_map = {r["symbol"]: r for r in filter_results}
                     for sym, cdf in fetched_dfs.items():
                         existing_entry = screener_state.setdefault("raw_market_cache", {}).get(sym, {})
-                        fno_data = filter_map.get(sym) or existing_entry.get("fno_filter_data", {})
+                        # Fix P1 Issue 1: If current filter run returns no result for sym, clear/invalidate stale fno_filter_data!
+                        # Do not fallback to existing_entry's old fno_filter_data, which causes stale setups to persist.
+                        fno_data = filter_map.get(sym)
                         eval_ts = fno_data.get("evaluated_completed_candle_ts") if fno_data else str(cdf.index[-1])
                         screener_state["raw_market_cache"][sym] = {
                             "timestamp": now,
@@ -892,6 +894,42 @@ def smc_scan():
             res["signal_id"] = None
             res["signal_status"] = "MARKET CLOSED"
         elif inst_res["direction"] != "NEUTRAL":
+            # Check if this candidate is in ranked opportunities to verify entry-readiness / actionability
+            ranked_cache = screener_state.get("ranked_opportunities") or {}
+            all_ranked_cands = (ranked_cache.get("top_bullish", []) + 
+                                ranked_cache.get("top_bearish", []) + 
+                                ranked_cache.get("entry_ready", []) + 
+                                ranked_cache.get("ignition", []) + 
+                                ranked_cache.get("preparing", []) + 
+                                ranked_cache.get("observing", []))
+            
+            matching_cand = next((c for c in all_ranked_cands if c.get("symbol") == symbol or c.get("symbol") == clean_sym), None)
+            
+            # If the candidate was evaluated in ranked engine as non-actionable (e.g. PREPARING, OBSERVING, or SECTOR_WATCHLIST_ONLY),
+            # reject trade generation and enforce WAIT FOR ENTRY
+            is_candidate_actionable = True
+            if matching_cand is not None:
+                is_candidate_actionable = matching_cand.get("is_actionable", False)
+                cand_stage = matching_cand.get("stage", "WATCHLIST")
+                if not is_candidate_actionable:
+                    res["action"] = f"MONITORING ({cand_stage}) - WAIT FOR TRIGGER"
+                    res["verdict"] = f"STAGE: {cand_stage} | SCORE {inst_res['composite_score']}/100"
+                    res["suggested_sl"] = None
+                    res["suggested_tp1"] = None
+                    res["suggested_tp2"] = None
+                    res["reasoning"] = f"Candidate is in stage {cand_stage} (watch-only). Strictly awaiting confirmed breakout/breakdown trigger."
+                    res["signal_id"] = None
+                    res["signal_status"] = "WATCH_ONLY"
+                    res["is_actionable"] = False
+                    
+                    screener_state["enriched_signals_cache"][symbol] = {
+                        "timestamp": now,
+                        "last_candle_ts": latest_candle_ts,
+                        "data": res
+                    }
+                    return jsonify({"success": True, "smc": res})
+
+            res["is_actionable"] = True
             res["action"] = f"{inst_res['direction']} / {'CALL (CE)' if inst_res['direction'] == 'BUY' else 'PUT (PE)'} [{inst_res['primary_strategy'].upper()}]"
             res["verdict"] = f"SCORE {inst_res['composite_score']}/100 | WIN PROB {inst_res['probability_pct']}%"
             res["suggested_sl"] = inst_res["suggested_sl"]
@@ -980,24 +1018,31 @@ def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
     norm_fno_set = {s.upper().replace(".NS", "") for s in valid_fno_set}
 
     # Sector-First Hierarchy:
-    # 1. Select Top 3 Bullish and Top 3 Bearish sectors by explicit live performance sorting
+    # 1. Select Top 3 Bullish, Top 3 Bearish, and Neutral sectors by explicit live performance sorting
+    # Enforce sector cache freshness and coverage
     sectors = screener_state.get("sectors", {})
-    if not sectors:
-        sectors = calculate_dynamic_sectors()
-        screener_state["sectors"] = sectors
+    if not sectors or getattr(groww_sector_engine, "is_stale", False):
+        fresh_sectors = calculate_dynamic_sectors()
+        if fresh_sectors:
+            sectors = fresh_sectors
+            screener_state["sectors"] = sectors
 
     # Explicitly sort sectors by performance
     sorted_bull_sectors = sorted(
-        [(name, data) for name, data in sectors.items() if data.get("is_bullish") and data.get("change", 0.0) > 0.0],
+        [(name, data) for name, data in sectors.items() if data.get("is_bullish") and not data.get("is_neutral") and data.get("change", 0.0) > 0.0],
         key=lambda x: x[1].get("change", 0.0),
         reverse=True
     )[:3]
     sorted_bear_sectors = sorted(
-        [(name, data) for name, data in sectors.items() if not data.get("is_bullish") and data.get("change", 0.0) < 0.0],
+        [(name, data) for name, data in sectors.items() if not data.get("is_bullish") and not data.get("is_neutral") and data.get("change", 0.0) < 0.0],
         key=lambda x: x[1].get("change", 0.0)
     )[:3]
+    # Include Neutral / Sideways sectors for stock-level discovery
+    sorted_neutral_sectors = [
+        (name, data) for name, data in sectors.items() if data.get("is_neutral")
+    ][:2]
     
-    priority_sectors = set([s[0] for s in sorted_bull_sectors] + [s[0] for s in sorted_bear_sectors])
+    priority_sectors = set([s[0] for s in sorted_bull_sectors] + [s[0] for s in sorted_bear_sectors] + [s[0] for s in sorted_neutral_sectors])
 
     # Gather all F&O constituent symbols from top sectors (not just top 5)
     sector_constituents = set()
