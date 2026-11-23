@@ -117,22 +117,54 @@ class InstitutionalStrategyEngine:
         from engine.anomaly_engine import AnomalyDetector
         rvol = AnomalyDetector.calculate_time_of_day_rvol(df)
 
-        # SMC: Incremental Candle-by-Candle Order Blocks & Liquidity Sweeps (Zero Lookahead):
-        # We track OB creation and mitigation sequentially over time strictly up to candle len(df)-1.
-        bull_obs, bear_obs = [], []
-        swing_highs, swing_lows = [], []
+        # SMC: Robust Incremental Order Blocks & Confirmed Swing Points (Zero Lookahead)
+        # 1. Swing points with explicit confirmation timestamps:
+        # A pivot at index i is confirmed only after candles i+1 and i+2 close (confirmation_idx = i+2).
+        swing_high_records = []
+        swing_low_records = []
         hist_df = df
+        d_times = hist_df.index
         
-        # 1. Swing points identified using strictly completed past bars
         for i in range(2, len(hist_df)-2):
+            confirm_idx = i + 2
+            confirm_ts = str(d_times[confirm_idx])
+            pivot_ts = str(d_times[i])
+            
             if float(h.iloc[i]) == max([float(x) for x in h.iloc[i-2:i+3]]):
-                swing_highs.append(float(h.iloc[i]))
+                p_high = float(h.iloc[i])
+                # Check if swept or broken by subsequent completed candles up to len(hist_df)-1
+                is_swept = any(float(h.iloc[m]) > p_high and float(c.iloc[m]) < p_high for m in range(confirm_idx+1, len(hist_df)))
+                is_broken = any(float(c.iloc[m]) > p_high for m in range(confirm_idx+1, len(hist_df)))
+                swing_high_records.append({
+                    "price": p_high,
+                    "pivot_idx": i,
+                    "pivot_ts": pivot_ts,
+                    "confirm_idx": confirm_idx,
+                    "confirm_ts": confirm_ts,
+                    "is_swept": is_swept,
+                    "is_broken": is_broken
+                })
+                
             if float(l.iloc[i]) == min([float(x) for x in l.iloc[i-2:i+3]]):
-                swing_lows.append(float(l.iloc[i]))
+                p_low = float(l.iloc[i])
+                is_swept = any(float(l.iloc[m]) < p_low and float(c.iloc[m]) > p_low for m in range(confirm_idx+1, len(hist_df)))
+                is_broken = any(float(c.iloc[m]) < p_low for m in range(confirm_idx+1, len(hist_df)))
+                swing_low_records.append({
+                    "price": p_low,
+                    "pivot_idx": i,
+                    "pivot_ts": pivot_ts,
+                    "confirm_idx": confirm_idx,
+                    "confirm_ts": confirm_ts,
+                    "is_swept": is_swept,
+                    "is_broken": is_broken
+                })
 
-        # 2. Incremental order block state machine:
-        # At each step k, new OBs created at k-1 are added as unmitigated.
-        # Any existing active OB pierced by candle k's range is marked mitigated at candle k.
+        swing_highs = [rec["price"] for rec in swing_high_records]
+        swing_lows = [rec["price"] for rec in swing_low_records]
+
+        # 2. Incremental order block lifecycle state machine:
+        # States: CREATED -> ACTIVE -> PARTIALLY_MITIGATED -> FULLY_MITIGATED / INVALIDATED
+        # Requires displacement (expansion candle range >= 1.25x ATR or RVOL >= 1.2)
         active_bull_obs = []
         active_bear_obs = []
         
@@ -142,44 +174,61 @@ class InstitutionalStrategyEngine:
             h_prev = float(h.iloc[k-1])
             l_prev = float(l.iloc[k-1])
             c_curr = float(c.iloc[k])
+            o_curr = float(o.iloc[k])
+            h_curr = float(h.iloc[k])
+            l_curr = float(l.iloc[k])
+            v_curr = float(v.iloc[k])
+            curr_rng = h_curr - l_curr
             
-            # Check if previous bar formed a Bullish OB (Down candle immediately engulfed upward)
-            if c_prev < o_prev and c_curr > h_prev:
+            # Displacement check on confirming candle k:
+            # Body must expand with significant movement (>= 1.2x ATR or strong volume)
+            has_displacement = (curr_rng >= (atr14 * 1.1)) or (c_curr > o_curr and (c_curr - o_curr) >= (atr14 * 0.7)) or (c_curr < o_curr and (o_curr - c_curr) >= (atr14 * 0.7))
+            
+            # Bullish Demand OB: Down candle followed by displacement breaking above its high
+            if c_prev < o_prev and c_curr > h_prev and has_displacement:
                 active_bull_obs.append({
                     "top": h_prev,
                     "bottom": l_prev,
+                    "mid": (h_prev + l_prev) / 2.0,
                     "created_at_idx": k,
-                    "mitigated": False
+                    "created_ts": str(d_times[k]),
+                    "state": "ACTIVE"  # CREATED -> ACTIVE
                 })
             
-            # Check if previous bar formed a Bearish OB (Up candle immediately engulfed downward)
-            if c_prev > o_prev and c_curr < l_prev:
+            # Bearish Supply OB: Up candle followed by displacement breaking below its low
+            if c_prev > o_prev and c_curr < l_prev and has_displacement:
                 active_bear_obs.append({
                     "top": h_prev,
                     "bottom": l_prev,
+                    "mid": (h_prev + l_prev) / 2.0,
                     "created_at_idx": k,
-                    "mitigated": False
+                    "created_ts": str(d_times[k]),
+                    "state": "ACTIVE"
                 })
             
-            # Check mitigation by current candle k on existing active OBs formed prior to k
-            curr_low = float(l.iloc[k])
-            curr_high = float(h.iloc[k])
-            
+            # Lifecycle state progression for candles subsequent to creation:
+            # - TOUCH top / bottom: PARTIALLY_MITIGATED (wick enters zone)
+            # - PIERCE below bottom (bull) or above top (bear): INVALIDATED / FULLY_MITIGATED
             for ob in active_bull_obs:
-                if not ob["mitigated"] and ob["created_at_idx"] < k:
-                    if curr_low <= ob["top"]:
-                        ob["mitigated"] = True
+                if ob["created_at_idx"] < k and ob["state"] in ("ACTIVE", "PARTIALLY_MITIGATED"):
+                    if l_curr < ob["bottom"]:
+                        ob["state"] = "INVALIDATED"
+                    elif l_curr <= ob["top"]:
+                        ob["state"] = "PARTIALLY_MITIGATED"
             
             for ob in active_bear_obs:
-                if not ob["mitigated"] and ob["created_at_idx"] < k:
-                    if curr_high >= ob["bottom"]:
-                        ob["mitigated"] = True
+                if ob["created_at_idx"] < k and ob["state"] in ("ACTIVE", "PARTIALLY_MITIGATED"):
+                    if h_curr > ob["top"]:
+                        ob["state"] = "INVALIDATED"
+                    elif h_curr >= ob["bottom"]:
+                        ob["state"] = "PARTIALLY_MITIGATED"
 
-        # STRICT RULE: Only consider active, unmitigated order blocks as of the CURRENT candle
-        fresh_bull_obs = [ob for ob in active_bull_obs if not ob["mitigated"]]
-        fresh_bear_obs = [ob for ob in active_bear_obs if not ob["mitigated"]]
+        # Relevant Order Blocks:
+        # Demand OB must be BELOW or touching current price (cannot be above current price for Bullish!)
+        # Supply OB must be ABOVE or touching current price (cannot be below current price for Bearish!)
+        fresh_bull_obs = [ob for ob in active_bull_obs if ob["state"] in ("ACTIVE", "PARTIALLY_MITIGATED") and ob["top"] <= (curr_c * 1.005)]
+        fresh_bear_obs = [ob for ob in active_bear_obs if ob["state"] in ("ACTIVE", "PARTIALLY_MITIGATED") and ob["bottom"] >= (curr_c * 0.995)]
         
-        # Select the nearest, most relevant fresh order block to current price:
         near_demand_ob = min(fresh_bull_obs, key=lambda ob: abs(curr_c - ob['top'])) if fresh_bull_obs else None
         near_supply_ob = min(fresh_bear_obs, key=lambda ob: abs(curr_c - ob['bottom'])) if fresh_bear_obs else None
 
@@ -383,8 +432,8 @@ class InstitutionalStrategyEngine:
             direction=candidate_dir,
             prev_close=prev_close,
             vwap=vwap,
-            supply_obs=bear_obs,
-            demand_obs=bull_obs,
+            supply_obs=fresh_bear_obs,
+            demand_obs=fresh_bull_obs,
             stop_loss=candidate_sl,
             daily_df=daily_df,
             orb_levels=shared_orb_levels
@@ -458,6 +507,10 @@ class InstitutionalStrategyEngine:
             "opportunity_reason": opp_eval.get("reason", ""),
             "nearest_demand_ob": near_demand_ob,
             "nearest_supply_ob": near_supply_ob,
+            "active_demand_obs": fresh_bull_obs,
+            "active_supply_obs": fresh_bear_obs,
+            "swing_high_records": swing_high_records,
+            "swing_low_records": swing_low_records,
             "or_high": or_high,
             "or_low": or_low,
             "prev_close": prev_close

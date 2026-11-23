@@ -29,13 +29,21 @@ class OpportunityRankingEngine:
     """
 
     @staticmethod
-    def calculate_relative_strength_acceleration(stock_df, nifty_df=None, sector_change_pct=0.0):
+    def calculate_relative_strength_acceleration(stock_df, nifty_df=None, sector_change_pct=0.0, sector_df=None):
         """
-        Calculates multi-window relative strength against NIFTY and Sector
-        strictly synchronized to matching candle timestamps over today's trading session.
+        Calculates 3-way synchronized multi-window relative strength:
+        1. Stock vs NIFTY 50 benchmark
+        2. Sector Index vs NIFTY 50 benchmark
+        3. Stock vs Sector Index (true sector leadership!)
+        Strictly synchronized to matching candle timestamps over today's trading session.
         """
         if stock_df is None or stock_df.empty or len(stock_df) < 2:
-            return {"rs_nifty": 0.0, "rs_sector": 0.0, "rs_accel_3": 0.0, "rs_accel_6": 0.0, "rs_accel": 0.0, "stock_change_pct": 0.0}
+            return {
+                "rs_nifty": 0.0, "rs_sector": 0.0, "sector_rs_nifty": 0.0, 
+                "rs_accel_3": 0.0, "rs_accel_6": 0.0, "rs_accel": 0.0, 
+                "stock_change_pct": 0.0, "sector_change_pct": 0.0, "nifty_change_pct": 0.0,
+                "is_aligned": False, "alignment_status": "EMPTY_DATA"
+            }
 
         # Date isolation for current session synchronization
         s_df = stock_df.copy()
@@ -129,13 +137,40 @@ class OpportunityRankingEngine:
                 c_6 = float(sc.iloc[-6])
                 rs_accel_6 = round(((sc.iloc[-1] - c_6) / c_6) * 100, 2) if c_6 > 0 else 0.0
 
+        # Synchronize Sector Index (e.g. ^NSEBANK, ^CNXIT) if dataframe provided
+        actual_sector_pct = float(sector_change_pct)
+        if sector_df is not None and not sector_df.empty:
+            sec_df_c = sector_df.copy()
+            if not pd.api.types.is_datetime64_any_dtype(sec_df_c.index):
+                sec_df_c.index = pd.to_datetime(sec_df_c.index)
+            try:
+                if sec_df_c.index.tz is None:
+                    sec_df_c.index = sec_df_c.index.tz_localize("Asia/Kolkata")
+                else:
+                    sec_df_c.index = sec_df_c.index.tz_convert("Asia/Kolkata")
+            except Exception:
+                pass
+            today_sec = sec_df_c[sec_df_c.index.date == today_date] if today_date else sec_df_c
+            if not today_sec.empty and len(today_sec) >= 2:
+                sec_joined = pd.DataFrame({"stock_c": today_stock['Close']}).join(
+                    pd.DataFrame({"sec_c": today_sec['Close']}), how="inner"
+                ).dropna()
+                if not sec_joined.empty:
+                    sec_open = float(today_sec['Open'].iloc[0])
+                    sec_last = float(sec_joined['sec_c'].iloc[-1])
+                    actual_sector_pct = float(((sec_last - sec_open) / sec_open) * 100) if sec_open > 0 else actual_sector_pct
+
         rs_nifty = round(stock_change_pct - nifty_change_pct, 2) if is_aligned else 0.0
-        rs_sector = round(stock_change_pct - sector_change_pct, 2)
+        rs_sector = round(stock_change_pct - actual_sector_pct, 2)
+        sector_rs_nifty = round(actual_sector_pct - nifty_change_pct, 2) if is_aligned else 0.0
 
         return {
             "stock_change_pct": round(stock_change_pct, 2),
+            "sector_change_pct": round(actual_sector_pct, 2),
+            "nifty_change_pct": round(nifty_change_pct, 2),
             "rs_nifty": rs_nifty,
             "rs_sector": rs_sector,
+            "sector_rs_nifty": sector_rs_nifty,
             "rs_accel_3": rs_accel_3,
             "rs_accel_6": rs_accel_6,
             "rs_accel": rs_accel_3,
@@ -144,7 +179,7 @@ class OpportunityRankingEngine:
         }
 
     @staticmethod
-    def evaluate_stock_opportunity(stock_df, symbol, sector_name="GENERAL", sector_change=0.0, nifty_df=None, vwap=None, opp_eval=None, time_slot_rvol=None, rvol_obs=0, is_liquid=True):
+    def evaluate_stock_opportunity(stock_df, symbol, sector_name="GENERAL", sector_change=0.0, nifty_df=None, vwap=None, opp_eval=None, time_slot_rvol=None, rvol_obs=0, is_liquid=True, sector_df=None):
         """
         Computes comprehensive quantitative opportunity score, breakout proximity, and prediction stage.
         Enforces hard liquidity and candle alignment gates.
@@ -292,8 +327,8 @@ class OpportunityRankingEngine:
         bull_invalidation = c_lows[0] if c_lows else (orl if orl and orl < curr_c else None)
         bear_invalidation = c_highs[0] if c_highs else (orh if orh and orh > curr_c else None)
 
-        # 5. Synchronized Relative Strength Acceleration
-        rs_data = OpportunityRankingEngine.calculate_relative_strength_acceleration(stock_df, nifty_df, sector_change)
+        # 5. Synchronized 3-Way Relative Strength Acceleration
+        rs_data = OpportunityRankingEngine.calculate_relative_strength_acceleration(stock_df, nifty_df, sector_change, sector_df=sector_df)
         # Enforce mandatory alignment: if NIFTY is provided but timestamps are misaligned, reject
         if nifty_df is not None and not nifty_df.empty and not rs_data.get("is_aligned", False):
             return None

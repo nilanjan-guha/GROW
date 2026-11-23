@@ -49,6 +49,10 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
         "losses": 0,
         "gross_pnl_pct": 0.0,
         "total_pnl_pct": 0.0,
+        "trade_net_pnls": [],
+        "trade_gross_pnls": [],
+        "trade_r_multiples": [],
+        "equity_curve": [100.0],
         "mfes": [],
         "maes": [],
         "stage_counts": {"ENTRY READY": 0, "IGNITION": 0, "PREPARING": 0, "OBSERVING": 0, "MONITORING": 0},
@@ -111,6 +115,29 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
         if isinstance(daily_df.columns, pd.MultiIndex):
             daily_df = daily_df.xs(sym, axis=1, level=1) if sym in daily_df.columns.levels[1] else daily_df
 
+        # Resolve official Sector Index for this stock symbol (Item 2 & P0)
+        from engine.groww_sector_engine import GrowwSectorEngine
+        sec_engine = GrowwSectorEngine()
+        sec_engine.build_complete_fno_sector_universe_mapping({sym})
+        stock_clean_sym = sym.replace(".NS", "").upper()
+        norm_sector = sec_engine.full_universe_stock_map.get(stock_clean_sym, "GENERAL")
+        sector_ticker = sec_engine.get_sector_index_ticker(norm_sector)
+        
+        sector_df = None
+        try:
+            sec_raw = yf.download(sector_ticker, period=days, interval="5m", progress=False)
+            if not sec_raw.empty:
+                sector_df = sec_raw.xs(sector_ticker, axis=1, level=1) if isinstance(sec_raw.columns, pd.MultiIndex) and sector_ticker in sec_raw.columns.levels[1] else sec_raw
+                # Normalize timezone
+                if not pd.api.types.is_datetime64_any_dtype(sector_df.index):
+                    sector_df.index = pd.to_datetime(sector_df.index)
+                if sector_df.index.tz is None:
+                    sector_df.index = sector_df.index.tz_localize("Asia/Kolkata")
+                else:
+                    sector_df.index = sector_df.index.tz_convert("Asia/Kolkata")
+        except Exception:
+            sector_df = None
+
         scanned_history = {}
         current_open_trade = None
 
@@ -129,23 +156,43 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
             if nifty_sub.empty:
                 continue
 
+            sector_sub = sector_df[sector_df.index <= signal_candle_ts] if sector_df is not None else None
+
             # Point-in-time Daily context
             daily_sub = daily_df[daily_df.index.date < signal_candle_ts.date()] if daily_df is not None and not daily_df.empty else None
 
-            # Point-in-time Sector relative change against benchmark
+            # True Point-in-time 3-Way Relative Performance:
+            # 1. Stock vs NIFTY
+            # 2. Sector Index vs NIFTY
+            # 3. Stock vs Sector Index
             stock_day_open = float(window_df[window_df.index.date == signal_candle_ts.date()]["Open"].iloc[0]) if len(window_df[window_df.index.date == signal_candle_ts.date()]) > 0 else float(window_df["Open"].iloc[0])
             stock_change_pt = round((float(window_df["Close"].iloc[-1]) - stock_day_open) / stock_day_open * 100, 2)
             nifty_day_open = float(nifty_sub[nifty_sub.index.date == signal_candle_ts.date()]["Open"].iloc[0]) if len(nifty_sub[nifty_sub.index.date == signal_candle_ts.date()]) > 0 else float(nifty_sub["Open"].iloc[0])
             nifty_change_pt = round((float(nifty_sub["Close"].iloc[-1]) - nifty_day_open) / nifty_day_open * 100, 2) if nifty_day_open > 0 else 0.0
             
-            # Point-in-time Sector Bias
-            sector_bias = "BULLISH" if stock_change_pt > nifty_change_pt + 0.3 else ("BEARISH" if stock_change_pt < nifty_change_pt - 0.3 else "NEUTRAL")
+            sector_change_pt = 0.0
+            if sector_sub is not None and not sector_sub.empty:
+                sec_day_sub = sector_sub[sector_sub.index.date == signal_candle_ts.date()]
+                if not sec_day_sub.empty:
+                    sec_open = float(sec_day_sub["Open"].iloc[0])
+                    sec_last = float(sec_day_sub["Close"].iloc[-1])
+                    sector_change_pt = round((sec_last - sec_open) / sec_open * 100, 2) if sec_open > 0 else 0.0
+
+            # True Sector Leadership Bias:
+            # Bullish: Stock outperforms Sector AND Sector outperforms NIFTY
+            # Bearish: Stock underperforms Sector AND Sector underperforms NIFTY
+            if (stock_change_pt > sector_change_pt) and (sector_change_pt >= nifty_change_pt - 0.2):
+                sector_bias = "BULLISH"
+            elif (stock_change_pt < sector_change_pt) and (sector_change_pt <= nifty_change_pt + 0.2):
+                sector_bias = "BEARISH"
+            else:
+                sector_bias = "NEUTRAL"
 
             # Complete live-equivalent pipeline with point-in-time historical context
             pipeline_res = ScreenerPipeline.evaluate_candidate_unified(
                 stock_df=window_df,
                 symbol=sym,
-                sector_change=stock_change_pt,
+                sector_change=sector_change_pt,
                 sector_bias=sector_bias,
                 nifty_df=nifty_sub,
                 daily_df=daily_sub,
@@ -318,6 +365,15 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
                 net_pnl = gross_diff - total_friction_pct
                 stats["gross_pnl_pct"] += gross_diff
                 stats["total_pnl_pct"] += net_pnl
+                stats["trade_gross_pnls"].append(gross_diff)
+                stats["trade_net_pnls"].append(net_pnl)
+                # Compute realized R-multiple: net profit / risk
+                risk_pct = (risk / actual_entry) * 100
+                r_mult = net_pnl / risk_pct if risk_pct > 0 else 1.0
+                stats["trade_r_multiples"].append(r_mult)
+                # Compounded portfolio growth: assuming 20% position size per trade
+                prev_eq = stats["equity_curve"][-1]
+                stats["equity_curve"].append(prev_eq * (1.0 + (net_pnl / 100.0) * 0.20))
                 if net_pnl > 0:
                     stats["wins"] += 1
                     is_win = True
@@ -329,11 +385,25 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
                 net_pnl = gross_diff - total_friction_pct
                 stats["gross_pnl_pct"] += gross_diff
                 stats["total_pnl_pct"] += net_pnl
+                stats["trade_gross_pnls"].append(gross_diff)
+                stats["trade_net_pnls"].append(net_pnl)
+                risk_pct = (risk / actual_entry) * 100
+                r_mult = net_pnl / risk_pct if risk_pct > 0 else -1.0
+                stats["trade_r_multiples"].append(r_mult)
+                prev_eq = stats["equity_curve"][-1]
+                stats["equity_curve"].append(prev_eq * (1.0 + (net_pnl / 100.0) * 0.20))
             else:
                 gross_diff = ((exit_price_actual - actual_entry) / actual_entry * 100) if direction == "BULLISH" else ((actual_entry - exit_price_actual) / actual_entry * 100)
                 net_pnl = gross_diff - total_friction_pct
                 stats["gross_pnl_pct"] += gross_diff
                 stats["total_pnl_pct"] += net_pnl
+                stats["trade_gross_pnls"].append(gross_diff)
+                stats["trade_net_pnls"].append(net_pnl)
+                risk_pct = (risk / actual_entry) * 100
+                r_mult = net_pnl / risk_pct if risk_pct > 0 else 0.0
+                stats["trade_r_multiples"].append(r_mult)
+                prev_eq = stats["equity_curve"][-1]
+                stats["equity_curve"].append(prev_eq * (1.0 + (net_pnl / 100.0) * 0.20))
                 if net_pnl > 0:
                     stats["wins"] += 1
                     is_win = True
@@ -403,14 +473,40 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
         avg_mfe = round(np.mean(stats["mfes"]), 2) if stats["mfes"] else 0.0
         avg_mae = round(np.mean(stats["maes"]), 2) if stats["maes"] else 0.0
         
+        # Portfolio Level Calculations: Compounded Return, Profit Factor, Expectancy, Max Drawdown
+        winning_trades = [p for p in stats["trade_net_pnls"] if p > 0]
+        losing_trades = [p for p in stats["trade_net_pnls"] if p <= 0]
+        gross_profits = sum(winning_trades) if winning_trades else 0.0
+        gross_losses = abs(sum(losing_trades)) if losing_trades else 0.0001
+        profit_factor = round(gross_profits / gross_losses, 2)
+        
+        # Expectancy = (Win% * Avg Win) - (Loss% * Avg Loss)
+        avg_win_pct = np.mean(winning_trades) if winning_trades else 0.0
+        avg_loss_pct = abs(np.mean(losing_trades)) if losing_trades else 0.0
+        expectancy_pct = round(((stats['wins'] / stats['trades_executed']) * avg_win_pct) - ((stats['losses'] / stats['trades_executed']) * avg_loss_pct), 2)
+        avg_r = round(float(np.mean(stats["trade_r_multiples"])), 2) if stats["trade_r_multiples"] else 0.0
+        
+        # Compounded Portfolio Return & Max Drawdown:
+        eq_curve = stats["equity_curve"]
+        compounded_return_pct = round(eq_curve[-1] - 100.0, 2)
+        # Peak-to-trough max drawdown
+        peaks = np.maximum.accumulate(eq_curve)
+        drawdowns = (np.array(eq_curve) - peaks) / peaks * 100
+        max_drawdown_pct = round(abs(float(np.min(drawdowns))), 2)
+
         print("\n--- TRADE EXECUTION & PERFORMANCE (AFTER 0.10% COSTS) ---")
         print(f"Win Rate:                    {win_rate}% ({stats['wins']} Wins / {stats['losses']} Losses)")
         print(f"Setup Expansion Rate (MFE):  {expansion_rate}% (MFE >= 0.70%)")
         print(f"Non-Expanding Trigger Rate:  {fpr_expansion}%")
         print(f"Average MFE (In-Trade):      +{avg_mfe}%")
         print(f"Average MAE (In-Trade):      -{avg_mae}%")
-        print(f"Gross PnL (Before Costs):   {round(stats['gross_pnl_pct'], 2)}%")
-        print(f"Net Realized PnL (After):    {round(stats['total_pnl_pct'], 2)}%")
+        print(f"Gross PnL (Before Costs):    {round(stats['gross_pnl_pct'], 2)}%")
+        print(f"Net Realized PnL (Sum):      {round(stats['total_pnl_pct'], 2)}%")
+        print(f"Compounded Equity Return:    {compounded_return_pct}% (20% alloc per trade)")
+        print(f"Maximum Portfolio Drawdown:  {max_drawdown_pct}%")
+        print(f"Profit Factor:               {profit_factor}")
+        print(f"Expectancy Per Trade:        +{expectancy_pct}%")
+        print(f"Average Realized R:          {avg_r}R")
         
         if stats["in_sample_trades"] > 0:
             is_wr = round(stats["in_sample_wins"] / stats["in_sample_trades"] * 100, 1)

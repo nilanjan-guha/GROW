@@ -232,6 +232,39 @@ class MarketValidator:
         if np.any(l > o) or np.any(l > c):
             return {"is_valid": False, "status": "CORRUPT_OHLC_LOW", "reason": "Low price violated boundary (Low > Open or Low > Close)"}
 
+        # Session-aware Intraday Continuity & Missing Candle Validation:
+        # Distinguish normal overnight/weekend session gaps from missing intraday candles.
+        # Normal 5-minute session has 75 candles (09:15 to 15:30).
+        df_eval['Date'] = df_eval.index.date
+        session_dates = df_eval['Date'].unique()
+        session_stats = []
+        has_intraday_data_corruption = False
+        corrupt_session_reason = ""
+
+        for s_date in session_dates:
+            s_slice = df_eval[df_eval['Date'] == s_date]
+            n_bars = len(s_slice)
+            # Evaluate intraday intervals between consecutive candles within the SAME session
+            if n_bars >= 2:
+                sec_diffs = (s_slice.index[1:] - s_slice.index[:-1]).total_seconds()
+                # Missing candles inside trading session (interval > 360 seconds / 6 minutes)
+                intraday_gaps = [d for d in sec_diffs if d > 360]
+                if len(intraday_gaps) > 3:  # More than 3 gaps inside a single session indicates corrupted historical feed
+                    has_intraday_data_corruption = True
+                    corrupt_session_reason = f"Session {s_date} has {len(intraday_gaps)} missing intraday candle gaps"
+                    break
+            session_stats.append({
+                "date": str(s_date),
+                "candles_count": n_bars
+            })
+
+        if has_intraday_data_corruption:
+            return {
+                "is_valid": False,
+                "status": "CORRUPT_INTRADAY_SESSION",
+                "reason": corrupt_session_reason
+            }
+
         last_dt = df_eval.index[-1]
         last_ts = last_dt.timestamp() if hasattr(last_dt, 'timestamp') else float(last_dt)
 
@@ -240,5 +273,7 @@ class MarketValidator:
             "status": "VALID_HISTORICAL",
             "is_completed_candle": True,
             "latest_candle_ts": last_ts,
-            "candle_end_ts": last_ts + candle_duration_seconds
+            "candle_end_ts": last_ts + candle_duration_seconds,
+            "total_sessions": len(session_dates),
+            "session_stats": session_stats
         }
