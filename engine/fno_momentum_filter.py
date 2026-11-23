@@ -41,6 +41,8 @@ class FNOMomentumFilter:
             # Determine strictly completed candles using feed validation
             from engine.market_validator import MarketValidator
             feed_val = MarketValidator.validate_feed_freshness(df_temp, max_delay_seconds=900, candle_duration_seconds=300)
+            if not feed_val.get("is_valid", False):
+                return None
             is_completed = feed_val.get("is_completed_candle", True)
             
             # If the last candle is still actively forming during market hours, trim to last completed candle
@@ -104,8 +106,8 @@ class FNOMomentumFilter:
             bb_width = float(((bb_std * 2) / bb_mid * 100).iloc[-1]) if not bb_mid.empty and not pd.isna(bb_mid.iloc[-1]) else 1.0
             is_bb_squeeze = (bb_width < 1.25)
 
-            # 4. Session VWAP (Strictly reset at start of current trading session)
-            today_idx = df_temp.index.date == dates[-1] if dates else slice(None)
+            # 4. Session VWAP (Strictly reset at start of current trading session using eval_df index)
+            today_idx = eval_df.index.date == dates[-1] if dates else slice(None)
             today_h = h[today_idx]
             today_l = l[today_idx]
             today_c = c[today_idx]
@@ -175,9 +177,10 @@ class FNOMomentumFilter:
                 "is_nr7": is_nr7,
                 "bb_width": round(bb_width, 2),
                 "velocity": velocity,
-                "df": cdf
+                "df": eval_df
             }
-        except Exception:
+        except Exception as e:
+            print(f"[FNO FILTER ERROR] {sym}: {e}")
             return None
 
     @classmethod

@@ -327,29 +327,58 @@ class OpportunityRankingEngine:
             exhaustion_risk != "HIGH"
         ) if opp_eval else False
 
-        # Stage Classification with Strictly Enforced Quality Gates:
+        # Structural numerical SL/TP and actual mathematical RR validation:
+        # 1. SL must be positive number
+        # 2. For BUY: SL < curr_c and TP1 > curr_c
+        # 3. For SELL: SL > curr_c and TP1 < curr_c
+        # 4. Computed RR = abs(TP1 - curr_c) / abs(curr_c - SL) >= 1.30
+        computed_rr = 0.0
+        has_valid_structural_risk = False
+        if sl is not None and tp1 is not None:
+            try:
+                sl_val = float(sl)
+                tp1_val = float(tp1)
+                if sl_val > 0 and tp1_val > 0:
+                    if direction == "BULLISH" and sl_val < curr_c and tp1_val > curr_c:
+                        risk = curr_c - sl_val
+                        reward = tp1_val - curr_c
+                        computed_rr = round(reward / risk, 2) if risk > 0 else 0.0
+                        has_valid_structural_risk = (computed_rr >= 1.30)
+                    elif direction == "BEARISH" and sl_val > curr_c and tp1_val < curr_c:
+                        risk = sl_val - curr_c
+                        reward = curr_c - tp1_val
+                        computed_rr = round(reward / risk, 2) if risk > 0 else 0.0
+                        has_valid_structural_risk = (computed_rr >= 1.30)
+            except (ValueError, TypeError):
+                has_valid_structural_risk = False
+
+        # Stage Classification with Strictly Enforced Directional Quality Gates:
         # A stock can ONLY be CONFIRMED (ENTRY READY) if EVERY condition is met simultaneously:
-        # 1. is_viable_opportunity (opp_eval viable, potential >= 0.70%, RR >= 1.30, not high exhaustion)
-        # 2. Valid structural stop-loss and target defined
-        # 3. Confirmation score meets threshold (>= 45) in the setup direction
+        # 1. is_viable_opportunity (opp_eval viable, potential >= 0.70%, not high exhaustion)
+        # 2. Valid structural stop-loss, target, and computed RR >= 1.30
+        # 3. Confirmation score meets threshold (>= 45) strictly aligned with direction
         # 4. Conviction score >= 50
         is_strictly_confirmed = (
             is_viable_opportunity and 
-            sl is not None and 
-            tp1 is not None and 
-            rr_ratio >= 1.30 and 
+            has_valid_structural_risk and 
             potential_pct >= 0.70 and 
             exhaustion_risk != "HIGH" and
-            ((direction == "BULLISH" and conf_bull_score >= 45) or 
-             (direction == "BEARISH" and conf_bear_score >= 45)) and
+            ((direction == "BULLISH" and conf_bull_score >= 45 and curr_c > curr_o) or 
+             (direction == "BEARISH" and conf_bear_score >= 45 and curr_c < curr_o)) and
             conviction_score >= 50
         )
 
+        # Direction-specific IGNITION trigger:
+        # Bullish ignition: broken above ORH, or expanding upwards with volume surge
+        # Bearish ignition: broken below ORL, or expanding downwards with selling volume surge
+        is_bull_ignition = direction == "BULLISH" and (is_broken_above_orh or (is_expanding_now and curr_c > curr_o) or (rvol >= 1.4 and conviction_score >= 40 and curr_c > curr_vwap))
+        is_bear_ignition = direction == "BEARISH" and (is_broken_below_orl or (is_expanding_now and curr_c < curr_o) or (rvol >= 1.4 and conviction_score >= 40 and curr_c < curr_vwap))
+
         if is_strictly_confirmed:
             stage = "CONFIRMED"
-            stage_desc = f"Verified Completed Trade: RR 1:{rr_ratio:.2f}, +{potential_pct:.1f}% Room"
-            entry_trigger = f"{'Demand OB (Buy)' if direction == 'BULLISH' else 'Supply OB (Sell)'} Entry confirmed with RR 1:{rr_ratio:.1f}"
-        elif is_broken_above_orh or is_broken_below_orl or is_expanding_now or (rvol >= 1.4 and conviction_score >= 40):
+            stage_desc = f"Verified Completed Trade: RR 1:{computed_rr:.2f}, +{potential_pct:.1f}% Room"
+            entry_trigger = f"{'Demand OB (Buy)' if direction == 'BULLISH' else 'Supply OB (Sell)'} Entry confirmed with RR 1:{computed_rr:.1f}"
+        elif is_bull_ignition or is_bear_ignition:
             stage = "IGNITION"
             stage_desc = f"Momentum Breaking Out: RVOL {rvol:.1f}x, Range {curr_range/atr14:.1f}x ATR"
             entry_trigger = "Breakout confirmed above ORH" if direction == "BULLISH" else "Breakdown confirmed below ORL"
