@@ -467,6 +467,7 @@ def background_screener_worker():
 
                 screener_state["bullish_momentum_watchlist"] = bull_watchlist
                 screener_state["bearish_momentum_watchlist"] = bear_watchlist
+                screener_state["ranked_opportunities"] = None  # Instantly purge old rankings on 5-min sector refresh!
                 screener_state["last_screener_update"] = now
                 print(f"[GROWW ENGINE] Sectors updated. Bullish: {[x['symbol'] for x in bull_watchlist[:4]]}, Bearish: {[x['symbol'] for x in bear_watchlist[:4]]}")
 
@@ -504,8 +505,9 @@ def background_screener_worker():
 
                 # Build scanner list from Watchlists + Open ACTIVE Signals requiring outcome tracking
                 watchlist_stks = [x["symbol"] for x in (screener_state["bullish_momentum_watchlist"] + screener_state["bearish_momentum_watchlist"])]
+                current_watchlist_set = set(watchlist_stks)
                 
-                # Retrieve any currently open ACTIVE trade signals so they are always monitored for TP/SL even after terminal restart
+                # Retrieve any currently open ACTIVE trade signals so they are always monitored for TP/SL outcome tracking
                 active_open_symbols = list(get_active_signal_symbols())
                 all_stk_symbols = list(dict.fromkeys(watchlist_stks + active_open_symbols))
                 
@@ -533,6 +535,10 @@ def background_screener_worker():
                                 "df": cdf
                             }
                             latest_dfs[sym] = cdf
+
+                            # ONLY include in Ranked Opportunities if the stock is part of the latest 5-min sector scan!
+                            if sym not in current_watchlist_set:
+                                continue
 
                             # Enforce strict feed validation: Reject stale, unvalidated, or corrupt feeds before ranking
                             feed_val = MarketValidator.validate_feed_freshness(cdf, max_delay_seconds=300, candle_duration_seconds=300)
@@ -931,8 +937,14 @@ def get_ranked_opportunities_endpoint():
     across the active watchlist using multi-factor RS acceleration, breakout proximity and early stages.
     """
     try:
-        if screener_state.get("ranked_opportunities"):
-            return jsonify({"success": True, "ranked": screener_state["ranked_opportunities"]})
+        allowed_sector_symbols = set([x["symbol"] for x in (screener_state.get("bullish_momentum_watchlist", []) + screener_state.get("bearish_momentum_watchlist", []))])
+        
+        cached_ranked = screener_state.get("ranked_opportunities")
+        if cached_ranked:
+            filtered_bull = [c for c in cached_ranked.get("top_bullish", []) if not allowed_sector_symbols or c.get("symbol") in allowed_sector_symbols]
+            filtered_bear = [c for c in cached_ranked.get("top_bearish", []) if not allowed_sector_symbols or c.get("symbol") in allowed_sector_symbols]
+            if filtered_bull or filtered_bear:
+                return jsonify({"success": True, "ranked": {"top_bullish": filtered_bull, "top_bearish": filtered_bear}})
 
         candidates = []
         nifty_cached = screener_state.get("raw_market_cache", {}).get("^NSEI", {})
