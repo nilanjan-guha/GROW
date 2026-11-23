@@ -522,26 +522,52 @@ class OpportunityRankingEngine:
         has_bull_structure_setup = is_coiling_near_orh or is_coiling_near_pdh or has_swing_higher_lows or (is_range_squeezed and dist_to_orh_pct <= 1.0)
         has_bear_structure_setup = is_coiling_near_orl or is_coiling_near_pdl or has_swing_lower_highs or (is_range_squeezed and dist_to_orl_pct <= 1.0)
 
-        # High-Recall Early Discovery Layer (P2):
-        # Discovers non-textbook movers early: unusual volume acceleration (RVOL >= 1.5), relative-strength acceleration,
-        # or flat-open ignition even before multi-swing pivots form.
-        # STRICTLY WATCH-ONLY (non-actionable) until elevated through confirmation or ignition.
+        # High-Recall Early Discovery Layer (P2 - Dedicated Pre-Move Discovery):
+        # Discovers non-textbook movers early WITHOUT weakening entry confirmation:
+        # 1. Accumulation & Absorption before breakout (tight coil near key level or under VWAP with rising volume)
+        # 2. Liquidity-Sweep Reversals before VWAP reclaim (e.g. swept PDL and curling back up)
+        # 3. Early Relative-Strength Acceleration (rs_accel_3 > 0.15)
+        # 4. Sudden volume expansion before trend confirmation (RVOL >= 1.5)
+        # ALL of these are strictly classified as OBSERVING / PREPARING (WATCH-ONLY; is_actionable = False)
+        is_bull_accumulation = (
+            (is_coiling_near_orh or is_coiling_near_pdh or is_range_squeezed) and 
+            (vol_consecutive_rise or rvol >= 1.2)
+        )
+        is_bear_distribution = (
+            (is_coiling_near_orl or is_coiling_near_pdl or is_range_squeezed) and 
+            (vol_consecutive_rise or rvol >= 1.2)
+        )
+        
+        is_bull_sweep_reversal = is_pdl_liquidity_sweep_bull
+        is_bear_sweep_reversal = is_pdh_liquidity_sweep_bear
+        
+        is_bull_early_rs_accel = (rs_accel_3 > 0.15 and (curr_c >= curr_o or vol_consecutive_rise))
+        is_bear_early_rs_accel = (rs_accel_3 < -0.15 and (curr_c <= curr_o or vol_consecutive_rise))
+
+        is_volume_burst_pre_trend = (rvol >= 1.5 and is_expanding_now)
+
         has_bull_early_momentum = (
-            direction == "BULLISH" and 
-            above_vwap and 
-            curr_c > curr_o and 
-            ((rvol >= 1.5 and rs_accel_3 > 0.1) or is_flat_open_ignition or (is_expanding_now and rvol >= 1.25))
+            direction == "BULLISH" and (
+                (above_vwap and curr_c > curr_o and ((rvol >= 1.5 and rs_accel_3 > 0.1) or is_flat_open_ignition or (is_expanding_now and rvol >= 1.25))) or
+                is_bull_accumulation or
+                is_bull_sweep_reversal or
+                is_bull_early_rs_accel or
+                is_volume_burst_pre_trend
+            )
         )
         has_bear_early_momentum = (
-            direction == "BEARISH" and 
-            below_vwap and 
-            curr_c < curr_o and 
-            ((rvol >= 1.5 and rs_accel_3 < -0.1) or (is_expanding_now and rvol >= 1.25))
+            direction == "BEARISH" and (
+                (below_vwap and curr_c < curr_o and ((rvol >= 1.5 and rs_accel_3 < -0.1) or (is_expanding_now and rvol >= 1.25))) or
+                is_bear_distribution or
+                is_bear_sweep_reversal or
+                is_bear_early_rs_accel or
+                is_volume_burst_pre_trend
+            )
         )
 
         is_early_observing = (
-            (direction == "BULLISH" and (has_bull_early_momentum or (has_bull_participation and has_bull_structure_setup)) and above_vwap and early_bull_score >= 25) or
-            (direction == "BEARISH" and (has_bear_early_momentum or (has_bear_participation and has_bear_structure_setup)) and below_vwap and early_bear_score >= 25)
+            (direction == "BULLISH" and (has_bull_early_momentum or (has_bull_participation and has_bull_structure_setup)) and early_bull_score >= 20) or
+            (direction == "BEARISH" and (has_bear_early_momentum or (has_bear_participation and has_bear_structure_setup)) and early_bear_score >= 20)
         )
 
         if is_strictly_confirmed:
@@ -583,9 +609,11 @@ class OpportunityRankingEngine:
         if potential_pct > 1.0: reasons.append(f"+{potential_pct}% room")
 
         rvol_confidence = "HIGH" if rvol_obs >= 3 else ("MEDIUM" if rvol_obs >= 1 else "LOW")
+        latest_candle_timestamp = str(stock_df.index[-1]) if stock_df is not None and not stock_df.empty else ""
 
         return {
             "symbol": symbol,
+            "candle_ts": latest_candle_timestamp,
             "sector": sector_name,
             "current_price": curr_c,
             "change_pct": rs_data["stock_change_pct"],

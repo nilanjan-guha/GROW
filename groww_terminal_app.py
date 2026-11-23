@@ -649,7 +649,20 @@ def get_sectors_dynamic():
         screener_state["sectors"] = calculate_dynamic_sectors()
     return jsonify({
         "success": True,
-        "sectors": screener_state["sectors"]
+        "sectors": screener_state["sectors"],
+        "diagnostics": getattr(groww_sector_engine, "sector_diagnostics", {})
+    })
+
+@app.route("/api/groww/sectors-diagnostics")
+def get_sectors_diagnostics():
+    """Returns granular coverage ratio, expected universe comparison, and failed sector fetch reporting"""
+    diag = getattr(groww_sector_engine, "sector_diagnostics", {})
+    return jsonify({
+        "success": True,
+        "diagnostics": diag,
+        "is_stale": getattr(groww_sector_engine, "is_stale", False),
+        "is_usable": getattr(groww_sector_engine, "is_usable", False),
+        "last_error": getattr(groww_sector_engine, "last_error", None)
     })
 
 from strategies.institutional_engine import InstitutionalStrategyEngine
@@ -1331,42 +1344,104 @@ def log_confirmed_signal_endpoint():
 
         # 2. Revalidate completed 5m candle freshness: must match the active ranked candle timestamp
         server_ranked_ts = screener_state.get("ranked_candle_ts")
+        cand_ts = matching_cand.get("candle_ts")
         client_candle_ts = data.get("candle_ts")
-        if server_ranked_ts and client_candle_ts and str(client_candle_ts) != str(server_ranked_ts):
-            return jsonify({"success": False, "error": f"Server rejection: Stale candle timestamp ({client_candle_ts} vs server {server_ranked_ts})."}), 409
+        
+        # Mandatory server validation: Reject missing timestamp or mismatch against server's active completed candle
+        active_server_ts = server_ranked_ts or cand_ts
+        if not active_server_ts:
+            return jsonify({"success": False, "error": "Server rejection: Server has not established an active completed candle baseline."}), 409
+        
+        if not client_candle_ts or str(client_candle_ts).strip() == "":
+            return jsonify({"success": False, "error": "Server rejection: Missing candle timestamp in trade submission."}), 400
+        
+        if str(client_candle_ts).strip() != str(active_server_ts).strip():
+            return jsonify({"success": False, "error": f"Server rejection: Stale candle timestamp (client: '{client_candle_ts}' vs server: '{active_server_ts}')."}), 409
 
         # 3. Validate directional alignment against the server's evaluated direction
-        server_direction = matching_cand.get("direction")
-        action = data.get("action", "")
-        client_direction = "BUY" if "BUY" in action else ("SELL" if "SELL" in action else "NEUTRAL")
-        if client_direction == "NEUTRAL" or "WAIT" in action or "MONITORING" in action:
+        # Normalize BUY/CALL -> BULLISH and SELL/PUT -> BEARISH on both client action and server candidate before comparison!
+        raw_server_dir = (matching_cand.get("direction") or "").upper().strip()
+        if raw_server_dir in ("BUY", "CALL", "BULLISH", "LONG"):
+            server_direction = "BULLISH"
+        elif raw_server_dir in ("SELL", "PUT", "BEARISH", "SHORT"):
+            server_direction = "BEARISH"
+        else:
+            server_direction = "NEUTRAL"
+
+        raw_action = (data.get("action") or "").upper().strip()
+        raw_direction = (data.get("direction") or "").upper().strip()
+        combined_action = f"{raw_action} {raw_direction}"
+
+        if any(tok in combined_action for tok in ("BUY", "CALL", "BULLISH", "LONG")):
+            normalized_client_dir = "BULLISH"
+        elif any(tok in combined_action for tok in ("SELL", "PUT", "BEARISH", "SHORT")):
+            normalized_client_dir = "BEARISH"
+        else:
+            normalized_client_dir = "NEUTRAL"
+
+        if normalized_client_dir == "NEUTRAL" or "WAIT" in combined_action or "MONITORING" in combined_action:
             return jsonify({"success": False, "error": "Direction is neutral or waiting for trigger"}), 400
         
-        if server_direction and client_direction != server_direction:
-            return jsonify({"success": False, "error": f"Server rejection: Direction mismatch ({client_direction} vs server {server_direction})."}), 400
+        if server_direction == "NEUTRAL" or normalized_client_dir != server_direction:
+            return jsonify({"success": False, "error": f"Server rejection: Direction mismatch ({normalized_client_dir} vs server {server_direction})."}), 400
 
-        # 4. Overwrite client prices strictly with server-evaluated execution & risk boundaries
-        server_entry = matching_cand.get("current_price") or data.get("entry_price")
-        server_sl = matching_cand.get("suggested_sl") or data.get("suggested_sl")
-        server_tp1 = matching_cand.get("suggested_tp1") or data.get("suggested_tp1")
-        server_tp2 = matching_cand.get("suggested_tp2") or data.get("suggested_tp2")
+        # 4. Strict Server-Side Price & Risk Authorization (Zero client fallbacks allowed):
+        # Do not use client-supplied entry, SL or target when server-calculated values are missing. Reject the signal instead.
+        server_entry = matching_cand.get("current_price")
+        server_sl = matching_cand.get("suggested_sl")
+        server_tp1 = matching_cand.get("suggested_tp1")
+        server_tp2 = matching_cand.get("suggested_tp2")
 
-        if not server_entry or not server_sl or not server_tp1:
-            return jsonify({"success": False, "error": "Server rejection: Missing validated entry, SL, or TP levels."}), 400
+        if server_entry is None or server_sl is None or server_tp1 is None:
+            return jsonify({"success": False, "error": "Server rejection: Candidate lacks server-evaluated execution prices or risk levels."}), 400
+
+        try:
+            entry_val = float(server_entry)
+            sl_val = float(server_sl)
+            tp1_val = float(server_tp1)
+        except (ValueError, TypeError):
+            return jsonify({"success": False, "error": "Server rejection: Non-numeric server execution prices."}), 400
+
+        if entry_val <= 0 or sl_val <= 0 or tp1_val <= 0:
+            return jsonify({"success": False, "error": "Server rejection: Invalid non-positive execution prices."}), 400
+
+        # Validate that:
+        # - BUY: SL is below entry; targets are above entry.
+        # - SELL: SL is above entry; targets are below entry.
+        # - Risk/reward meets configured minimum (>= 1.20).
+        if server_direction == "BULLISH":
+            if not (sl_val < entry_val and tp1_val > entry_val):
+                return jsonify({"success": False, "error": f"Server rejection: Structural boundary violation for BULLISH (SL {sl_val} must be < Entry {entry_val} < TP1 {tp1_val})."}), 400
+            risk = entry_val - sl_val
+            reward = tp1_val - entry_val
+        elif server_direction == "BEARISH":
+            if not (sl_val > entry_val and tp1_val < entry_val):
+                return jsonify({"success": False, "error": f"Server rejection: Structural boundary violation for BEARISH (SL {sl_val} must be > Entry {entry_val} > TP1 {tp1_val})."}), 400
+            risk = sl_val - entry_val
+            reward = entry_val - tp1_val
+        else:
+            return jsonify({"success": False, "error": "Server rejection: Unknown directional state."}), 400
+
+        if risk <= 0:
+            return jsonify({"success": False, "error": "Server rejection: Calculated risk is zero or negative."}), 400
+
+        rr_ratio = reward / risk
+        if rr_ratio < 1.20:
+            return jsonify({"success": False, "error": f"Server rejection: Minimum risk/reward threshold not met (RR 1:{rr_ratio:.2f} < 1:1.20)."}), 400
 
         sig_id = log_signal({
             "symbol": sym,
             "direction": server_direction,
-            "strategy": matching_cand.get("stage_desc") or data.get("primary_strategy", "SMC Structure"),
-            "entry_price": server_entry,
-            "stop_loss": server_sl,
-            "target_1": server_tp1,
-            "target_2": server_tp2,
-            "score": matching_cand.get("conviction_score", data.get("composite_score", 75)),
+            "strategy": matching_cand.get("stage_desc") or "SMC Structure",
+            "entry_price": entry_val,
+            "stop_loss": sl_val,
+            "target_1": tp1_val,
+            "target_2": float(server_tp2) if server_tp2 else None,
+            "score": matching_cand.get("conviction_score", 75),
             "confidence": f"{matching_cand.get('confirmation_score', 75)}%",
             "catalyst": "SMC Order Flow Ignition",
-            "features": {"rvol": matching_cand.get("rvol", 1.0), "rs_nifty": matching_cand.get("rs_nifty", 0.0)},
-            "all_triggered": matching_cand.get("reasons", data.get("triggered_strategies", []))
+            "features": {"rvol": matching_cand.get("rvol", 1.0), "rs_nifty": matching_cand.get("rs_nifty", 0.0), "candle_ts": str(active_server_ts)},
+            "all_triggered": matching_cand.get("reasons", [])
         })
 
         # Cache in memory

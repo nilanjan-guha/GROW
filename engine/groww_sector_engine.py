@@ -26,6 +26,9 @@ class GrowwSectorEngine:
         self.last_error = None
         self.expected_fno_coverage = 219
         self.actual_fno_coverage = 0
+        self.coverage_ratio_pct = 0.0
+        self.failed_sector_fetches = []
+        self.sector_diagnostics = {}
 
     def fetch_groww_trending_sectors(self, fno_universe_set):
         """
@@ -90,6 +93,7 @@ class GrowwSectorEngine:
         # Build local dictionary first to ensure atomic replacement on completion
         new_stock_to_sector_map = {}
         unique_fno_covered = set()
+        failed_fetches = []
 
         # 1. Evaluate Bullish Sectors
         bull_count = 0
@@ -114,6 +118,7 @@ class GrowwSectorEngine:
                     "top_5": constituents[:5],
                     "all_constituents": constituents,
                     "fno_coverage_count": len(constituents),
+                    "coverage_pct_of_sector": round(len(constituents) / (len(s.get('stocks', [])) or len(constituents) or 1) * 100, 1),
                     "last_updated": now,
                     "is_stale": False
                 }
@@ -126,6 +131,8 @@ class GrowwSectorEngine:
                     }
                 if bull_count >= 3:
                     break
+            else:
+                failed_fetches.append({"sector": s_name, "code": s_code, "reason": "NO_FNO_CONSTITUENTS_OR_FETCH_FAIL"})
 
         # 2. Evaluate Bearish Sectors
         bear_count = 0
@@ -150,6 +157,7 @@ class GrowwSectorEngine:
                     "top_5": constituents[:5],
                     "all_constituents": constituents,
                     "fno_coverage_count": len(constituents),
+                    "coverage_pct_of_sector": round(len(constituents) / (len(s.get('stocks', [])) or len(constituents) or 1) * 100, 1),
                     "last_updated": now,
                     "is_stale": False
                 }
@@ -162,6 +170,8 @@ class GrowwSectorEngine:
                     }
                 if bear_count >= 3:
                     break
+            else:
+                failed_fetches.append({"sector": s_name, "code": s_code, "reason": "NO_FNO_CONSTITUENTS_OR_FETCH_FAIL"})
 
         # 3. Evaluate Neutral Sectors (Top 2 Neutral / Sideways Sectors for stock-level discovery)
         neutral_count = 0
@@ -188,6 +198,7 @@ class GrowwSectorEngine:
                     "top_5": constituents[:5],
                     "all_constituents": constituents,
                     "fno_coverage_count": len(constituents),
+                    "coverage_pct_of_sector": round(len(constituents) / (len(s.get('stocks', [])) or len(constituents) or 1) * 100, 1),
                     "last_updated": now,
                     "is_stale": False
                 }
@@ -201,25 +212,57 @@ class GrowwSectorEngine:
                         }
                 if neutral_count >= 2:
                     break
+            else:
+                failed_fetches.append({"sector": s_name, "code": s_code, "reason": "NO_FNO_CONSTITUENTS_OR_FETCH_FAIL"})
 
         self.actual_fno_coverage = len(unique_fno_covered)
+        exp_denom = self.expected_fno_coverage if self.expected_fno_coverage > 0 else 219
+        self.coverage_ratio_pct = round((self.actual_fno_coverage / exp_denom) * 100, 2)
+        self.failed_sector_fetches = failed_fetches
+
+        # Unmapped symbols in the universe
+        unmapped_fno_symbols = [s for s in norm_fno if s not in unique_fno_covered]
+
         # Multi-Factor Sector Health & Coverage Validation (P1):
         # 1. Total unique F&O stocks across priority sectors must meet minimum depth (>= 25 stocks).
         # 2. Minimum representation per sector: At least 5 of the 8 sectors must have valid F&O constituents.
-        # 3. Overall ratio check: F&O coverage must be statistically representative.
+        # 3. Overall ratio check: F&O coverage must be statistically representative (>= 15% of total universe across top 8 sectors).
+        # 4. Sector count: At least 6 of 8 priority sectors evaluated.
         active_sectors_with_fno = sum(1 for s in sector_results.values() if s.get("fno_coverage_count", 0) > 0)
         
         has_healthy_coverage = (
             self.actual_fno_coverage >= 25 and 
+            self.coverage_ratio_pct >= 15.0 and
             active_sectors_with_fno >= 5 and 
             len(sector_results) >= 6
         )
 
+        self.sector_diagnostics = {
+            "expected_fno_universe_size": exp_denom,
+            "actual_unique_fno_covered": self.actual_fno_coverage,
+            "universe_coverage_pct": self.coverage_ratio_pct,
+            "active_sectors_count": len(sector_results),
+            "active_sectors_with_fno": active_sectors_with_fno,
+            "failed_sector_fetches_count": len(failed_fetches),
+            "failed_sectors": failed_fetches[:5],
+            "unmapped_fno_count": len(unmapped_fno_symbols),
+            "unmapped_sample": unmapped_fno_symbols[:10],
+            "last_successful_refresh": now,
+            "per_sector_coverage": {
+                name: {
+                    "change": data.get("change"),
+                    "fno_count": data.get("fno_coverage_count"),
+                    "is_bullish": data.get("is_bullish"),
+                    "is_neutral": data.get("is_neutral")
+                } for name, data in sector_results.items()
+            }
+        }
+
         if not has_healthy_coverage:
             self.is_stale = True
             self.is_usable = False
-            self.last_error = f"UNHEALTHY_SECTOR_MAP: {self.actual_fno_coverage} stocks, {active_sectors_with_fno}/8 sectors active"
-            print(f"[GROWW SECTORS] Coverage rejected: Only {self.actual_fno_coverage} stocks across {active_sectors_with_fno} sectors. Unhealthy map.")
+            self.last_error = f"UNHEALTHY_SECTOR_MAP: {self.actual_fno_coverage}/{exp_denom} stocks ({self.coverage_ratio_pct}%), {active_sectors_with_fno}/8 sectors active"
+            print(f"[GROWW SECTORS] Coverage rejected: Only {self.actual_fno_coverage}/{exp_denom} stocks ({self.coverage_ratio_pct}%) across {active_sectors_with_fno} sectors. Unhealthy map.")
             return {}  # Strictly reject incomplete/fragile results
         else:
             self.is_stale = False

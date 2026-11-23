@@ -19,13 +19,18 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from engine.opportunity_ranking_engine import OpportunityRankingEngine
 from engine.market_validator import MarketValidator
 
-def run_screener_replay(sample_symbols=None, days="5d"):
+def run_screener_replay(sample_symbols=None, days="1mo"):
     import yfinance as yf
     
     if not sample_symbols:
-        sample_symbols = ["RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS", "TATAMOTORS.NS"]
+        # Representative multi-sector liquid F&O universe (Banking, IT, Auto, Energy, Metals, Pharma, FMCG)
+        sample_symbols = [
+            "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS", 
+            "SBIN.NS", "BHARTIARTL.NS", "ITC.NS", "LT.NS",
+            "AXISBANK.NS", "KOTAKBANK.NS", "HINDUNILVR.NS", "BAJFINANCE.NS", "MARUTI.NS"
+        ]
     
-    print(f"=== STARTING 5-MINUTE SCREENER REPLAY VALIDATION ({len(sample_symbols)} STOCKS) ===")
+    print(f"=== STARTING 5-MINUTE SCREENER REPLAY VALIDATION ({len(sample_symbols)} STOCKS | PERIOD: {days}) ===")
     
     # 1. Download benchmark
     print("Downloading NIFTY 50 5m candles...")
@@ -44,7 +49,15 @@ def run_screener_replay(sample_symbols=None, days="5d"):
         "total_pnl_pct": 0.0,
         "mfes": [],
         "maes": [],
-        "stage_counts": {"ENTRY READY": 0, "IGNITION": 0, "PREPARING": 0, "OBSERVING": 0, "WATCHLIST": 0}
+        "stage_counts": {"ENTRY READY": 0, "IGNITION": 0, "PREPARING": 0, "OBSERVING": 0, "WATCHLIST": 0},
+        "missed_moves_count": 0,
+        "total_qualifying_market_moves": 0,
+        "detected_pre_moves": 0,
+        "missed_details": [],
+        "in_sample_wins": 0,
+        "in_sample_trades": 0,
+        "out_of_sample_wins": 0,
+        "out_of_sample_trades": 0
     }
     
     cost_per_trade_pct = 0.05  # 0.05% realistic brokerage, STT, and slippage
@@ -57,11 +70,29 @@ def run_screener_replay(sample_symbols=None, days="5d"):
         if df is None or len(df) < 30:
             continue
             
+        # Precompute intraday session VWAP per day for accurate testing
+        df_copy = df.copy()
+        if not pd.api.types.is_datetime64_any_dtype(df_copy.index):
+            df_copy.index = pd.to_datetime(df_copy.index)
+        
+        # Calculate daily cumulative VWAP per trading session
+        dates = df_copy.index.date
+        vwap_series = pd.Series(index=df_copy.index, dtype=float)
+        for d in pd.Series(dates).unique():
+            day_mask = (dates == d)
+            day_df = df_copy[day_mask]
+            tp = (day_df["High"] + day_df["Low"] + day_df["Close"]) / 3.0
+            cum_vol = day_df["Volume"].cumsum()
+            cum_vp = (tp * day_df["Volume"]).cumsum()
+            vwap_day = cum_vp / cum_vol.replace(0, np.nan)
+            vwap_series.loc[day_mask] = vwap_day.fillna(day_df["Close"])
+
         current_open_trade = None
         # Replay candle by candle from index 25 onwards
         for idx in range(25, len(df) - 5):
             window_df = df.iloc[:idx]
             curr_candle_ts = window_df.index[-1]
+            curr_vwap = float(vwap_series.iloc[idx-1]) if idx > 0 else float(window_df["Close"].iloc[-1])
             
             # Check if previous open trade has closed by current candle index
             if current_open_trade is not None:
@@ -72,13 +103,31 @@ def run_screener_replay(sample_symbols=None, days="5d"):
             nifty_sub = nifty_df[nifty_df.index <= curr_candle_ts]
             if nifty_sub.empty:
                 continue
+
+            curr_c = float(window_df["Close"].iloc[-1])
+            # Simulated realistic structural risk levels based on swing extremes or ATR
+            tr = (window_df["High"] - window_df["Low"]).iloc[-14:].mean() or (curr_c * 0.01)
+            opp_eval = {
+                "is_viable": True,
+                "potential_pct": 1.2,
+                "risk_reward_ratio": 1.5,
+                "stop_loss": round(curr_c - tr * 1.0, 2),
+                "suggested_sl": round(curr_c - tr * 1.0, 2),
+                "tp1": round(curr_c + tr * 1.5, 2),
+                "suggested_tp1": round(curr_c + tr * 1.5, 2),
+                "tp2": round(curr_c + tr * 2.5, 2),
+                "suggested_tp2": round(curr_c + tr * 2.5, 2),
+                "exhaustion_risk": "LOW"
+            }
                 
             res = OpportunityRankingEngine.evaluate_stock_opportunity(
                 stock_df=window_df,
                 symbol=sym,
                 sector_name="TEST_SECTOR",
                 sector_change=0.5,
-                nifty_df=nifty_sub
+                nifty_df=nifty_sub,
+                vwap=curr_vwap,
+                opp_eval=opp_eval
             )
             
             stats["total_evaluations"] += 1
@@ -91,6 +140,25 @@ def run_screener_replay(sample_symbols=None, days="5d"):
             stats["stage_counts"][stage] = stats["stage_counts"].get(stage, 0) + 1
             is_actionable = res.get("is_actionable", False)
             
+            # 4. Missed Move Benchmark Tracking (True Recall Calculation):
+            # A qualifying market move is defined as a subsequent 1-hour move > 1.25% in either direction
+            if idx + 12 <= len(df):
+                subsequent_window = df.iloc[idx:idx+12]
+                curr_c_val = float(window_df["Close"].iloc[-1])
+                max_subseq_high = float(subsequent_window["High"].max())
+                min_subseq_low = float(subsequent_window["Low"].min())
+                
+                bull_move_pct = (max_subseq_high - curr_c_val) / curr_c_val * 100
+                bear_move_pct = (curr_c_val - min_subseq_low) / curr_c_val * 100
+                
+                if bull_move_pct >= 1.25 or bear_move_pct >= 1.25:
+                    stats["total_qualifying_market_moves"] += 1
+                    # Was the stock flagged in PREPARING, OBSERVING, IGNITION, or ENTRY READY?
+                    if stage in ("ENTRY READY", "IGNITION", "PREPARING", "OBSERVING"):
+                        stats["detected_pre_moves"] += 1
+                    else:
+                        stats["missed_moves_count"] += 1
+
             if not is_actionable:
                 stats["watch_only_candidates"] += 1
                 continue
@@ -107,49 +175,102 @@ def run_screener_replay(sample_symbols=None, days="5d"):
             next_candle = df.iloc[idx]
             entry_price = float(next_candle["Open"])
             
-            sl = res.get("suggested_sl") or (entry_price * 0.99)
-            tp1 = res.get("suggested_tp1") or (entry_price * 1.015)
+            # 5. Realistic Execution Simulation (Item 6):
+            # Model execution price with realistic bid-ask spread and entry slippage (0.03% on entry)
+            entry_slippage_pct = 0.03
+            actual_entry_price = entry_price * (1.0 + entry_slippage_pct/100) if direction == "BULLISH" else entry_price * (1.0 - entry_slippage_pct/100)
+            
+            sl = res.get("suggested_sl") or (actual_entry_price * 0.99)
+            tp1 = res.get("suggested_tp1") or (actual_entry_price * 1.015)
             direction = res.get("direction", "BULLISH")
             
-            # Forward testing over subsequent completed candles (up to 12 candles / 1 hour)
-            forward_candles = df.iloc[idx:min(idx+12, len(df))]
+            # Realistic Indian Trading Cost Model:
+            # Brokerage: ₹20 or 0.03% per order (approx 0.03%)
+            # STT / CTT: 0.025% on sell (equity intraday) / 0.125% (options)
+            # Exchange turnover fee + SEBI charges + Stamp duty + 18% GST on brokerage: ~0.04%
+            # Total round-trip realistic transaction friction: ~0.10%
+            total_friction_pct = 0.10
+            
+            # Explicit Exit Rule: Max 6 completed 5m candles (30 minutes intraday momentum holding horizon)
+            max_holding_candles = 6
+            forward_candles = df.iloc[idx:min(idx + max_holding_candles, len(df))]
             if forward_candles.empty:
                 continue
 
             stats["trades_executed"] += 1
             highs = forward_candles["High"].values
             lows = forward_candles["Low"].values
+            opens = forward_candles["Open"].values
+            closes = forward_candles["Close"].values
             
             max_fav = 0.0
             max_adv = 0.0
             hit_tp = False
             hit_sl = False
             exit_offset = len(forward_candles)
+            exit_price_actual = float(closes[-1])
             
+            # Forward simulate candle by candle strictly up to actual exit
+            # MFE and MAE must only measure excursion experienced while trade was open!
+            in_trade_highs = []
+            in_trade_lows = []
+
+            for c_i, (c_open, h, l, c_close) in enumerate(zip(opens, highs, lows, closes)):
+                in_trade_highs.append(h)
+                in_trade_lows.append(l)
+                
+                if direction == "BULLISH":
+                    # Check gap-through-stop on bar open
+                    if c_open <= sl:
+                        hit_sl = True
+                        exit_price_actual = c_open  # Filled at gap price worse than SL!
+                        exit_offset = c_i + 1
+                        break
+                    elif l <= sl:
+                        hit_sl = True
+                        exit_price_actual = sl - (sl * 0.0003)  # Slippage on stop hit
+                        exit_offset = c_i + 1
+                        break
+                    elif c_open >= tp1:
+                        hit_tp = True
+                        exit_price_actual = c_open  # Favorable gap fill
+                        exit_offset = c_i + 1
+                        break
+                    elif h >= tp1:
+                        hit_tp = True
+                        exit_price_actual = tp1
+                        exit_offset = c_i + 1
+                        break
+                else:  # BEARISH
+                    # Check gap-through-stop on bar open
+                    if c_open >= sl:
+                        hit_sl = True
+                        exit_price_actual = c_open  # Filled at gap price worse than SL!
+                        exit_offset = c_i + 1
+                        break
+                    elif h >= sl:
+                        hit_sl = True
+                        exit_price_actual = sl + (sl * 0.0003)  # Slippage on stop hit
+                        exit_offset = c_i + 1
+                        break
+                    elif c_open <= tp1:
+                        hit_tp = True
+                        exit_price_actual = c_open
+                        exit_offset = c_i + 1
+                        break
+                    elif l <= tp1:
+                        hit_tp = True
+                        exit_price_actual = tp1
+                        exit_offset = c_i + 1
+                        break
+
+            # Measure genuine MFE and MAE strictly during the trade holding period (candles 0 to exit_offset)
             if direction == "BULLISH":
-                max_fav = (max(highs) - entry_price) / entry_price * 100
-                max_adv = (entry_price - min(lows)) / entry_price * 100
-                for c_i, (h, l) in enumerate(zip(highs, lows)):
-                    if l <= sl:
-                        hit_sl = True
-                        exit_offset = c_i + 1
-                        break
-                    if h >= tp1:
-                        hit_tp = True
-                        exit_offset = c_i + 1
-                        break
-            else: # BEARISH
-                max_fav = (entry_price - min(lows)) / entry_price * 100
-                max_adv = (max(highs) - entry_price) / entry_price * 100
-                for c_i, (h, l) in enumerate(zip(highs, lows)):
-                    if h >= sl:
-                        hit_sl = True
-                        exit_offset = c_i + 1
-                        break
-                    if l <= tp1:
-                        hit_tp = True
-                        exit_offset = c_i + 1
-                        break
+                max_fav = (max(in_trade_highs) - actual_entry_price) / actual_entry_price * 100
+                max_adv = (actual_entry_price - min(in_trade_lows)) / actual_entry_price * 100
+            else:
+                max_fav = (actual_entry_price - min(in_trade_lows)) / actual_entry_price * 100
+                max_adv = (max(in_trade_highs) - actual_entry_price) / actual_entry_price * 100
             
             # Register open trade position to prevent duplicate entries until closed
             current_open_trade = {
@@ -160,24 +281,42 @@ def run_screener_replay(sample_symbols=None, days="5d"):
             stats["mfes"].append(max_fav)
             stats["maes"].append(max_adv)
             
+            # Split point for in-sample (first 60%) vs out-of-sample holdout (last 40%)
+            is_out_of_sample = (idx >= int(len(df) * 0.60))
+            is_win_trade = False
+
             if hit_tp:
                 stats["wins"] += 1
-                pnl = (abs(tp1 - entry_price) / entry_price * 100) - cost_per_trade_pct
+                is_win_trade = True
+                raw_diff = (exit_price_actual - actual_entry_price) / actual_entry_price * 100 if direction == "BULLISH" else (actual_entry_price - exit_price_actual) / actual_entry_price * 100
+                pnl = raw_diff - total_friction_pct
                 stats["total_pnl_pct"] += pnl
             elif hit_sl:
                 stats["losses"] += 1
-                pnl = -(abs(entry_price - sl) / entry_price * 100) - cost_per_trade_pct
+                is_win_trade = False
+                raw_diff = -(abs(actual_entry_price - exit_price_actual) / actual_entry_price * 100)
+                pnl = raw_diff - total_friction_pct
                 stats["total_pnl_pct"] += pnl
             else:
-                # Flat exit after 5 candles
-                final_close = float(forward_candles["Close"].iloc[-1])
-                diff_pct = ((final_close - entry_price) / entry_price * 100) if direction == "BULLISH" else ((entry_price - final_close) / entry_price * 100)
-                pnl = diff_pct - cost_per_trade_pct
+                # Flat exit at end of configured holding window (explicit max 6 candles / 30m)
+                diff_pct = ((exit_price_actual - actual_entry_price) / actual_entry_price * 100) if direction == "BULLISH" else ((actual_entry_price - exit_price_actual) / actual_entry_price * 100)
+                pnl = diff_pct - total_friction_pct
                 stats["total_pnl_pct"] += pnl
                 if pnl > 0:
                     stats["wins"] += 1
+                    is_win_trade = True
                 else:
                     stats["losses"] += 1
+                    is_win_trade = False
+
+            if is_out_of_sample:
+                stats["out_of_sample_trades"] += 1
+                if is_win_trade:
+                    stats["out_of_sample_wins"] += 1
+            else:
+                stats["in_sample_trades"] += 1
+                if is_win_trade:
+                    stats["in_sample_wins"] += 1
 
     print("\n" + "="*50)
     print("        5-MINUTE REPLAY BACKTEST SUMMARY")
@@ -187,14 +326,32 @@ def run_screener_replay(sample_symbols=None, days="5d"):
     print(f"Actionable Trades:        {stats['trades_executed']}")
     print(f"Stage Breakdown:          {stats['stage_counts']}")
     
+    # Missed-Move Recall & False-Positive Rate:
+    if stats["total_qualifying_market_moves"] > 0:
+        recall_pct = round(stats["detected_pre_moves"] / stats["total_qualifying_market_moves"] * 100, 1)
+        missed_pct = round(stats["missed_moves_count"] / stats["total_qualifying_market_moves"] * 100, 1)
+        print(f"Qualifying Moves (>1.25%):{stats['total_qualifying_market_moves']}")
+        print(f"Pre-Move Recall Rate:     {recall_pct}% ({stats['detected_pre_moves']} caught early)")
+        print(f"Missed-Move Rate:         {missed_pct}% ({stats['missed_moves_count']} missed)")
+
     if stats["trades_executed"] > 0:
         win_rate = round(stats["wins"] / stats["trades_executed"] * 100, 1)
+        fp_rate = round(stats["losses"] / stats["trades_executed"] * 100, 1)
         avg_mfe = round(np.mean(stats["mfes"]), 2) if stats["mfes"] else 0.0
         avg_mae = round(np.mean(stats["maes"]), 2) if stats["maes"] else 0.0
         print(f"Win Rate (After Costs):   {win_rate}% ({stats['wins']} Wins / {stats['losses']} Losses)")
+        print(f"False Positive Rate:      {fp_rate}%")
         print(f"Net PnL (After Costs):    {round(stats['total_pnl_pct'], 2)}%")
-        print(f"Average MFE (Excursion):  +{avg_mfe}%")
-        print(f"Average MAE (Drawdown):   -{avg_mae}%")
+        print(f"Average MFE (In-Trade):   +{avg_mfe}%")
+        print(f"Average MAE (In-Trade):   -{avg_mae}%")
+        
+        # Walk-Forward / Holdout Validation Comparison:
+        if stats["in_sample_trades"] > 0:
+            is_wr = round(stats["in_sample_wins"] / stats["in_sample_trades"] * 100, 1)
+            print(f"In-Sample Win Rate (60%): {is_wr}% ({stats['in_sample_wins']}/{stats['in_sample_trades']} trades)")
+        if stats["out_of_sample_trades"] > 0:
+            oos_wr = round(stats["out_of_sample_wins"] / stats["out_of_sample_trades"] * 100, 1)
+            print(f"Out-of-Sample Win Rate (40%): {oos_wr}% ({stats['out_of_sample_wins']}/{stats['out_of_sample_trades']} trades)")
     print("="*50 + "\n")
 
 if __name__ == "__main__":
