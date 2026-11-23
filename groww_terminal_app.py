@@ -24,6 +24,7 @@ from engine.momentum_ignition_engine import MomentumIgnitionEngine
 from engine.missed_move_detector import MissedMoveDetector
 from engine.strategy_learning_engine import StrategyLearningEngine
 from engine.nse_data_engine import NSEDataEngine
+from engine.fno_momentum_filter import FNOMomentumFilter
 
 # Initialize NSE Institutional Data Engine
 nse_engine = NSEDataEngine()
@@ -448,28 +449,36 @@ def background_screener_worker():
     while True:
         try:
             now = time.time()
-            # 1. Sector ranking refresh every 5 minutes (300 seconds)
-            if now - screener_state["last_screener_update"] > 300 or not screener_state["sectors"]:
-                print("[GROWW ENGINE] Refreshing live Trending Sectors & Watchlists...")
-                sorted_sectors = calculate_dynamic_sectors()
-                screener_state["sectors"] = sorted_sectors
-
-                bull_sectors = [s for s in sorted_sectors.values() if s.get("is_bullish")][:3]
-                bear_sectors = [s for s in sorted_sectors.values() if not s.get("is_bullish")][:3]
-
-                bull_watchlist = []
-                for b in bull_sectors:
-                    bull_watchlist.extend(b.get("top_5", []))
-
-                bear_watchlist = []
-                for b in bear_sectors:
-                    bear_watchlist.extend(b.get("top_5", []))
+            # 1. 5-minute Universal 219 F&O Momentum Refresh (Filtering out sideways/dead stocks)
+            if now - screener_state["last_screener_update"] > 300 or not screener_state.get("bullish_momentum_watchlist"):
+                print("[FNO SCANNER] Scanning all 219 F&O stocks: filtering sideways, selecting active momentum movers...")
+                fno_list = screener_state.get("fno_universe", [])
+                if not fno_list:
+                    # Fallback to sector discovery if universe empty
+                    sorted_sectors = calculate_dynamic_sectors()
+                    screener_state["sectors"] = sorted_sectors
+                    bull_watchlist = []
+                    for b in [s for s in sorted_sectors.values() if s.get("is_bullish")][:3]:
+                        bull_watchlist.extend(b.get("top_5", []))
+                    bear_watchlist = []
+                    for b in [s for s in sorted_sectors.values() if not s.get("is_bullish")][:3]:
+                        bear_watchlist.extend(b.get("top_5", []))
+                else:
+                    top_bull, top_bear, fetched_dfs = FNOMomentumFilter.filter_active_momentum_stocks(fno_list, max_workers=14)
+                    bull_watchlist = [{"symbol": x["symbol"], "change": x["change_pct"], "velocity": x["velocity"]} for x in top_bull]
+                    bear_watchlist = [{"symbol": x["symbol"], "change": x["change_pct"], "velocity": x["velocity"]} for x in top_bear]
+                    latest_dfs.update(fetched_dfs)
+                    for sym, cdf in fetched_dfs.items():
+                        screener_state.setdefault("raw_market_cache", {})[sym] = {
+                            "timestamp": now,
+                            "df": cdf
+                        }
 
                 screener_state["bullish_momentum_watchlist"] = bull_watchlist
                 screener_state["bearish_momentum_watchlist"] = bear_watchlist
-                screener_state["ranked_opportunities"] = None  # Instantly purge old rankings on 5-min sector refresh!
+                screener_state["ranked_opportunities"] = None  # Instantly purge old rankings on 5-min refresh!
                 screener_state["last_screener_update"] = now
-                print(f"[GROWW ENGINE] Sectors updated. Bullish: {[x['symbol'] for x in bull_watchlist[:4]]}, Bearish: {[x['symbol'] for x in bear_watchlist[:4]]}")
+                print(f"[FNO SCANNER] Active F&O Watchlist Ready: {len(bull_watchlist)} Bullish Movers, {len(bear_watchlist)} Bearish Movers (Filtered out dead/sideways).")
 
             # 2. Stock market-data polling separated from sector refresh (runs every 45-60s)
             if now - last_market_poll > 45:
@@ -1093,6 +1102,28 @@ def get_recent_logged_signals():
 def get_live_news():
     """Returns curated live market and catalyst headlines"""
     return jsonify({"success": True, "news": news_engine.fetch_market_news()})
+
+@app.route("/api/news/stock")
+def get_stock_specific_news():
+    """Returns targeted live news affecting the currently scanned F&O stock"""
+    symbol = request.args.get("symbol", "")
+    if not symbol:
+        return jsonify({"success": False, "news": []})
+    clean = symbol.replace(".NS", "")
+    articles = news_engine.fetch_news_for_stock(clean)
+    return jsonify({"success": True, "symbol": clean, "news": articles})
+
+@app.route("/api/fno/momentum-watchlists")
+def get_fno_momentum_watchlists_endpoint():
+    """Returns dynamically scanned Top Bullish & Bearish momentum movers from all 219 F&O stocks"""
+    bull = screener_state.get("bullish_momentum_watchlist", [])
+    bear = screener_state.get("bearish_momentum_watchlist", [])
+    return jsonify({
+        "success": True,
+        "bullish": bull,
+        "bearish": bear,
+        "fno_total": len(screener_state.get("fno_universe", []))
+    })
 
 @app.route("/api/nse/institutional")
 def get_nse_institutional_data():

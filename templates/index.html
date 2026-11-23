@@ -35,17 +35,17 @@
     <!-- 3D Glass Command Workspace Layout -->
     <div class="workspace-grid" id="workspaceGrid">
 
-        <!-- Column 1: Top 3 Bullish Sectors -->
+        <!-- Column 1: Top Bullish F&O Momentum Movers (Filtered from 219 F&O) -->
         <div class="panel" id="bullishPanel">
             <div class="panel-header">
                 <span class="green" style="display:flex; align-items:center; gap:6px;">
-                    <span style="font-size:0.9rem;">▲</span> BULLISH SECTOR RADAR
+                    <span style="font-size:0.9rem;">▲</span> BULLISH F&O MOVERS
                 </span>
-                <span style="font-size:0.65rem; color:var(--text-muted);">GROWW DYNAMIC</span>
+                <span style="font-size:0.65rem; color:var(--text-muted);">CALL / BUY FLOW</span>
             </div>
-            <div class="panel-body" id="bullishSectors">
+            <div class="panel-body" id="bullishSectors" style="display:flex; flex-direction:column; gap:6px; overflow-y:auto; max-height:calc(100vh - 120px);">
                 <div style="font-size:0.72rem; color:var(--text-muted); text-align:center; margin-top:30px;">
-                    AI scanning dynamic market leadership...
+                    Filtering 219 F&O stocks for active Call/Bull momentum...
                 </div>
             </div>
         </div>
@@ -162,6 +162,19 @@
                     </div>
                 </div>
 
+                <!-- Live Stock News Catalyst Bar -->
+                <div style="background:rgba(255,255,255,0.02); border:1px solid rgba(255,170,0,0.3); border-radius:6px; padding:6px 12px; margin-bottom:12px; display:flex; align-items:center; justify-content:space-between; gap:10px;">
+                    <div style="display:flex; align-items:center; gap:8px; min-width:180px;">
+                        <span style="font-size:0.85rem;">📰</span>
+                        <span style="font-size:0.68rem; font-weight:bold; color:var(--neon-amber); text-transform:uppercase;">CATALYST NEWS:</span>
+                        <span id="activeNewsStock" style="font-size:0.75rem; font-weight:800; color:#fff;">--</span>
+                    </div>
+                    <div id="activeStockNewsHeadline" style="font-size:0.72rem; color:#cbd5e1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex-grow:1;">
+                        Fetching dynamic company headlines...
+                    </div>
+                    <span id="activeNewsSentiment" style="font-size:0.62rem; padding:1px 6px; border-radius:3px; background:rgba(255,255,255,0.06); font-weight:bold; color:#94a3b8;">SCANNING</span>
+                </div>
+
                 <!-- Top Ranked Opportunities Bar (Bullish & Bearish F&O Opportunities) -->
                 <div id="rankedOpportunitiesSection">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
@@ -192,17 +205,17 @@
             </div>
         </div>
 
-        <!-- Column 3: Top 3 Bearish Sectors -->
+        <!-- Column 3: Top Bearish F&O Momentum Movers (Filtered from 219 F&O) -->
         <div class="panel" id="bearishPanel">
             <div class="panel-header">
                 <span class="red" style="display:flex; align-items:center; gap:6px;">
-                    <span style="font-size:0.9rem;">▼</span> BEARISH SECTOR RADAR
+                    <span style="font-size:0.9rem;">▼</span> BEARISH F&O MOVERS
                 </span>
-                <span style="font-size:0.65rem; color:var(--text-muted);">GROWW DYNAMIC</span>
+                <span style="font-size:0.65rem; color:var(--text-muted);">PUT / SHORT FLOW</span>
             </div>
-            <div class="panel-body" id="bearishSectors">
+            <div class="panel-body" id="bearishSectors" style="display:flex; flex-direction:column; gap:6px; overflow-y:auto; max-height:calc(100vh - 120px);">
                 <div style="font-size:0.72rem; color:var(--text-muted); text-align:center; margin-top:30px;">
-                    AI scanning dynamic market weakness...
+                    Filtering 219 F&O stocks for active Put/Bear momentum...
                 </div>
             </div>
         </div>
@@ -522,9 +535,109 @@
 
         async function loadDynamicTopSectors() {
             try {
-                const res = await fetch('/api/groww/sectors-dynamic');
+                // Fetch dynamic 219 F&O momentum movers (filtered out dead/sideways stocks)
+                const res = await fetch('/api/fno/momentum-watchlists');
                 const data = await res.json();
-                if (data.success && data.sectors) {
+                if (data.success && (data.bullish || data.bearish)) {
+                    renderFNOMomentumUI(data.bullish || [], data.bearish || []);
+                }
+            } catch (e) {
+                log('F&O Momentum query error: ' + e.message, 'WARN');
+            }
+        }
+
+        function renderFNOMomentumUI(bullList, bearList) {
+            const bullEl = document.getElementById('bullishSectors');
+            const bearEl = document.getElementById('bearishSectors');
+            if (!bullEl || !bearEl) return;
+            bullEl.innerHTML = '';
+            bearEl.innerHTML = '';
+
+            activeWatchlist = [];
+
+            if (bullList.length === 0) {
+                bullEl.innerHTML = '<div style="font-size:0.72rem; color:var(--text-muted); text-align:center; margin-top:20px;">Scanning 219 F&O for Call/Bull movers...</div>';
+            } else {
+                bullList.forEach((stk, idx) => {
+                    const sym = stk.symbol;
+                    activeWatchlist.push({ symbol: sym, bias: 'BULLISH' });
+                    const isSelected = (sym === currentStockSymbol);
+                    const card = document.createElement('div');
+                    card.className = `sector-card ${isSelected ? 'selected' : ''}`;
+                    card.style.padding = '8px 10px';
+                    card.onclick = () => selectStock(sym);
+                    card.innerHTML = `
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <span style="font-size:0.78rem; font-weight:800; color:#fff;">#${idx+1} ${sym.replace('.NS', '')}</span>
+                            <span style="color:var(--neon-green); font-size:0.75rem; font-weight:800;">+${stk.change.toFixed(1)}%</span>
+                        </div>
+                        <div style="font-size:0.63rem; color:var(--text-muted); display:flex; justify-content:space-between; margin-top:2px;">
+                            <span>Vel: <b style="color:var(--neon-cyan);">${stk.velocity || 1.0}x</b></span>
+                            <span style="color:#94a3b8; font-weight:bold;">CALL MOVER</span>
+                        </div>
+                    `;
+                    bullEl.appendChild(card);
+                });
+            }
+
+            if (bearList.length === 0) {
+                bearEl.innerHTML = '<div style="font-size:0.72rem; color:var(--text-muted); text-align:center; margin-top:20px;">Scanning 219 F&O for Put/Bear movers...</div>';
+            } else {
+                bearList.forEach((stk, idx) => {
+                    const sym = stk.symbol;
+                    activeWatchlist.push({ symbol: sym, bias: 'BEARISH' });
+                    const isSelected = (sym === currentStockSymbol);
+                    const card = document.createElement('div');
+                    card.className = `sector-card ${isSelected ? 'selected' : ''}`;
+                    card.style.padding = '8px 10px';
+                    card.onclick = () => selectStock(sym);
+                    card.innerHTML = `
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <span style="font-size:0.78rem; font-weight:800; color:#fff;">#${idx+1} ${sym.replace('.NS', '')}</span>
+                            <span style="color:var(--neon-red); font-size:0.75rem; font-weight:800;">${stk.change.toFixed(1)}%</span>
+                        </div>
+                        <div style="font-size:0.63rem; color:var(--text-muted); display:flex; justify-content:space-between; margin-top:2px;">
+                            <span>Vel: <b style="color:var(--neon-amber);">${stk.velocity || 1.0}x</b></span>
+                            <span style="color:#94a3b8; font-weight:bold;">PUT MOVER</span>
+                        </div>
+                    `;
+                    bearEl.appendChild(card);
+                });
+            }
+
+            // Auto select top stock if none selected
+            if (!currentStockSymbol && activeWatchlist.length > 0) {
+                selectStock(activeWatchlist[0].symbol);
+            }
+        }
+
+        async function loadStockCatalystNews(stockSymbol) {
+            const sym = stockSymbol || currentStockSymbol;
+            if (!sym) return;
+            const cleanSym = sym.replace('.NS', '');
+            document.getElementById('activeNewsStock').innerText = cleanSym;
+            try {
+                const res = await fetch(`/api/news/stock?symbol=${encodeURIComponent(cleanSym)}`);
+                const data = await res.json();
+                if (data.success && data.news && data.news.length > 0) {
+                    const topNews = data.news[0];
+                    const headlineEl = document.getElementById('activeStockNewsHeadline');
+                    const sentEl = document.getElementById('activeNewsSentiment');
+                    if (headlineEl) {
+                        headlineEl.innerText = topNews.title;
+                        headlineEl.title = topNews.title;
+                    }
+                    if (sentEl) {
+                        const s = topNews.sentiment || 'NEUTRAL';
+                        sentEl.innerText = s;
+                        sentEl.style.color = s === 'BULLISH' ? 'var(--neon-green)' : (s === 'BEARISH' ? 'var(--neon-red)' : '#94a3b8');
+                    }
+                } else {
+                    document.getElementById('activeStockNewsHeadline').innerText = `No major news headlines detected for ${cleanSym} today.`;
+                    document.getElementById('activeNewsSentiment').innerText = 'STABLE';
+                }
+            } catch (e) {}
+        }
                     sectorsDict = data.sectors;
                     renderSectorsUI(data.sectors);
                 }
@@ -681,6 +794,7 @@
             renderStockChips();
             scanStock(stk);
             loadNSEInstitutionalData(stk);
+            loadStockCatalystNews(stk);
         }
 
         function switchRadarMode(mode) {
