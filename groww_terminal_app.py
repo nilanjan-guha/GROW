@@ -566,13 +566,19 @@ def background_screener_worker():
                         cdf = yf.download(sym, period="5d", interval="5m", progress=False)
                         if isinstance(cdf.columns, pd.MultiIndex):
                             cdf = cdf.xs(sym, axis=1, level=1) if sym in cdf.columns.levels[1] else cdf
-                        res = evaluate_explosive_momentum(cdf, sym)
-                        if res:
-                            existing_fno = screener_state.get("raw_market_cache", {}).get(sym, {}).get("fno_filter_data")
-                            screener_state["raw_market_cache"][sym] = {
+                        
+                        # Always cache raw OHLCV DataFrame if valid and non-empty (do not discard if momentum res is None!)
+                        if cdf is not None and not cdf.empty and len(cdf) >= 15:
+                            existing_entry = screener_state.get("raw_market_cache", {}).get(sym, {})
+                            existing_fno = existing_entry.get("fno_filter_data")
+                            res = evaluate_explosive_momentum(cdf, sym)
+                            
+                            screener_state.setdefault("raw_market_cache", {})[sym] = {
                                 "timestamp": time.time(),
-                                "candle_ts": str(cdf.index[-1]),
-                                "data": res,
+                                "raw_latest_candle_ts": str(cdf.index[-1]),
+                                "evaluated_completed_candle_ts": str(cdf.index[-1]),
+                                "rvol_candle_ts": existing_entry.get("rvol_candle_ts"),
+                                "data": res if res else existing_entry.get("data"),
                                 "df": cdf,
                                 "fno_filter_data": existing_fno
                             }
@@ -1012,20 +1018,6 @@ def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
         if norm_fno_set and clean_sym not in norm_fno_set:
             continue
         
-        # Sector-First Priority with Stock-Level Discovery Exception:
-        # Prioritize top sector constituents, BUT allow stocks with exceptional 5m momentum/coils (pre_coil or high RVOL)
-        fno_data_item = item.get("fno_filter_data", {})
-        has_standalone_setup = (
-            fno_data_item.get("is_pre_coil", False) or 
-            fno_data_item.get("rvol", 0.0) >= 1.5 or 
-            fno_data_item.get("velocity", 0.0) >= 2.0
-        ) if fno_data_item else False
-
-        if sector_constituents and sym not in sector_constituents and f"{clean_sym}.NS" not in sector_constituents:
-            # If outside top sectors, only evaluate if it has an exceptional standalone pre-breakout or RVOL setup
-            if not has_standalone_setup and (not allowed_sector_symbols or sym not in allowed_sector_symbols):
-                continue
-
         df_sym = item["df"]
         
         # Enforce unified 5m feed validation
@@ -1043,6 +1035,26 @@ def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
         # Reject candidates whose latest completed candle is misaligned with the market benchmark
         if stock_candle_ts != current_candle_ts:
             continue
+
+        # Sector-First Priority with Stock-Level Discovery Exception:
+        # Prioritize top sector constituents, BUT allow stocks with exceptional 5m momentum/coils (pre_coil or high RVOL)
+        # CRITICAL: Verify that the standalone setup data matches the EXACT current completed candle timestamp!
+        fno_data_item = item.get("fno_filter_data", {})
+        fno_data_ts = fno_data_item.get("evaluated_completed_candle_ts") or fno_data_item.get("rvol_candle_ts")
+        is_fno_fresh = (fno_data_ts == stock_candle_ts)
+
+        has_standalone_setup = (
+            is_fno_fresh and (
+                fno_data_item.get("is_pre_coil", False) or 
+                fno_data_item.get("rvol", 0.0) >= 1.5 or 
+                fno_data_item.get("velocity", 0.0) >= 2.0
+            )
+        ) if fno_data_item else False
+
+        if sector_constituents and sym not in sector_constituents and f"{clean_sym}.NS" not in sector_constituents:
+            # If outside top sectors, only evaluate if it has a validated, FRESH standalone pre-breakout setup
+            if not has_standalone_setup and (not allowed_sector_symbols or sym not in allowed_sector_symbols):
+                continue
 
         sec_info = groww_sector_engine.stock_to_sector_map.get(sym, {})
         sec_name = sec_info.get("sector")
