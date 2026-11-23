@@ -23,11 +23,9 @@ from engine.market_regime_engine import MarketRegimeEngine
 from engine.momentum_ignition_engine import MomentumIgnitionEngine
 from engine.missed_move_detector import MissedMoveDetector
 from engine.strategy_learning_engine import StrategyLearningEngine
-from engine.dhan_engine import DhanLiveEngine
 from engine.nse_data_engine import NSEDataEngine
 
-# Initialize Dhan HQ & NSE Institutional Data Engines
-dhan_client = DhanLiveEngine()
+# Initialize NSE Institutional Data Engine
 nse_engine = NSEDataEngine()
 
 def is_market_open():
