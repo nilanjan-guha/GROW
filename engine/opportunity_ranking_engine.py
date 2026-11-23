@@ -462,14 +462,29 @@ class OpportunityRankingEngine:
         )
 
         # Direction-specific IGNITION trigger:
-        # Cannot qualify on weak level break alone! Requires candle close-through level AND volume expansion (RVOL >= 1.25 or expanding range >= 1.4x ATR)
-        is_bull_ignition = direction == "BULLISH" and (
-            ((is_broken_above_orh or is_broken_above_pdh) and curr_c > curr_o and (rvol >= 1.25 or is_expanding_now)) or
-            (is_expanding_now and curr_c > curr_o and rvol >= 1.4 and (above_vwap or vwap is None))
+        # Cannot qualify on weak level break alone!
+        # Requires:
+        # 1. Price breaking out of ORH/PDH (Long) or breaking down from ORL/PDL (Short) with closing confirmation
+        # 2. Volume expansion: RVOL >= 1.25 or expanding range >= 1.4x ATR
+        # 3. STRICT VWAP VALIDATION: Must hold above VWAP for Longs / below VWAP for Shorts. Missing VWAP cannot qualify!
+        # 4. Valid structural risk boundaries: Invalidation level must exist with computed RR >= 1.20
+        has_ignition_risk_gate = has_valid_structural_risk and (computed_rr >= 1.20)
+        
+        is_bull_ignition = (
+            direction == "BULLISH" and 
+            above_vwap and 
+            has_ignition_risk_gate and (
+                ((is_broken_above_orh or is_broken_above_pdh) and curr_c > curr_o and (rvol >= 1.25 or is_expanding_now)) or
+                (is_expanding_now and curr_c > curr_o and rvol >= 1.4)
+            )
         )
-        is_bear_ignition = direction == "BEARISH" and (
-            ((is_broken_below_orl or is_broken_below_pdl) and curr_c < curr_o and (rvol >= 1.25 or is_expanding_now)) or
-            (is_expanding_now and curr_c < curr_o and rvol >= 1.4 and (below_vwap or vwap is None))
+        is_bear_ignition = (
+            direction == "BEARISH" and 
+            below_vwap and 
+            has_ignition_risk_gate and (
+                ((is_broken_below_orl or is_broken_below_pdl) and curr_c < curr_o and (rvol >= 1.25 or is_expanding_now)) or
+                (is_expanding_now and curr_c < curr_o and rvol >= 1.4)
+            )
         )
 
         # Strict PREPARING Requirement:
@@ -507,9 +522,26 @@ class OpportunityRankingEngine:
         has_bull_structure_setup = is_coiling_near_orh or is_coiling_near_pdh or has_swing_higher_lows or (is_range_squeezed and dist_to_orh_pct <= 1.0)
         has_bear_structure_setup = is_coiling_near_orl or is_coiling_near_pdl or has_swing_lower_highs or (is_range_squeezed and dist_to_orl_pct <= 1.0)
 
+        # High-Recall Early Discovery Layer (P2):
+        # Discovers non-textbook movers early: unusual volume acceleration (RVOL >= 1.5), relative-strength acceleration,
+        # or flat-open ignition even before multi-swing pivots form.
+        # STRICTLY WATCH-ONLY (non-actionable) until elevated through confirmation or ignition.
+        has_bull_early_momentum = (
+            direction == "BULLISH" and 
+            above_vwap and 
+            curr_c > curr_o and 
+            ((rvol >= 1.5 and rs_accel_3 > 0.1) or is_flat_open_ignition or (is_expanding_now and rvol >= 1.25))
+        )
+        has_bear_early_momentum = (
+            direction == "BEARISH" and 
+            below_vwap and 
+            curr_c < curr_o and 
+            ((rvol >= 1.5 and rs_accel_3 < -0.1) or (is_expanding_now and rvol >= 1.25))
+        )
+
         is_early_observing = (
-            (direction == "BULLISH" and has_bull_participation and has_bull_structure_setup and above_vwap and early_bull_score >= 30) or
-            (direction == "BEARISH" and has_bear_participation and has_bear_structure_setup and below_vwap and early_bear_score >= 30)
+            (direction == "BULLISH" and (has_bull_early_momentum or (has_bull_participation and has_bull_structure_setup)) and above_vwap and early_bull_score >= 25) or
+            (direction == "BEARISH" and (has_bear_early_momentum or (has_bear_participation and has_bear_structure_setup)) and below_vwap and early_bear_score >= 25)
         )
 
         if is_strictly_confirmed:

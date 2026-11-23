@@ -1311,7 +1311,7 @@ def log_confirmed_signal_endpoint():
         clean_s = sym.replace(".NS", "")
         # SERVER-SIDE INDEPENDENT SIGNAL VALIDATION (P1):
         # Never trust client-provided actionability as authorization to log a trade!
-        # Revalidate server-side against current ranked opportunities and completed candle status
+        # Revalidate server-side against current ranked opportunities, exact candle timestamp, direction, and price limits
         ranked_cache = screener_state.get("ranked_opportunities") or {}
         all_ranked_cands = (ranked_cache.get("top_bullish", []) + 
                             ranked_cache.get("top_bearish", []) + 
@@ -1324,29 +1324,49 @@ def log_confirmed_signal_endpoint():
         if matching_cand is None or not matching_cand.get("is_actionable", False):
             return jsonify({"success": False, "error": "Server rejection: Candidate is not an active, actionable trade setup."}), 403
 
-        # Reject logging if candidate stage is watch-only or non-actionable
+        # 1. Reject logging if candidate stage is watch-only or non-actionable
         cand_stage = matching_cand.get("stage", "")
         if cand_stage not in ("CONFIRMED", "IGNITION", "ENTRY READY"):
             return jsonify({"success": False, "error": f"Server rejection: Stage {cand_stage} is strictly watch-only."}), 403
 
+        # 2. Revalidate completed 5m candle freshness: must match the active ranked candle timestamp
+        server_ranked_ts = screener_state.get("ranked_candle_ts")
+        client_candle_ts = data.get("candle_ts")
+        if server_ranked_ts and client_candle_ts and str(client_candle_ts) != str(server_ranked_ts):
+            return jsonify({"success": False, "error": f"Server rejection: Stale candle timestamp ({client_candle_ts} vs server {server_ranked_ts})."}), 409
+
+        # 3. Validate directional alignment against the server's evaluated direction
+        server_direction = matching_cand.get("direction")
         action = data.get("action", "")
-        direction = "BUY" if "BUY" in action else ("SELL" if "SELL" in action else "NEUTRAL")
-        if direction == "NEUTRAL" or "WAIT" in action or "MONITORING" in action:
+        client_direction = "BUY" if "BUY" in action else ("SELL" if "SELL" in action else "NEUTRAL")
+        if client_direction == "NEUTRAL" or "WAIT" in action or "MONITORING" in action:
             return jsonify({"success": False, "error": "Direction is neutral or waiting for trigger"}), 400
+        
+        if server_direction and client_direction != server_direction:
+            return jsonify({"success": False, "error": f"Server rejection: Direction mismatch ({client_direction} vs server {server_direction})."}), 400
+
+        # 4. Overwrite client prices strictly with server-evaluated execution & risk boundaries
+        server_entry = matching_cand.get("current_price") or data.get("entry_price")
+        server_sl = matching_cand.get("suggested_sl") or data.get("suggested_sl")
+        server_tp1 = matching_cand.get("suggested_tp1") or data.get("suggested_tp1")
+        server_tp2 = matching_cand.get("suggested_tp2") or data.get("suggested_tp2")
+
+        if not server_entry or not server_sl or not server_tp1:
+            return jsonify({"success": False, "error": "Server rejection: Missing validated entry, SL, or TP levels."}), 400
 
         sig_id = log_signal({
             "symbol": sym,
-            "direction": direction,
-            "strategy": data.get("primary_strategy", "SMC Structure"),
-            "entry_price": data.get("entry_price"),
-            "stop_loss": data.get("suggested_sl"),
-            "target_1": data.get("suggested_tp1"),
-            "target_2": data.get("suggested_tp2"),
-            "score": data.get("composite_score", 75),
-            "confidence": f"{data.get('composite_score', 75)}%",
+            "direction": server_direction,
+            "strategy": matching_cand.get("stage_desc") or data.get("primary_strategy", "SMC Structure"),
+            "entry_price": server_entry,
+            "stop_loss": server_sl,
+            "target_1": server_tp1,
+            "target_2": server_tp2,
+            "score": matching_cand.get("conviction_score", data.get("composite_score", 75)),
+            "confidence": f"{matching_cand.get('confirmation_score', 75)}%",
             "catalyst": "SMC Order Flow Ignition",
-            "features": {},
-            "all_triggered": data.get("triggered_strategies", [])
+            "features": {"rvol": matching_cand.get("rvol", 1.0), "rs_nifty": matching_cand.get("rs_nifty", 0.0)},
+            "all_triggered": matching_cand.get("reasons", data.get("triggered_strategies", []))
         })
 
         # Cache in memory

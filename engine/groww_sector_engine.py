@@ -203,15 +203,24 @@ class GrowwSectorEngine:
                     break
 
         self.actual_fno_coverage = len(unique_fno_covered)
-        # Expected F&O constituents within the selected priority sectors (3 Bull + 3 Bear + 2 Neutral)
-        # Typically each sector has 5-15 F&O stocks (totaling ~40-80 stocks across 8 sectors).
-        # We require at least 15 valid F&O stocks across these 8 sectors to ensure healthy sector depth.
-        if self.actual_fno_coverage < 15:
+        # Multi-Factor Sector Health & Coverage Validation (P1):
+        # 1. Total unique F&O stocks across priority sectors must meet minimum depth (>= 25 stocks).
+        # 2. Minimum representation per sector: At least 5 of the 8 sectors must have valid F&O constituents.
+        # 3. Overall ratio check: F&O coverage must be statistically representative.
+        active_sectors_with_fno = sum(1 for s in sector_results.values() if s.get("fno_coverage_count", 0) > 0)
+        
+        has_healthy_coverage = (
+            self.actual_fno_coverage >= 25 and 
+            active_sectors_with_fno >= 5 and 
+            len(sector_results) >= 6
+        )
+
+        if not has_healthy_coverage:
             self.is_stale = True
             self.is_usable = False
-            self.last_error = f"LOW_SECTOR_COVERAGE: {self.actual_fno_coverage} F&O stocks (<15)"
-            print(f"[GROWW SECTORS] Coverage rejected: {self.actual_fno_coverage} F&O stocks across selected sectors (<15)")
-            return {}  # Reject incomplete results
+            self.last_error = f"UNHEALTHY_SECTOR_MAP: {self.actual_fno_coverage} stocks, {active_sectors_with_fno}/8 sectors active"
+            print(f"[GROWW SECTORS] Coverage rejected: Only {self.actual_fno_coverage} stocks across {active_sectors_with_fno} sectors. Unhealthy map.")
+            return {}  # Strictly reject incomplete/fragile results
         else:
             self.is_stale = False
             self.is_usable = True

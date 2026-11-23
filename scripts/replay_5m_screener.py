@@ -57,10 +57,16 @@ def run_screener_replay(sample_symbols=None, days="5d"):
         if df is None or len(df) < 30:
             continue
             
+        current_open_trade = None
         # Replay candle by candle from index 25 onwards
         for idx in range(25, len(df) - 5):
             window_df = df.iloc[:idx]
             curr_candle_ts = window_df.index[-1]
+            
+            # Check if previous open trade has closed by current candle index
+            if current_open_trade is not None:
+                if idx >= current_open_trade["exit_idx"]:
+                    current_open_trade = None
             
             # Align with nifty window
             nifty_sub = nifty_df[nifty_df.index <= curr_candle_ts]
@@ -89,17 +95,28 @@ def run_screener_replay(sample_symbols=None, days="5d"):
                 stats["watch_only_candidates"] += 1
                 continue
                 
-            # If ACTIONABLE (ENTRY READY or IGNITION), simulate trade outcome on next 5 completed candles
+            # Deduplication: Do not count repeated consecutive signals on the same stock
+            # If a trade is currently open in simulation for this symbol, do NOT enter again!
+            if current_open_trade is not None:
+                continue
+
+            # If ACTIONABLE (ENTRY READY or IGNITION), simulate realistic NEXT-CANDLE execution
             stats["actionable_signals"] += 1
-            stats["trades_executed"] += 1
             
-            entry_price = float(window_df["Close"].iloc[-1])
+            # Next-candle Open execution (avoid lookahead bias / entering on the same candle close)
+            next_candle = df.iloc[idx]
+            entry_price = float(next_candle["Open"])
+            
             sl = res.get("suggested_sl") or (entry_price * 0.99)
             tp1 = res.get("suggested_tp1") or (entry_price * 1.015)
             direction = res.get("direction", "BULLISH")
             
-            # Forward testing over next 5 candles
-            forward_candles = df.iloc[idx:idx+5]
+            # Forward testing over subsequent completed candles (up to 12 candles / 1 hour)
+            forward_candles = df.iloc[idx:min(idx+12, len(df))]
+            if forward_candles.empty:
+                continue
+
+            stats["trades_executed"] += 1
             highs = forward_candles["High"].values
             lows = forward_candles["Low"].values
             
@@ -107,27 +124,38 @@ def run_screener_replay(sample_symbols=None, days="5d"):
             max_adv = 0.0
             hit_tp = False
             hit_sl = False
+            exit_offset = len(forward_candles)
             
             if direction == "BULLISH":
                 max_fav = (max(highs) - entry_price) / entry_price * 100
                 max_adv = (entry_price - min(lows)) / entry_price * 100
-                for h, l in zip(highs, lows):
+                for c_i, (h, l) in enumerate(zip(highs, lows)):
                     if l <= sl:
                         hit_sl = True
+                        exit_offset = c_i + 1
                         break
                     if h >= tp1:
                         hit_tp = True
+                        exit_offset = c_i + 1
                         break
             else: # BEARISH
                 max_fav = (entry_price - min(lows)) / entry_price * 100
                 max_adv = (max(highs) - entry_price) / entry_price * 100
-                for h, l in zip(highs, lows):
+                for c_i, (h, l) in enumerate(zip(highs, lows)):
                     if h >= sl:
                         hit_sl = True
+                        exit_offset = c_i + 1
                         break
                     if l <= tp1:
                         hit_tp = True
+                        exit_offset = c_i + 1
                         break
+            
+            # Register open trade position to prevent duplicate entries until closed
+            current_open_trade = {
+                "entry_idx": idx,
+                "exit_idx": idx + exit_offset
+            }
             
             stats["mfes"].append(max_fav)
             stats["maes"].append(max_adv)
