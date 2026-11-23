@@ -309,27 +309,27 @@ class OpportunityRankingEngine:
         rr_ratio = float(opp_eval.get("risk_reward_ratio", 0.0)) if opp_eval else 0.0
         exhaustion_risk = opp_eval.get("exhaustion_risk", "LOW") if opp_eval else "LOW"
 
-        # Quality Gates for CONFIRMED:
+        # Quality Gates for CONFIRMED (Balanced for Intraday: realistic targets > 0.7%, RR >= 1.30, not over-strict):
         is_viable_opportunity = (
             opp_eval.get("is_viable", False) and 
-            potential_pct > 1.0 and 
-            rr_ratio >= 1.50 and 
+            potential_pct >= 0.70 and 
+            rr_ratio >= 1.30 and 
             exhaustion_risk != "HIGH"
         ) if opp_eval else False
 
         # Stage Classification with Separate Early vs Confirmation Triggers
-        if is_viable_opportunity and (conf_bull_score >= 50 or conf_bear_score >= 50):
+        if (is_viable_opportunity and (conf_bull_score >= 45 or conf_bear_score >= 45)) or (conviction_score >= 60 and potential_pct >= 0.70):
             stage = "CONFIRMED"
             stage_desc = f"Verified Completed Trade: RR 1:{rr_ratio:.2f}, +{potential_pct:.1f}% Room"
             entry_trigger = f"Demand/Supply OB Entry confirmed with RR 1:{rr_ratio:.1f}"
-        elif is_broken_above_orh or is_broken_below_orl or is_expanding_now or (rvol >= 1.75 and conviction_score >= 45):
+        elif is_broken_above_orh or is_broken_below_orl or is_expanding_now or (rvol >= 1.4 and conviction_score >= 40):
             stage = "IGNITION"
             stage_desc = f"Momentum Breaking Out: RVOL {rvol:.1f}x, Range {curr_range/atr14:.1f}x ATR"
             entry_trigger = "Breakout confirmed above ORH" if direction == "BULLISH" else "Breakdown confirmed below ORL"
-        elif is_coiling_near_orh or is_coiling_near_orl or is_range_squeezed or is_flat_open_ignition or (early_bull_score >= 40 or early_bear_score >= 40):
+        elif is_coiling_near_orh or is_coiling_near_orl or is_range_squeezed or is_flat_open_ignition or (early_bull_score >= 35 or early_bear_score >= 35):
             stage = "PREPARING"
-            stage_desc = "Early Energy Coil: Volume accumulating below breakout level before the move"
-            entry_trigger = f"Watch for breakout above ₹{orh:.1f} (ORH)" if direction == "BULLISH" else f"Watch for breakdown below ₹{orl:.1f} (ORL)"
+            stage_desc = "⚡ Pre-Breakout Coil: Institutional accumulation before the blast"
+            entry_trigger = f"Coil ready: Enter above ₹{orh:.1f} (ORH)" if direction == "BULLISH" else f"Coil ready: Enter below ₹{orl:.1f} (ORL)"
         else:
             stage = "MONITORING"
             stage_desc = "Normal intraday action"

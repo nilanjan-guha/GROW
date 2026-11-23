@@ -88,24 +88,25 @@
                 <!-- Stock selector chips for selected sector -->
                 <div class="stock-chips-bar" id="stockChipsBar"></div>
 
-                <!-- Strict SMC Intraday Trade Decision Card -->
+                <!-- Strict SMC Intraday Trade Decision Card (Streamlined High-Impact HUD) -->
                 <div class="radar-box">
                     <div class="trade-decision-banner" id="decisionBanner">
                         <div>
-                            <div style="font-size:0.62rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.8px;">STRICT ACTION MATRIX</div>
+                            <div style="font-size:0.62rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.8px;">CONFIRMED SIGNAL & SETUP</div>
                             <div class="decision-action" id="decisionAction" style="color:#94a3b8;">NO TRADE SETUP YET</div>
                         </div>
                         <div style="text-align:right;">
-                            <div style="font-size:0.62rem; color:var(--text-muted); letter-spacing:0.8px;">SMC PATTERN DETECTED</div>
-                            <div class="decision-setup" id="decisionSetup">WAITING FOR ORDER BLOCK / LIQUIDITY</div>
+                            <div style="font-size:0.62rem; color:var(--text-muted); letter-spacing:0.8px;">EARLY STAGE STATUS</div>
+                            <div class="decision-setup" id="decisionSetup">COIL / ACCUMULATION SCAN</div>
                         </div>
                     </div>
                     
-                    <div class="decision-reason" id="decisionReason">
-                        AI waiting for confirmed institutional order flow (Demand/Supply OB, Liquidity Sweeps, VWAP Reclaim).
+                    <div class="decision-reason" id="decisionReason" style="display:flex; justify-content:space-between; align-items:center; padding:6px 12px; font-size:0.75rem;">
+                        <span id="decisionReasonText">Scanning F&O order book confluence...</span>
+                        <span id="decisionPillTag" style="font-size:0.65rem; background:rgba(255,255,255,0.06); padding:2px 8px; border-radius:4px; font-weight:bold; color:var(--neon-cyan);">MONITORING</span>
                     </div>
 
-                    <div class="radar-metrics">
+                    <div class="radar-metrics" style="grid-template-columns: repeat(4, 1fr); gap:8px;">
                         <div class="metric-cell">
                             <div class="m-lbl">Price / VWAP</div>
                             <div class="m-val" id="valPrice" style="color:#fff;">--</div>
@@ -115,24 +116,20 @@
                             <div class="m-val yellow" id="valRsi">--</div>
                         </div>
                         <div class="metric-cell">
-                            <div class="m-lbl">EMA 9 vs EMA 21</div>
+                            <div class="m-lbl">EMA 9 / 21 Trend</div>
                             <div class="m-val cyan" id="valEma">--</div>
                         </div>
                         <div class="metric-cell">
-                            <div class="m-lbl">Quant Score & Win Prob</div>
+                            <div class="m-lbl">Quant Score & Prob</div>
                             <div class="m-val green" id="valQuantScore">--</div>
                         </div>
-                        <div class="metric-cell">
-                            <div class="m-lbl">Early Momentum Stage</div>
-                            <div class="m-val yellow" id="valPreMomentum">INACTIVE</div>
+                        <div class="metric-cell" style="grid-column: span 2;">
+                            <div class="m-lbl">Institutional Triggers & Bias</div>
+                            <div class="m-val cyan" id="valStrategies" style="font-size:0.75rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">--</div>
                         </div>
-                        <div class="metric-cell">
-                            <div class="m-lbl">Triggered Strategies</div>
-                            <div class="m-val cyan" id="valStrategies">--</div>
-                        </div>
-                        <div class="metric-cell" style="grid-column: span 3;">
-                            <div class="m-lbl">Recommended Stop Loss & Target</div>
-                            <div class="m-val yellow" id="valTargets">--</div>
+                        <div class="metric-cell" style="grid-column: span 2;">
+                            <div class="m-lbl">Stop Loss & Target Potential</div>
+                            <div class="m-val yellow" id="valTargets" style="font-size:0.78rem;">--</div>
                         </div>
                     </div>
                 </div>
@@ -943,35 +940,36 @@
             const topBull = ranked.top_bullish || [];
             const topBear = ranked.top_bearish || [];
 
-            let bullHtml = '<div style="font-family:\'Inter\', sans-serif; font-size:0.68rem; font-weight:bold; color:var(--neon-green); border-bottom:1px solid rgba(0,255,170,0.3); padding-bottom:3px;">▲ TOP 3 BULLISH (PRE-BREAKOUT / CONFIRMED)</div>';
+            let bullHtml = '<div style="font-family:\'Inter\', sans-serif; font-size:0.68rem; font-weight:bold; color:var(--neon-green); border-bottom:1px solid rgba(0,255,170,0.3); padding-bottom:3px; display:flex; justify-content:space-between;"><span>▲ TOP 3 BULLISH</span><span style="font-size:0.6rem; color:#94a3b8;">EARLY COIL / BREAKOUT</span></div>';
             if (topBull.length === 0) {
-                bullHtml += '<div style="font-size:0.7rem; color:var(--text-muted);">No high-conviction bullish setups currently qualifying.</div>';
+                bullHtml += '<div style="font-size:0.7rem; color:var(--text-muted); padding:6px 0;">Evaluating F&O sector leaders...</div>';
             } else {
                 topBull.forEach((c, i) => {
                     const sym = c.symbol;
                     const stageColor = c.stage === 'CONFIRMED' ? 'var(--neon-green)' : (c.stage === 'IGNITION' ? 'var(--neon-cyan)' : 'var(--neon-amber)');
-                    const reasons = (c.reasons || []).slice(0, 2).join(', ');
+                    const stageTag = c.stage === 'PREPARING' ? '⚡ PRE-BREAKOUT COIL' : c.stage;
                     
                     let setupDetails = '';
                     if (c.stage === 'CONFIRMED' && c.suggested_sl && c.suggested_tp1) {
-                        setupDetails = `<div style="font-size:0.63rem; color:#f8fafc; margin-top:3px; background:rgba(0,255,170,0.1); padding:2px 4px; border-radius:3px;">
-                            Trigger: <span style="color:var(--neon-green);">${c.entry_trigger || 'OB Entry'}</span> | SL: <span style="color:var(--neon-amber);">₹${c.suggested_sl}</span> | TP1: <span style="color:var(--neon-cyan);">₹${c.suggested_tp1}</span> | RR: 1:${c.risk_reward_ratio || 1.5}
+                        setupDetails = `<div style="font-size:0.62rem; color:#f8fafc; margin-top:2px; background:rgba(0,255,170,0.1); padding:2px 6px; border-radius:3px; display:flex; justify-content:space-between;">
+                            <span>SL: <b style="color:var(--neon-amber);">₹${c.suggested_sl}</b> | TP: <b style="color:var(--neon-cyan);">₹${c.suggested_tp1}</b></span>
+                            <span style="color:var(--neon-green); font-weight:bold;">RR 1:${c.risk_reward_ratio || 1.4}</span>
                         </div>`;
                     } else {
-                        setupDetails = `<div style="font-size:0.63rem; color:#94a3b8; margin-top:3px;">
-                            Trigger: <span style="color:var(--neon-amber);">${c.entry_trigger || 'Watching Breakout'}</span>
+                        setupDetails = `<div style="font-size:0.62rem; color:#94a3b8; margin-top:2px;">
+                            ${c.entry_trigger || 'Watching breakout level'}
                         </div>`;
                     }
 
                     bullHtml += `
                     <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(0,255,170,0.25); border-radius:4px; padding:6px 8px; cursor:pointer;" onclick="selectStock('${sym}')" title="Click to view ${sym} in Radar">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <span style="font-family:\'Inter\', sans-serif; font-size:0.75rem; font-weight:bold; color:#fff;">#${i+1} ${sym.replace('.NS', '')} <span style="font-size:0.65rem; color:${stageColor};">(${c.stage})</span></span>
-                            <span style="font-family:\'Inter\', sans-serif; font-size:0.7rem; color:var(--neon-green); font-weight:bold;">+${c.change_pct}%</span>
+                            <span style="font-size:0.75rem; font-weight:bold; color:#fff;">#${i+1} ${sym.replace('.NS', '')} <span style="font-size:0.62rem; color:${stageColor}; background:rgba(255,255,255,0.06); padding:1px 5px; border-radius:3px;">${stageTag}</span></span>
+                            <span style="font-size:0.72rem; color:var(--neon-green); font-weight:800;">+${c.change_pct}%</span>
                         </div>
-                        <div style="font-size:0.65rem; color:var(--text-muted); display:flex; justify-content:space-between; margin-top:2px;">
-                            <span>Score: ${c.conviction_score}/100 | ${reasons}</span>
-                            <span>${c.potential_pct ? '+' + c.potential_pct + '% room' : ''}</span>
+                        <div style="font-size:0.63rem; color:var(--text-muted); display:flex; justify-content:space-between; margin-top:2px;">
+                            <span>Score: ${c.conviction_score}/100</span>
+                            <span style="color:var(--neon-cyan);">${c.potential_pct ? '+' + c.potential_pct + '% room' : ''}</span>
                         </div>
                         ${setupDetails}
                     </div>`;
@@ -979,35 +977,36 @@
             }
             bullContainer.innerHTML = bullHtml;
 
-            let bearHtml = '<div style="font-family:\'Inter\', sans-serif; font-size:0.68rem; font-weight:bold; color:var(--neon-red); border-bottom:1px solid rgba(255,51,102,0.3); padding-bottom:3px;">▼ TOP 3 BEARISH (PRE-BREAKDOWN / CONFIRMED)</div>';
+            let bearHtml = '<div style="font-family:\'Inter\', sans-serif; font-size:0.68rem; font-weight:bold; color:var(--neon-red); border-bottom:1px solid rgba(255,51,102,0.3); padding-bottom:3px; display:flex; justify-content:space-between;"><span>▼ TOP 3 BEARISH</span><span style="font-size:0.6rem; color:#94a3b8;">EARLY BREAKDOWN</span></div>';
             if (topBear.length === 0) {
-                bearHtml += '<div style="font-size:0.7rem; color:var(--text-muted);">No high-conviction bearish setups currently qualifying.</div>';
+                bearHtml += '<div style="font-size:0.7rem; color:var(--text-muted); padding:6px 0;">Evaluating F&O sector laggards...</div>';
             } else {
                 topBear.forEach((c, i) => {
                     const sym = c.symbol;
                     const stageColor = c.stage === 'CONFIRMED' ? 'var(--neon-green)' : (c.stage === 'IGNITION' ? 'var(--neon-cyan)' : 'var(--neon-amber)');
-                    const reasons = (c.reasons || []).slice(0, 2).join(', ');
+                    const stageTag = c.stage === 'PREPARING' ? '⚡ PRE-BREAKDOWN COIL' : c.stage;
 
                     let setupDetails = '';
                     if (c.stage === 'CONFIRMED' && c.suggested_sl && c.suggested_tp1) {
-                        setupDetails = `<div style="font-size:0.63rem; color:#f8fafc; margin-top:3px; background:rgba(255,51,102,0.1); padding:2px 4px; border-radius:3px;">
-                            Trigger: <span style="color:var(--neon-red);">${c.entry_trigger || 'OB Entry'}</span> | SL: <span style="color:var(--neon-amber);">₹${c.suggested_sl}</span> | TP1: <span style="color:var(--neon-cyan);">₹${c.suggested_tp1}</span> | RR: 1:${c.risk_reward_ratio || 1.5}
+                        setupDetails = `<div style="font-size:0.62rem; color:#f8fafc; margin-top:2px; background:rgba(255,51,102,0.1); padding:2px 6px; border-radius:3px; display:flex; justify-content:space-between;">
+                            <span>SL: <b style="color:var(--neon-amber);">₹${c.suggested_sl}</b> | TP: <b style="color:var(--neon-cyan);">₹${c.suggested_tp1}</b></span>
+                            <span style="color:var(--neon-green); font-weight:bold;">RR 1:${c.risk_reward_ratio || 1.4}</span>
                         </div>`;
                     } else {
-                        setupDetails = `<div style="font-size:0.63rem; color:#94a3b8; margin-top:3px;">
-                            Trigger: <span style="color:var(--neon-amber);">${c.entry_trigger || 'Watching Breakdown'}</span>
+                        setupDetails = `<div style="font-size:0.62rem; color:#94a3b8; margin-top:2px;">
+                            ${c.entry_trigger || 'Watching breakdown level'}
                         </div>`;
                     }
 
                     bearHtml += `
                     <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,51,102,0.25); border-radius:4px; padding:6px 8px; cursor:pointer;" onclick="selectStock('${sym}')" title="Click to view ${sym} in Radar">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <span style="font-family:\'Inter\', sans-serif; font-size:0.75rem; font-weight:bold; color:#fff;">#${i+1} ${sym.replace('.NS', '')} <span style="font-size:0.65rem; color:${stageColor};">(${c.stage})</span></span>
-                            <span style="font-family:\'Inter\', sans-serif; font-size:0.7rem; color:var(--neon-red); font-weight:bold;">${c.change_pct}%</span>
+                            <span style="font-size:0.75rem; font-weight:bold; color:#fff;">#${i+1} ${sym.replace('.NS', '')} <span style="font-size:0.62rem; color:${stageColor}; background:rgba(255,255,255,0.06); padding:1px 5px; border-radius:3px;">${stageTag}</span></span>
+                            <span style="font-size:0.72rem; color:var(--neon-red); font-weight:800;">${c.change_pct}%</span>
                         </div>
-                        <div style="font-size:0.65rem; color:var(--text-muted); display:flex; justify-content:space-between; margin-top:2px;">
-                            <span>Score: ${c.conviction_score}/100 | ${reasons}</span>
-                            <span>${c.potential_pct ? '-' + c.potential_pct + '% room' : ''}</span>
+                        <div style="font-size:0.63rem; color:var(--text-muted); display:flex; justify-content:space-between; margin-top:2px;">
+                            <span>Score: ${c.conviction_score}/100</span>
+                            <span style="color:var(--neon-cyan);">${c.potential_pct ? '-' + c.potential_pct + '% room' : ''}</span>
                         </div>
                         ${setupDetails}
                     </div>`;
@@ -1043,7 +1042,7 @@
         }
 
         function renderRadarData(symbol, smc) {
-            document.getElementById('valPrice').innerText = `₹${smc.current_price.toFixed(1)} (VWAP: ₹${smc.vwap})`;
+            document.getElementById('valPrice').innerText = `₹${Number(smc.current_price).toFixed(1)} (VWAP: ₹${smc.vwap})`;
             document.getElementById('valRsi').innerText = `RSI: ${smc.rsi} | VOL: ${smc.vol_multiplier}x`;
             document.getElementById('valEma').innerText = `EMA9: ${smc.ema9} | EMA21: ${smc.ema21}`;
             
@@ -1077,24 +1076,18 @@
 
             const score = smc.composite_score || 0;
             const prob = smc.probability_pct || 50;
-            document.getElementById('valQuantScore').innerText = `SCORE: ${score}/100 (${prob}% PROB)`;
+            document.getElementById('valQuantScore').innerText = `${score}/100 (${prob}% WIN)`;
             
             const stage = smc.pre_momentum_stage || 'INACTIVE';
-            const stageEl = document.getElementById('valPreMomentum');
-            if (stageEl) {
-                stageEl.innerText = `${stage} (${smc.pre_momentum_score || 0} PTS)`;
-                if (stage === 'CONFIRMED') {
-                    stageEl.style.color = 'var(--neon-green)';
-                } else if (stage === 'IGNITION') {
-                    stageEl.style.color = 'var(--neon-cyan)';
-                } else if (stage === 'PREPARING') {
-                    stageEl.style.color = 'var(--neon-amber)';
-                } else {
-                    stageEl.style.color = '#94a3b8';
-                }
+            const reasonTxt = document.getElementById('decisionReasonText');
+            const pillTag = document.getElementById('decisionPillTag');
+            if (pillTag) {
+                pillTag.innerText = stage;
+                pillTag.style.color = stage === 'CONFIRMED' ? 'var(--neon-green)' : (stage === 'IGNITION' ? 'var(--neon-cyan)' : (stage === 'PREPARING' ? 'var(--neon-amber)' : '#94a3b8'));
+                pillTag.style.borderColor = pillTag.style.color;
             }
 
-            const strats = (smc.triggered_strategies && smc.triggered_strategies.length > 0) ? smc.triggered_strategies.join(', ') : 'Price Action';
+            const strats = (smc.triggered_strategies && smc.triggered_strategies.length > 0) ? smc.triggered_strategies.slice(0, 2).join(' + ') : 'SMC Structure';
             document.getElementById('valStrategies').innerText = strats;
 
             const actEl = document.getElementById('decisionAction');
@@ -1108,10 +1101,10 @@
                 actEl.innerText = `ACTIVE TRADE IN PROGRESS: ${isBuy ? 'LONG / CALL' : 'SHORT / PUT'}`;
                 actEl.style.color = isBuy ? 'var(--neon-green)' : 'var(--neon-red)';
                 banner.style.borderLeftColor = isBuy ? 'var(--neon-green)' : 'var(--neon-red)';
-                document.getElementById('decisionSetup').innerText = `IN POSITION | Entry: ₹${trSmc.current_price || '--'} | SL: ₹${trSmc.suggested_sl || '--'}`;
-                document.getElementById('decisionReason').innerText = `Trade confirmed and active. Holding position towards Target: ₹${trSmc.suggested_tp1 || '--'}. Trailing SL: ₹${trSmc.suggested_sl || '--'}`;
+                document.getElementById('decisionSetup').innerText = `IN POSITION | Entry: ₹${trSmc.current_price || '--'}`;
+                if (reasonTxt) reasonTxt.innerText = `Trade confirmed. Targeting ₹${trSmc.suggested_tp1 || '--'} with SL ₹${trSmc.suggested_sl || '--'}.`;
                 if (trSmc.suggested_sl && trSmc.suggested_tp1) {
-                    document.getElementById('valTargets').innerText = `ENTRY: ₹${trSmc.current_price} | SL: ₹${trSmc.suggested_sl} | TP1: ₹${trSmc.suggested_tp1}`;
+                    document.getElementById('valTargets').innerText = `SL: ₹${trSmc.suggested_sl} | TP1: ₹${trSmc.suggested_tp1}`;
                 }
             } else {
                 actEl.innerText = smc.action;
@@ -1128,12 +1121,13 @@
                 }
 
                 document.getElementById('decisionSetup').innerText = smc.verdict;
-                document.getElementById('decisionReason').innerText = smc.reasoning;
+                if (reasonTxt) reasonTxt.innerText = smc.reasoning ? smc.reasoning.slice(0, 120) + (smc.reasoning.length > 120 ? '...' : '') : 'Scanning setup';
 
                 if (smc.suggested_sl && smc.suggested_tp1) {
-                    document.getElementById('valTargets').innerText = `SL: ₹${smc.suggested_sl} | TP1: ₹${smc.suggested_tp1}`;
+                    const potRoom = smc.potential_pct ? `(+${smc.potential_pct}%)` : '';
+                    document.getElementById('valTargets').innerText = `SL: ₹${smc.suggested_sl} | TP1: ₹${smc.suggested_tp1} ${potRoom}`;
                 } else {
-                    document.getElementById('valTargets').innerText = 'NO ENTRY (Wait for Order Block trigger)';
+                    document.getElementById('valTargets').innerText = 'WAIT FOR TRIGGER (Below Resistance / Above Support)';
                 }
             }
         }
