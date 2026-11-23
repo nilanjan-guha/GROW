@@ -69,9 +69,12 @@ class FNOMomentumFilter:
 
             change_pct = round(((curr_c - session_o) / session_o) * 100, 2) if session_o > 0 else 0.0
 
-            # 1. Volume & Turnover Filter (Reject dead contracts, but don't over-filter)
+            # 1. Volume & Traded Value Turnover Filter (Measured using each completed candle's volume * typical price)
+            typical_price = (h + l + c) / 3.0
+            traded_value = (typical_price * v)
+            avg_traded_value_10 = float(traded_value.iloc[-10:].mean()) if len(traded_value) >= 10 else float(traded_value.mean())
             recent_v = v.iloc[-10:].mean()
-            if recent_v < 5000 or (recent_v * curr_c) < 1500000:  # < 15 Lakhs turnover per 5-min
+            if recent_v < 5000 or avg_traded_value_10 < 1500000:  # < 15 Lakhs actual average traded value per 5-min
                 return None
 
             # 2. Time-Slot Adjusted Relative Volume (RVOL) on the exact same completed candle
@@ -165,9 +168,10 @@ class FNOMomentumFilter:
                     structure_status = "CONFIRMED_LOWER_HIGHS"
 
             # 6. Directional Pre-Breakout / Compression Discovery:
-            # Two distinct discovery paths:
+            # Three distinct discovery paths:
             # Path A: Structural Coil (Requires confirmed swing structure + compression + above/below VWAP)
-            # Path B: Early Activity (Improving RVOL + compression near VWAP, explicitly tagged as EARLY_ACTIVITY)
+            # Path B: Early Activity (Improving RVOL >= 1.25x + compression near VWAP, tagged as EARLY_ACTIVITY)
+            # Path C: Early Observation (Quiet accumulation with rising volume trend and compression, RVOL < 1.25x, tagged as OBSERVING)
             is_structural_coil_bull = (
                 (curr_c > curr_vwap) and 
                 (ema9 >= ema21) and 
@@ -194,12 +198,29 @@ class FNOMomentumFilter:
                 not is_structural_coil_bear
             )
 
+            # Path C: Early Observation Path (Rising volume trend over last 3 candles + compression + near VWAP)
+            vol_rising_trend = bool(len(v) >= 3 and (v.iloc[-1] > v.iloc[-2]))
+            is_observing_bull = (
+                (curr_c >= curr_vwap * 0.998) and
+                (is_nr4 or is_nr7 or is_bb_squeeze) and
+                vol_rising_trend and
+                not is_structural_coil_bull and
+                not is_early_activity_bull
+            )
+            is_observing_bear = (
+                (curr_c <= curr_vwap * 1.002) and
+                (is_nr4 or is_nr7 or is_bb_squeeze) and
+                vol_rising_trend and
+                not is_structural_coil_bear and
+                not is_early_activity_bear
+            )
+
             # Active Momentum Breakout Path:
             is_bull_momentum = (curr_c >= curr_vwap) and (ema9 >= ema21 * 0.998) and (change_pct >= 0.20 or (rvol >= 1.25 and curr_c > curr_o))
             is_bear_momentum = (curr_c <= curr_vwap) and (ema9 <= ema21 * 1.002) and (change_pct <= -0.20 or (rvol >= 1.25 and curr_c < curr_o))
 
-            is_bull = is_bull_momentum or is_structural_coil_bull or is_early_activity_bull
-            is_bear = is_bear_momentum or is_structural_coil_bear or is_early_activity_bear
+            is_bull = is_bull_momentum or is_structural_coil_bull or is_early_activity_bull or is_observing_bull
+            is_bear = is_bear_momentum or is_structural_coil_bear or is_early_activity_bear or is_observing_bear
 
             # Mutual Exclusivity: If both evaluate true or neither, discard ambiguous chop
             if (is_bull and is_bear) or (not is_bull and not is_bear):
@@ -210,6 +231,8 @@ class FNOMomentumFilter:
                 discovery_type = "STRUCTURAL_COIL"
             elif is_early_activity_bull or is_early_activity_bear:
                 discovery_type = "EARLY_ACTIVITY"
+            elif is_observing_bull or is_observing_bear:
+                discovery_type = "OBSERVING"
 
             # Real momentum velocity: based strictly on price expansion and genuine relative volume (no artificial inflations)
             velocity = round(abs(change_pct) * max(1.0, rvol), 2)
@@ -217,12 +240,18 @@ class FNOMomentumFilter:
                 # Minimum readable floor for coils
                 velocity = round(max(0.8, rvol), 2)
 
+            evaluated_completed_ts = str(eval_df.index[-1])
+            raw_latest_ts = str(df_temp.index[-1])
+
             return {
                 "symbol": sym,
                 "current_price": curr_c,
                 "change_pct": change_pct,
                 "rvol": rvol,
                 "rvol_obs": obs_count - 1,
+                "rvol_candle_ts": evaluated_completed_ts,
+                "evaluated_completed_candle_ts": evaluated_completed_ts,
+                "raw_latest_candle_ts": raw_latest_ts,
                 "atr_pct": round(atr_pct, 2),
                 "vwap": curr_vwap,
                 "is_bull": is_bull,

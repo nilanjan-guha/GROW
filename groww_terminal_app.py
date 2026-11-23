@@ -474,9 +474,12 @@ def background_screener_worker():
                     for sym, cdf in fetched_dfs.items():
                         existing_entry = screener_state.setdefault("raw_market_cache", {}).get(sym, {})
                         fno_data = filter_map.get(sym) or existing_entry.get("fno_filter_data", {})
+                        eval_ts = fno_data.get("evaluated_completed_candle_ts") if fno_data else str(cdf.index[-1])
                         screener_state["raw_market_cache"][sym] = {
                             "timestamp": now,
-                            "candle_ts": str(cdf.index[-1]),
+                            "raw_latest_candle_ts": str(cdf.index[-1]),
+                            "evaluated_completed_candle_ts": eval_ts,
+                            "rvol_candle_ts": fno_data.get("rvol_candle_ts") if fno_data else None,
                             "df": cdf,
                             "fno_filter_data": fno_data,
                             "data": existing_entry.get("data")
@@ -952,23 +955,35 @@ def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
     norm_fno_set = {s.upper().replace(".NS", "") for s in valid_fno_set}
 
     # Sector-First Hierarchy:
-    # 1. Select Top 3 Bullish and Top 3 Bearish sectors
+    # 1. Select Top 3 Bullish and Top 3 Bearish sectors by explicit live performance sorting
     sectors = screener_state.get("sectors", {})
     if not sectors:
         sectors = calculate_dynamic_sectors()
         screener_state["sectors"] = sectors
 
-    bullish_sectors = [s_name for s_name, s_data in sectors.items() if s_data.get("is_bullish")][:3]
-    bearish_sectors = [s_name for s_name, s_data in sectors.items() if not s_data.get("is_bullish")][:3]
-    priority_sectors = set(bullish_sectors + bearish_sectors)
+    # Explicitly sort sectors by performance
+    sorted_bull_sectors = sorted(
+        [(name, data) for name, data in sectors.items() if data.get("is_bullish") and data.get("change", 0.0) > 0.0],
+        key=lambda x: x[1].get("change", 0.0),
+        reverse=True
+    )[:3]
+    sorted_bear_sectors = sorted(
+        [(name, data) for name, data in sectors.items() if not data.get("is_bullish") and data.get("change", 0.0) < 0.0],
+        key=lambda x: x[1].get("change", 0.0)
+    )[:3]
+    
+    priority_sectors = set([s[0] for s in sorted_bull_sectors] + [s[0] for s in sorted_bear_sectors])
 
-    # Gather constituent symbols from top sectors if sector filtering is enforced
+    # Gather constituent symbols from top sectors and validate against F&O universe
     sector_constituents = set()
     for s_name in priority_sectors:
         stks = sectors[s_name].get("top_5") or sectors[s_name].get("top_5_stocks") or []
         for stk in stks:
             sym_clean = stk["symbol"] if isinstance(stk, dict) else str(stk)
-            sector_constituents.add(sym_clean)
+            clean_bare = sym_clean.replace(".NS", "").upper()
+            if not norm_fno_set or clean_bare in norm_fno_set:
+                sector_constituents.add(sym_clean)
+                sector_constituents.add(f"{clean_bare}.NS")
 
     raw_items = screener_state.get("raw_market_cache", {})
     for sym, item in raw_items.items():
@@ -1025,12 +1040,12 @@ def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
             "exhaustion_risk": enriched.get("exhaustion_risk", "LOW")
         }
 
-        # Validate RVOL freshness against the evaluated candle timestamp (P1)
+        # Validate RVOL freshness strictly against evaluated completed candle timestamp (P0)
         fno_data = item.get("fno_filter_data", {})
-        rvol_candle_ts = item.get("candle_ts") or (str(fno_data.get("df").index[-1]) if fno_data and fno_data.get("df") is not None else None)
+        rvol_candle_ts = item.get("rvol_candle_ts") or (fno_data.get("rvol_candle_ts") if fno_data else None)
         time_slot_rvol = None
         rvol_obs = 0
-        if rvol_candle_ts == stock_candle_ts and fno_data:
+        if rvol_candle_ts and rvol_candle_ts == stock_candle_ts and fno_data:
             time_slot_rvol = fno_data.get("rvol")
             rvol_obs = fno_data.get("rvol_obs", 0)
 

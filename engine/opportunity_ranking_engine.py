@@ -127,7 +127,7 @@ class OpportunityRankingEngine:
                 c_6 = float(sc.iloc[-6])
                 rs_accel_6 = round(((sc.iloc[-1] - c_6) / c_6) * 100, 2) if c_6 > 0 else 0.0
 
-        rs_nifty = round(stock_change_pct - nifty_change_pct, 2)
+        rs_nifty = round(stock_change_pct - nifty_change_pct, 2) if is_aligned else 0.0
         rs_sector = round(stock_change_pct - sector_change_pct, 2)
 
         return {
@@ -136,7 +136,9 @@ class OpportunityRankingEngine:
             "rs_sector": rs_sector,
             "rs_accel_3": rs_accel_3,
             "rs_accel_6": rs_accel_6,
-            "rs_accel": rs_accel_3
+            "rs_accel": rs_accel_3,
+            "is_aligned": is_aligned,
+            "alignment_status": "ALIGNED" if is_aligned else "DATA_MISALIGNED"
         }
 
     @staticmethod
@@ -179,9 +181,12 @@ class OpportunityRankingEngine:
         curr_l = float(l.iloc[-1])
         curr_v = float(v.iloc[-1])
 
-        # Hard Liquidity Gate: Reject dead contracts (< 5000 volume or < 15 Lakh turnover per 5-min)
+        # Hard Liquidity Gate: Reject dead contracts using actual candle-by-candle traded value
+        typical_price = (h + l + c) / 3.0
+        traded_value = (typical_price * v)
+        avg_traded_value_10 = float(traded_value.iloc[-10:].mean()) if len(traded_value) >= 10 else float(traded_value.mean())
         recent_v = v.iloc[-10:].mean() if len(v) >= 10 else v.mean()
-        if recent_v < 5000 or (recent_v * curr_c) < 1500000:
+        if recent_v < 5000 or avg_traded_value_10 < 1500000:
             return None
 
         # 1. 14-period ATR (Wilder)
@@ -287,6 +292,9 @@ class OpportunityRankingEngine:
 
         # 5. Synchronized Relative Strength Acceleration
         rs_data = OpportunityRankingEngine.calculate_relative_strength_acceleration(stock_df, nifty_df, sector_change)
+        # Enforce mandatory alignment: if NIFTY is provided but timestamps are misaligned, reject
+        if nifty_df is not None and not nifty_df.empty and not rs_data.get("is_aligned", False):
+            return None
         rs_nifty = rs_data["rs_nifty"]
         rs_sector = rs_data["rs_sector"]
         rs_accel_3 = rs_data.get("rs_accel_3", 0.0)
