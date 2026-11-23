@@ -223,7 +223,7 @@
                 </div>
 
                 <!-- Live Stream Terminal Console & Trades Journal -->
-                <div style="margin-top:8px; border:1px solid rgba(255,255,255,0.08); border-radius:6px; background:rgba(2,6,18,0.7); overflow:hidden;">
+                <div style="margin-top:8px; border:1px solid rgba(255,255,255,0.08); border-radius:6px; background:rgba(2,6,18,0.85); overflow:hidden; flex-shrink:0;">
                     <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.03); border-bottom:1px solid rgba(255,255,255,0.06); padding:4px 10px;">
                         <div style="display:flex; gap:6px;">
                             <button id="tabBtnStream" class="btn-action active-tab" onclick="switchConsoleTab('stream')" style="padding:4px 10px; font-size:0.68rem; font-weight:bold; border-radius:4px; background:rgba(0,240,255,0.15); border:1px solid var(--neon-cyan); color:var(--neon-cyan);">⚡ AI ACTIVITY STREAM</button>
@@ -239,15 +239,15 @@
                     </div>
 
                     <!-- Tab 2: Active Trades Window -->
-                    <div id="tabContentActive" style="display:none; padding:10px; max-height:240px; min-height:160px; overflow-y:auto;">
+                    <div id="tabContentActive" style="display:none; padding:8px 10px; max-height:280px; overflow-y:auto;">
                         <div id="activeTradesList" style="display:flex; flex-direction:column; gap:6px;">
                             <div style="font-size:0.72rem; color:var(--text-muted); text-align:center; padding:15px;">No active trades open.</div>
                         </div>
                     </div>
 
                     <!-- Tab 3: Closed Trades & AI Learning Journal -->
-                    <div id="tabContentClosed" style="display:none; padding:10px; max-height:240px; min-height:160px; overflow-y:auto;">
-                        <div id="closedTradesList" style="display:flex; flex-direction:column; gap:6px;">
+                    <div id="tabContentClosed" style="display:none; padding:8px 10px; max-height:280px; overflow-y:auto;">
+                        <div id="closedTradesList" style="display:flex; flex-direction:column; gap:6px; padding-bottom:6px;">
                             <div style="font-size:0.72rem; color:var(--text-muted); text-align:center; padding:15px;">Loading closed trades & learning data...</div>
                         </div>
                     </div>
@@ -507,14 +507,14 @@
                         const pnlCol = Number(pnl) >= 0 ? 'var(--neon-green)' : 'var(--neon-red)';
 
                         html += `
-                        <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:6px; padding:8px 12px; display:flex; justify-content:space-between; align-items:center; gap:8px;">
-                            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                                <span style="font-weight:800; color:#fff; font-size:0.78rem; letter-spacing:0.5px;">${c.symbol.replace('.NS', '')}</span>
-                                <span style="font-size:0.63rem; color:${tagCol}; border:1px solid ${tagCol}; background:rgba(255,255,255,0.02); padding:2px 6px; border-radius:4px; font-weight:700;">${tagLabel}</span>
-                                <span style="font-size:0.65rem; color:#94a3b8; font-weight:600;">${c.strategy || 'SMC'}</span>
-                                <span style="font-size:0.64rem; color:var(--neon-cyan); background:rgba(0,240,255,0.08); padding:1px 6px; border-radius:3px;">AI: ${learnNote}</span>
+                        <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:6px; padding:7px 10px; display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:2px; flex-shrink:0;">
+                            <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; flex:1; min-width:0;">
+                                <span style="font-weight:800; color:#fff; font-size:0.76rem; letter-spacing:0.5px;">${c.symbol.replace('.NS', '')}</span>
+                                <span style="font-size:0.60rem; color:${tagCol}; border:1px solid ${tagCol}; background:rgba(255,255,255,0.02); padding:1px 5px; border-radius:3px; font-weight:700; white-space:nowrap;">${tagLabel}</span>
+                                <span style="font-size:0.63rem; color:#94a3b8; font-weight:600; white-space:nowrap;">${c.strategy || 'SMC'}</span>
+                                <span style="font-size:0.62rem; color:var(--neon-cyan); background:rgba(0,240,255,0.08); padding:1px 6px; border-radius:3px; white-space:nowrap;">AI: ${learnNote}</span>
                             </div>
-                            <div style="font-size:0.80rem; font-weight:800; color:${pnlCol}; white-space:nowrap;">
+                            <div style="font-size:0.80rem; font-weight:800; color:${pnlCol}; white-space:nowrap; padding-left:8px; flex-shrink:0;">
                                 ${pnlSign}₹${pnl}
                             </div>
                         </div>`;
@@ -1149,6 +1149,7 @@
                     body: JSON.stringify({
                         symbol: symbol,
                         action: smc.action,
+                        candle_ts: smc.candle_ts || smc.last_candle_ts || '',
                         entry_price: entryPrice,
                         suggested_sl: smc.suggested_sl,
                         suggested_tp1: smc.suggested_tp1,
