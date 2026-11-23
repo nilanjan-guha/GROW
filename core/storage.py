@@ -189,7 +189,7 @@ def get_active_signal_symbols():
     except Exception:
         return set()
 
-def evaluate_open_outcomes(data_map):
+def evaluate_open_outcomes(data_map, force_eod=False):
     """
     Evaluates all ACTIVE signals against chronological OHLC candles formed AFTER signal entry.
     Supports either:
@@ -257,14 +257,15 @@ def evaluate_open_outcomes(data_map):
             est_costs = default_costs["cost_per_share"]
 
             # 0. Intraday Session Close Auto-Squareoff:
-            # Applies when signal is from an older calendar day or when explicitly called without subsequent candle data
+            # Applies when signal is from an older calendar day or when called with force_eod=True
             try:
                 sig_dt = datetime.datetime.fromtimestamp(sig_time, pytz.timezone('Asia/Kolkata'))
                 is_stale_day = (sig_dt.date() < ist_now.date())
+                should_eod_squareoff = is_stale_day or (force_eod and not is_mkt_open)
             except Exception:
-                is_stale_day = False
+                should_eod_squareoff = False
 
-            if is_stale_day:
+            if should_eod_squareoff:
                 exit_price = entry
                 if isinstance(data, pd.DataFrame) and not data.empty:
                     exit_price = float(data['Close'].iloc[-1])

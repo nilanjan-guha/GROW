@@ -959,6 +959,32 @@
                 showTradePopToast(symbol, smc);
             }
 
+            // Persist confirmed trades to database via backend if generated in live session
+            if (isNew && smc.action && (smc.action.includes('BUY') || smc.action.includes('SELL'))) {
+                fetch('/api/signals/log-confirmed', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        symbol: symbol,
+                        action: smc.action,
+                        entry_price: entryPrice,
+                        suggested_sl: smc.suggested_sl,
+                        suggested_tp1: smc.suggested_tp1,
+                        suggested_tp2: smc.suggested_tp2,
+                        composite_score: smc.composite_score || 70,
+                        primary_strategy: smc.primary_strategy || 'SMC Structure',
+                        triggered_strategies: smc.triggered_strategies || []
+                    })
+                }).then(r => r.json()).then(res => {
+                    if (res && res.signal_id) {
+                        activeConfirmedTrades[symbol].signal_id = res.signal_id;
+                        try {
+                            localStorage.setItem('activeConfirmedTrades', JSON.stringify(activeConfirmedTrades));
+                        } catch(e) {}
+                    }
+                }).catch(() => {});
+            }
+
             try {
                 localStorage.setItem('activeConfirmedTrades', JSON.stringify(activeConfirmedTrades));
             } catch(e) {}
@@ -975,6 +1001,16 @@
                     const activeDbIds = new Set(activeDbList.map(s => s.id));
                     const activeDbSymbols = new Set(activeDbList.map(s => s.symbol));
 
+                    // If market is closed and DB has cleared/squared off all active signals, immediately clear banner
+                    if (activeDbList.length === 0) {
+                        activeConfirmedTrades = {};
+                        try {
+                            localStorage.removeItem('activeConfirmedTrades');
+                        } catch(e) {}
+                        renderConfirmedBanner();
+                        return;
+                    }
+
                     activeDbList.forEach(item => {
                         const sym = item.symbol;
                         const existing = activeConfirmedTrades[sym];
@@ -985,7 +1021,7 @@
                             signal_id: item.id,
                             symbol: sym,
                             smc: {
-                                action: item.direction,
+                                action: item.direction === 'BUY' ? 'BUY / CALL (CE)' : 'SELL / PUT (PE)',
                                 entry_price: entryPrice,
                                 live_price: livePrice,
                                 current_price: livePrice,
@@ -999,18 +1035,13 @@
                         };
                     });
 
-                    // If database has no active signals (all closed or market squared off EOD)
-                    if (activeDbList.length === 0) {
-                        activeConfirmedTrades = {};
-                    } else {
-                        // Keep confirmed trades persistent until Target, Stop Loss, or EOD squareoff is hit
-                        Object.keys(activeConfirmedTrades).forEach(sym => {
-                            const tr = activeConfirmedTrades[sym];
-                            if (tr.signal_id && !activeDbIds.has(tr.signal_id)) {
-                                delete activeConfirmedTrades[sym];
-                            }
-                        });
-                    }
+                    // Remove signals that hit target, hit stop loss, or were squared off at EOD
+                    Object.keys(activeConfirmedTrades).forEach(sym => {
+                        const tr = activeConfirmedTrades[sym];
+                        if (tr.signal_id && !activeDbIds.has(tr.signal_id)) {
+                            delete activeConfirmedTrades[sym];
+                        }
+                    });
 
                     try {
                         localStorage.setItem('activeConfirmedTrades', JSON.stringify(activeConfirmedTrades));
