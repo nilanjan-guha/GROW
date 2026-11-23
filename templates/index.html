@@ -648,16 +648,133 @@
             alertDetails.innerHTML = html;
         }
 
+        // Audio Synthesizer for Institutional Alert Chime
+        let audioCtx = null;
+        function playSignalAlertSound(isBuy = true) {
+            try {
+                if (!audioCtx) {
+                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+                
+                const now = audioCtx.currentTime;
+                // High-probability two-tone notification chord
+                const osc1 = audioCtx.createOscillator();
+                const osc2 = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+
+                osc1.type = 'sine';
+                osc2.type = 'triangle';
+
+                if (isBuy) {
+                    // Ascending bullish chords (C5 -> E5 -> G5)
+                    osc1.frequency.setValueAtTime(523.25, now);
+                    osc1.frequency.exponentialRampToValueAtTime(659.25, now + 0.12);
+                    osc1.frequency.exponentialRampToValueAtTime(783.99, now + 0.28);
+                    osc2.frequency.setValueAtTime(261.63, now);
+                    osc2.frequency.exponentialRampToValueAtTime(392.00, now + 0.28);
+                } else {
+                    // Descending bearish chords (G5 -> Eb5 -> C5)
+                    osc1.frequency.setValueAtTime(783.99, now);
+                    osc1.frequency.exponentialRampToValueAtTime(622.25, now + 0.12);
+                    osc1.frequency.exponentialRampToValueAtTime(523.25, now + 0.28);
+                    osc2.frequency.setValueAtTime(392.00, now);
+                    osc2.frequency.exponentialRampToValueAtTime(261.63, now + 0.28);
+                }
+
+                gain.gain.setValueAtTime(0.01, now);
+                gain.gain.linearRampToValueAtTime(0.28, now + 0.05);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
+
+                osc1.connect(gain);
+                osc2.connect(gain);
+                gain.connect(audioCtx.destination);
+
+                osc1.start(now);
+                osc2.start(now);
+                osc1.stop(now + 0.7);
+                osc2.stop(now + 0.7);
+            } catch (e) {
+                console.warn('Audio alert error:', e);
+            }
+        }
+
+        // Floating Glowing Pop-up Toast
+        let notifiedTradesSet = new Set();
+        function showTradePopToast(symbol, smc) {
+            const isBuy = smc.action && smc.action.includes('BUY');
+            const toastId = 'toast_' + symbol.replace(/[^a-zA-Z0-9]/g, '_');
+            const existing = document.getElementById(toastId);
+            if (existing) existing.remove();
+
+            const toast = document.createElement('div');
+            toast.id = toastId;
+            toast.className = `trade-pop-toast ${isBuy ? '' : 'sell-toast'}`;
+            toast.onclick = () => {
+                selectStock(symbol);
+                toast.remove();
+            };
+
+            const dirText = isBuy ? 'BUY / CALL (CE)' : 'SELL / PUT (PE)';
+            const dirColor = isBuy ? 'var(--neon-green)' : 'var(--neon-red)';
+            const sign = isBuy ? '+' : '-';
+            const potText = smc.suggested_tp1 ? `Target 1: ₹${smc.suggested_tp1}` : '';
+
+            toast.innerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="font-size:0.72rem; font-weight:800; color:${dirColor}; letter-spacing:1px; display:flex; align-items:center; gap:6px;">
+                        <span style="font-size:1rem;">⚡</span> ${dirText} SIGNAL
+                    </span>
+                    <span style="font-size:0.65rem; color:#94a3b8; background:rgba(255,255,255,0.08); padding:2px 6px; border-radius:4px;">JUST NOW</span>
+                </div>
+                <div style="font-size:1.05rem; font-weight:800; color:#fff; display:flex; justify-content:space-between; align-items:baseline;">
+                    <span>${symbol.replace('.NS', '')}</span>
+                    <span style="color:${dirColor}; font-size:1rem;">₹${Number(smc.current_price || 0).toFixed(1)}</span>
+                </div>
+                <div style="font-size:0.75rem; color:#cbd5e1; display:flex; gap:10px; margin-top:2px;">
+                    <span>SL: <b style="color:var(--neon-amber);">₹${smc.suggested_sl || '--'}</b></span>
+                    <span>${potText}</span>
+                    ${smc.risk_reward_ratio ? `<span>RR: <b style="color:var(--neon-cyan);">1:${smc.risk_reward_ratio}</b></span>` : ''}
+                </div>
+                <div style="font-size:0.65rem; color:var(--text-muted); text-align:right; margin-top:4px;">
+                    👆 Click to inspect radar
+                </div>
+            `;
+
+            document.body.appendChild(toast);
+
+            // Auto dismiss after 8 seconds
+            setTimeout(() => {
+                if (toast && toast.parentElement) {
+                    toast.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+                    toast.style.opacity = '0';
+                    toast.style.transform = 'translateX(120%)';
+                    setTimeout(() => toast.remove(), 500);
+                }
+            }, 8000);
+        }
+
         function addOrUpdateConfirmedTrade(symbol, smc) {
             if (!smc || !smc.action || (!smc.action.includes('BUY') && !smc.action.includes('SELL'))) {
                 return;
             }
+            const isNew = !activeConfirmedTrades[symbol] || !notifiedTradesSet.has(symbol);
             activeConfirmedTrades[symbol] = {
                 signal_id: smc.signal_id || null,
                 symbol: symbol,
                 smc: smc,
                 time: Date.now()
             };
+
+            if (isNew) {
+                notifiedTradesSet.add(symbol);
+                const isBuy = smc.action.includes('BUY');
+                playSignalAlertSound(isBuy);
+                showTradePopToast(symbol, smc);
+            }
+
             renderConfirmedBanner();
         }
 

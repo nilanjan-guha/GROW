@@ -533,14 +533,52 @@ header {
 /* Confirmed Trade Alert Banner */
 #confirmedTradeAlert {
     border: 1px solid var(--neon-green) !important;
-    background: linear-gradient(90deg, rgba(0, 255, 170, 0.15), rgba(4, 10, 24, 0.95)) !important;
-    box-shadow: 0 0 25px rgba(0, 255, 170, 0.3), inset 0 0 15px rgba(0, 255, 170, 0.1) !important;
-    animation: alertGlow 3s infinite alternate;
+    background: linear-gradient(90deg, rgba(0, 255, 170, 0.18), rgba(4, 10, 24, 0.96)) !important;
+    box-shadow: 0 0 25px rgba(0, 255, 170, 0.35), inset 0 0 15px rgba(0, 255, 170, 0.12) !important;
+    animation: alertGlow 2s infinite alternate;
 }
 
 @keyframes alertGlow {
     0% { border-color: rgba(0, 255, 170, 0.6); box-shadow: 0 0 15px rgba(0, 255, 170, 0.2); }
-    100% { border-color: rgba(0, 255, 170, 1.0); box-shadow: 0 0 28px rgba(0, 255, 170, 0.45); }
+    100% { border-color: rgba(0, 255, 170, 1.0); box-shadow: 0 0 35px rgba(0, 255, 170, 0.6), inset 0 0 20px rgba(0, 255, 170, 0.25); }
+}
+
+/* Floating Audio / Glow Pop-up Toast */
+.trade-pop-toast {
+    position: fixed;
+    top: 24px;
+    right: 24px;
+    z-index: 999999;
+    background: linear-gradient(135deg, rgba(2, 8, 20, 0.98), rgba(4, 18, 38, 0.98));
+    border: 2px solid var(--neon-green);
+    box-shadow: 0 0 40px rgba(0, 255, 170, 0.6), 0 12px 32px rgba(0,0,0,0.8);
+    border-radius: 8px;
+    padding: 14px 20px;
+    color: #fff;
+    font-family: 'Inter', sans-serif;
+    min-width: 320px;
+    max-width: 420px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    animation: toastSlideIn 0.35s cubic-bezier(0.16, 1, 0.3, 1), toastPulse 1.8s infinite alternate;
+    cursor: pointer;
+    backdrop-filter: blur(12px);
+}
+
+.trade-pop-toast.sell-toast {
+    border-color: var(--neon-red);
+    box-shadow: 0 0 40px rgba(255, 0, 85, 0.6), 0 12px 32px rgba(0,0,0,0.8);
+}
+
+@keyframes toastSlideIn {
+    from { transform: translateX(120%) scale(0.9); opacity: 0; }
+    to { transform: translateX(0) scale(1); opacity: 1; }
+}
+
+@keyframes toastPulse {
+    0% { transform: scale(1); }
+    100% { transform: scale(1.02); }
 }
 
 /* Ranked Opportunities Bar */
