@@ -1342,62 +1342,70 @@ def log_confirmed_signal_endpoint():
         if cand_stage not in ("CONFIRMED", "IGNITION", "ENTRY READY"):
             return jsonify({"success": False, "error": f"Server rejection: Stage {cand_stage} is strictly watch-only."}), 403
 
-        # 2. Revalidate completed 5m candle freshness: must match the actual latest completed 5-minute market data
-        # Never trust client's timestamp or an unverified candidate timestamp!
+        # 2. Revalidate completed 5m candle freshness: must match the authoritative latest completed market candle
+        # Reject signal logging if the authoritative latest completed market candle cannot be established!
         nifty_cached = screener_state.get("raw_market_cache", {}).get("^NSEI", {})
         nifty_df = nifty_cached.get("df")
         latest_market_completed_ts = None
         if nifty_df is not None and not nifty_df.empty:
             nifty_val = MarketValidator.validate_feed_freshness(nifty_df, max_delay_seconds=300, candle_duration_seconds=300)
-            is_nifty_comp = nifty_val.get("is_completed_candle", False)
-            eval_nifty = nifty_df if is_nifty_comp else nifty_df.iloc[:-1]
-            if not eval_nifty.empty:
-                latest_market_completed_ts = str(eval_nifty.index[-1])
+            if nifty_val.get("is_valid", False):
+                is_nifty_comp = nifty_val.get("is_completed_candle", False)
+                eval_nifty = nifty_df if is_nifty_comp else nifty_df.iloc[:-1]
+                if not eval_nifty.empty:
+                    latest_market_completed_ts = str(eval_nifty.index[-1])
 
         server_ranked_ts = screener_state.get("ranked_candle_ts")
         cand_ts = matching_cand.get("candle_ts")
         client_candle_ts = data.get("candle_ts")
 
-        # Active server completed timestamp established strictly from market validator or verified ranked cache
-        active_server_ts = latest_market_completed_ts or server_ranked_ts or cand_ts
-        if not active_server_ts:
-            return jsonify({"success": False, "error": "Server rejection: Server has not established an active completed candle baseline."}), 409
-        
-        # Verify candidate itself belongs to this completed market candle
-        if cand_ts and latest_market_completed_ts and str(cand_ts).strip() != str(latest_market_completed_ts).strip():
-            return jsonify({"success": False, "error": f"Server rejection: Candidate candle ({cand_ts}) is stale compared to latest completed market candle ({latest_market_completed_ts})."}), 409
+        # Authoritative market baseline MUST exist. NO unsafe fallback to unverified candidate timestamp!
+        authoritative_ts = latest_market_completed_ts or server_ranked_ts
+        if not authoritative_ts:
+            return jsonify({"success": False, "error": "Server rejection: Authoritative completed market candle baseline cannot be established."}), 409
+
+        # Reject if the ranked cache or candidate is stale compared to the authoritative market candle
+        if server_ranked_ts and latest_market_completed_ts and str(server_ranked_ts).strip() != str(latest_market_completed_ts).strip():
+            return jsonify({"success": False, "error": f"Server rejection: Ranked candidate cache ({server_ranked_ts}) is stale compared to market ({latest_market_completed_ts})."}), 409
+
+        if cand_ts and str(cand_ts).strip() != str(authoritative_ts).strip():
+            return jsonify({"success": False, "error": f"Server rejection: Candidate candle ({cand_ts}) is stale compared to authoritative completed candle ({authoritative_ts})."}), 409
 
         if not client_candle_ts or str(client_candle_ts).strip() == "":
             return jsonify({"success": False, "error": "Server rejection: Missing candle timestamp in trade submission."}), 400
         
-        if str(client_candle_ts).strip() != str(active_server_ts).strip():
-            return jsonify({"success": False, "error": f"Server rejection: Stale candle timestamp (client: '{client_candle_ts}' vs server: '{active_server_ts}')."}), 409
+        if str(client_candle_ts).strip() != str(authoritative_ts).strip():
+            return jsonify({"success": False, "error": f"Server rejection: Stale candle timestamp (client: '{client_candle_ts}' vs server: '{authoritative_ts}')."}), 409
 
         # 3. Validate directional alignment against the server's evaluated direction
-        # Normalize BUY/CALL -> BULLISH and SELL/PUT -> BEARISH on both client action and server candidate before comparison!
+        # Strict enum token parsing: Reject conflicting directions or ambiguous strings!
         raw_server_dir = (matching_cand.get("direction") or "").upper().strip()
         if raw_server_dir in ("BUY", "CALL", "BULLISH", "LONG"):
             server_direction = "BULLISH"
         elif raw_server_dir in ("SELL", "PUT", "BEARISH", "SHORT"):
             server_direction = "BEARISH"
         else:
-            server_direction = "NEUTRAL"
+            return jsonify({"success": False, "error": f"Server rejection: Invalid server candidate direction '{raw_server_dir}'."}), 400
 
-        raw_action = (data.get("action") or "").upper().strip()
-        raw_direction = (data.get("direction") or "").upper().strip()
-        combined_action = f"{raw_action} {raw_direction}"
+        # Tokenize client submission
+        import re
+        tokens = set(re.findall(r'[A-Za-z]+', f"{data.get('action', '')} {data.get('direction', '')}".upper()))
+        
+        is_client_bull = bool(tokens & {"BUY", "CALL", "BULLISH", "LONG"})
+        is_client_bear = bool(tokens & {"SELL", "PUT", "BEARISH", "SHORT"})
+        is_client_wait = bool(tokens & {"WAIT", "MONITORING", "NEUTRAL", "HOLD", "OBSERVING"})
 
-        if any(tok in combined_action for tok in ("BUY", "CALL", "BULLISH", "LONG")):
+        if is_client_wait or (is_client_bull and is_client_bear):
+            return jsonify({"success": False, "error": "Server rejection: Ambiguous, conflicting, or non-actionable direction tokens in client submission."}), 400
+        
+        if is_client_bull:
             normalized_client_dir = "BULLISH"
-        elif any(tok in combined_action for tok in ("SELL", "PUT", "BEARISH", "SHORT")):
+        elif is_client_bear:
             normalized_client_dir = "BEARISH"
         else:
-            normalized_client_dir = "NEUTRAL"
+            return jsonify({"success": False, "error": "Server rejection: No valid directional tokens found in client submission."}), 400
 
-        if normalized_client_dir == "NEUTRAL" or "WAIT" in combined_action or "MONITORING" in combined_action:
-            return jsonify({"success": False, "error": "Direction is neutral or waiting for trigger"}), 400
-        
-        if server_direction == "NEUTRAL" or normalized_client_dir != server_direction:
+        if normalized_client_dir != server_direction:
             return jsonify({"success": False, "error": f"Server rejection: Direction mismatch ({normalized_client_dir} vs server {server_direction})."}), 400
 
         # 4. Strict Server-Side Price & Risk Authorization (Zero client fallbacks allowed):
@@ -1417,21 +1425,22 @@ def log_confirmed_signal_endpoint():
         except (ValueError, TypeError):
             return jsonify({"success": False, "error": "Server rejection: Non-numeric server execution prices."}), 400
 
-        if entry_val <= 0 or sl_val <= 0 or tp1_val <= 0:
-            return jsonify({"success": False, "error": "Server rejection: Invalid non-positive execution prices."}), 400
+        import math
+        if not (math.isfinite(entry_val) and math.isfinite(sl_val) and math.isfinite(tp1_val)) or entry_val <= 0 or sl_val <= 0 or tp1_val <= 0:
+            return jsonify({"success": False, "error": "Server rejection: Invalid non-finite or non-positive execution prices."}), 400
 
-        # Validate that:
-        # - BUY: SL is below entry; targets (TP1 & TP2) are above entry.
-        # - SELL: SL is above entry; targets (TP1 & TP2) are below entry.
-        # - Risk/reward meets configured minimum (>= 1.20).
+        # Strict TP2 Validation (Item 8):
+        # If client or server provides TP2, it MUST be numeric, finite, positive, and directionally valid. Never silently convert invalid TP2 to None!
         validated_tp2 = None
-        if server_tp2 is not None:
+        raw_tp2 = server_tp2 if server_tp2 is not None else data.get("suggested_tp2") or data.get("target_2")
+        if raw_tp2 is not None and str(raw_tp2).strip() != "":
             try:
-                tp2_num = float(server_tp2)
-                if tp2_num > 0:
-                    validated_tp2 = tp2_num
+                tp2_num = float(raw_tp2)
+                if not math.isfinite(tp2_num) or tp2_num <= 0:
+                    return jsonify({"success": False, "error": f"Server rejection: Provided TP2 ({raw_tp2}) is non-positive or non-finite."}), 400
+                validated_tp2 = tp2_num
             except (ValueError, TypeError):
-                validated_tp2 = None
+                return jsonify({"success": False, "error": f"Server rejection: Provided TP2 ({raw_tp2}) is not a valid number."}), 400
 
         if server_direction == "BULLISH":
             if not (sl_val < entry_val and tp1_val > entry_val):

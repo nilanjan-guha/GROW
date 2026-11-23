@@ -232,30 +232,43 @@ class GrowwSectorEngine:
 
         self.actual_fno_coverage = len(unique_fno_covered)
         exp_denom = self.expected_fno_coverage if self.expected_fno_coverage > 0 else 219
-        self.coverage_ratio_pct = round((self.actual_fno_coverage / exp_denom) * 100, 2)
+        
+        # Explicit distinction between selected-sector coverage vs complete universe mapped:
+        self.selected_sector_fno_count = self.actual_fno_coverage
+        self.selected_sector_coverage_pct = round((self.selected_sector_fno_count / exp_denom) * 100, 2)
+        
+        # Full universe mapping check across the global stock_to_sector_map
+        all_mapped_symbols = set(new_stock_to_sector_map.keys())
+        all_mapped_fno = {s.replace(".NS", "").upper() for s in all_mapped_symbols}
+        full_mapped_count = len(norm_fno.intersection(all_mapped_fno)) if norm_fno else len(all_mapped_fno)
+        self.full_universe_mapped_count = full_mapped_count
+        self.full_universe_coverage_pct = round((full_mapped_count / exp_denom) * 100, 2)
+        
         self.failed_sector_fetches = failed_fetches
 
-        # Unmapped symbols in the universe
-        unmapped_fno_symbols = [s for s in norm_fno if s not in unique_fno_covered]
+        # Unmapped symbols across the expected F&O universe
+        unmapped_fno_symbols = sorted(list(norm_fno - all_mapped_fno)) if norm_fno else []
 
         # Multi-Factor Sector Health & Coverage Validation (P1):
         # 1. Total unique F&O stocks across priority sectors must meet minimum depth (>= 25 stocks).
-        # 2. Minimum representation per sector: At least 5 of the 8 sectors must have valid F&O constituents.
-        # 3. Overall ratio check: F&O coverage must be statistically representative (>= 15% of total universe across top 8 sectors).
+        # 2. Selected sector coverage ratio check: must represent >= 15% of total universe across top sectors.
+        # 3. Minimum representation per sector: At least 5 of the 8 sectors must have valid F&O constituents.
         # 4. Sector count: At least 6 of 8 priority sectors evaluated.
         active_sectors_with_fno = sum(1 for s in sector_results.values() if s.get("fno_coverage_count", 0) > 0)
         
         has_healthy_coverage = (
-            self.actual_fno_coverage >= 25 and 
-            self.coverage_ratio_pct >= 15.0 and
+            self.selected_sector_fno_count >= 25 and 
+            self.selected_sector_coverage_pct >= 15.0 and
             active_sectors_with_fno >= 5 and 
             len(sector_results) >= 6
         )
 
         self.sector_diagnostics = {
             "expected_fno_universe_size": exp_denom,
-            "actual_unique_fno_covered": self.actual_fno_coverage,
-            "universe_coverage_pct": self.coverage_ratio_pct,
+            "selected_sector_fno_count": self.selected_sector_fno_count,
+            "selected_sector_coverage_pct": self.selected_sector_coverage_pct,
+            "full_universe_mapped_count": self.full_universe_mapped_count,
+            "full_universe_coverage_pct": self.full_universe_coverage_pct,
             "active_sectors_count": len(sector_results),
             "active_sectors_with_fno": active_sectors_with_fno,
             "failed_sector_fetches_count": len(failed_fetches),
@@ -267,6 +280,8 @@ class GrowwSectorEngine:
                 name: {
                     "change": data.get("change"),
                     "fno_count": data.get("fno_coverage_count"),
+                    "total_stocks_in_sector": data.get("total_sector_stocks", 0),
+                    "coverage_pct_of_sector": data.get("coverage_pct_of_sector", 0.0),
                     "is_bullish": data.get("is_bullish"),
                     "is_neutral": data.get("is_neutral")
                 } for name, data in sector_results.items()
@@ -276,8 +291,8 @@ class GrowwSectorEngine:
         if not has_healthy_coverage:
             self.is_stale = True
             self.is_usable = False
-            self.last_error = f"UNHEALTHY_SECTOR_MAP: {self.actual_fno_coverage}/{exp_denom} stocks ({self.coverage_ratio_pct}%), {active_sectors_with_fno}/8 sectors active"
-            print(f"[GROWW SECTORS] Coverage rejected: Only {self.actual_fno_coverage}/{exp_denom} stocks ({self.coverage_ratio_pct}%) across {active_sectors_with_fno} sectors. Unhealthy map.")
+            self.last_error = f"UNHEALTHY_SECTOR_MAP: {self.selected_sector_fno_count}/{exp_denom} stocks ({self.selected_sector_coverage_pct}%), {active_sectors_with_fno}/8 sectors active"
+            print(f"[GROWW SECTORS] Coverage rejected: Only {self.selected_sector_fno_count}/{exp_denom} stocks ({self.selected_sector_coverage_pct}%) across {active_sectors_with_fno} sectors. Unhealthy map.")
             return {}  # Strictly reject incomplete/fragile results
         else:
             self.is_stale = False
