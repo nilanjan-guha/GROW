@@ -464,15 +464,20 @@ def background_screener_worker():
                     for b in [s for s in sorted_sectors.values() if not s.get("is_bullish")][:3]:
                         bear_watchlist.extend(b.get("top_5", []))
                 else:
-                    top_bull, top_bear, fetched_dfs = FNOMomentumFilter.filter_active_momentum_stocks(fno_list, max_workers=14)
+                    top_bull, top_bear, fetched_dfs, filter_results = FNOMomentumFilter.filter_active_momentum_stocks(fno_list, max_workers=14)
                     bull_watchlist = [{"symbol": x["symbol"], "change": x["change_pct"], "velocity": x["velocity"]} for x in top_bull]
                     bear_watchlist = [{"symbol": x["symbol"], "change": x["change_pct"], "velocity": x["velocity"]} for x in top_bear]
                     latest_dfs.update(fetched_dfs)
-                    for sym, cdf in fetched_dfs.items():
-                        screener_state.setdefault("raw_market_cache", {})[sym] = {
-                            "timestamp": now,
-                            "df": cdf
-                        }
+                    for r in filter_results:
+                        sym = r["symbol"]
+                        cdf = fetched_dfs.get(sym)
+                        if cdf is not None and not cdf.empty:
+                            screener_state.setdefault("raw_market_cache", {})[sym] = {
+                                "timestamp": now,
+                                "candle_ts": str(cdf.index[-1]),
+                                "df": cdf,
+                                "fno_filter_data": r
+                            }
 
                 screener_state["bullish_momentum_watchlist"] = bull_watchlist
                 screener_state["bearish_momentum_watchlist"] = bear_watchlist
@@ -972,13 +977,23 @@ def get_ranked_opportunities_endpoint():
         nifty_df = nifty_cached.get("df")
         current_candle_ts = None
         if nifty_df is not None and not nifty_df.empty:
-            current_candle_ts = str(nifty_df.index[-1])
-        else:
-            # Fallback to any active stock df index
+            # Strictly validate and trim NIFTY to its completed candle timestamp
+            nifty_val = MarketValidator.validate_feed_freshness(nifty_df, max_delay_seconds=300, candle_duration_seconds=300)
+            is_nifty_comp = nifty_val.get("is_completed_candle", False)
+            eval_nifty = nifty_df if is_nifty_comp else nifty_df.iloc[:-1]
+            if not eval_nifty.empty:
+                current_candle_ts = str(eval_nifty.index[-1])
+        
+        if not current_candle_ts:
+            # Fallback to any completed stock df index
             for s, item in screener_state.get("raw_market_cache", {}).items():
                 if item.get("df") is not None and not item["df"].empty:
-                    current_candle_ts = str(item["df"].index[-1])
-                    break
+                    s_val = MarketValidator.validate_feed_freshness(item["df"], max_delay_seconds=300, candle_duration_seconds=300)
+                    is_s_comp = s_val.get("is_completed_candle", False)
+                    eval_s = item["df"] if is_s_comp else item["df"].iloc[:-1]
+                    if not eval_s.empty:
+                        current_candle_ts = str(eval_s.index[-1])
+                        break
 
         cached_ranked = screener_state.get("ranked_opportunities")
         cached_candle_ts = screener_state.get("ranked_candle_ts")
@@ -1031,10 +1046,11 @@ def get_ranked_opportunities_endpoint():
                 sec_data = screener_state.get("sectors", {}).get(sec_name, {})
                 sec_chg = sec_data.get("change", 0.0)
             
-            # Retrieve enriched cache ONLY if its evaluated candle timestamp matches the current candle
+            # Retrieve enriched cache ONLY if its evaluated completed candle timestamp matches exactly
+            # (Do NOT fallback to wall-clock time if candle does not match!)
             enriched_entry = screener_state.get("enriched_signals_cache", {}).get(sym, {})
-            enriched_candle_ts = enriched_entry.get("candle_ts")
-            enriched = enriched_entry.get("data", {}) if (enriched_candle_ts == stock_candle_ts or (now - enriched_entry.get("timestamp", 0) < 300)) else {}
+            enriched_candle_ts = str(enriched_entry.get("last_candle_ts", ""))
+            enriched = enriched_entry.get("data", {}) if (enriched_candle_ts and enriched_candle_ts == stock_candle_ts) else {}
             
             opp_eval = {
                 "is_viable": enriched.get("is_viable", False),
@@ -1046,19 +1062,21 @@ def get_ranked_opportunities_endpoint():
                 "exhaustion_risk": enriched.get("exhaustion_risk", "LOW")
             }
 
-            # Retrieve time-slot RVOL calculated by the F&O filter
-            item_data = item.get("data", {})
-            time_slot_rvol = item_data.get("rvol") if isinstance(item_data, dict) else None
+            # Retrieve time-slot RVOL and observation count directly from F&O filter cache
+            fno_data = item.get("fno_filter_data", {})
+            time_slot_rvol = fno_data.get("rvol") if fno_data else item.get("data", {}).get("rvol")
+            rvol_obs = fno_data.get("rvol_obs", 0) if fno_data else 0
 
             eval_res = OpportunityRankingEngine.evaluate_stock_opportunity(
                 stock_df=eval_df_sym,
                 symbol=sym,
                 sector_name=sec_name,
                 sector_change=sec_chg,
-                nifty_df=nifty_df,
-                vwap=enriched.get("vwap") or (item_data.get("vwap") if isinstance(item_data, dict) else None),
+                nifty_df=eval_nifty if 'eval_nifty' in locals() and not eval_nifty.empty else nifty_df,
+                vwap=enriched.get("vwap") or fno_data.get("vwap"),
                 opp_eval=opp_eval,
-                time_slot_rvol=time_slot_rvol
+                time_slot_rvol=time_slot_rvol,
+                rvol_obs=rvol_obs
             )
             if eval_res:
                 candidates.append(eval_res)

@@ -145,21 +145,19 @@ class FNOMomentumFilter:
                     break
 
             has_higher_lows = False
+            has_lower_highs = False
+            structure_status = "INSUFFICIENT_STRUCTURE"
+
             if len(confirmed_swing_lows) >= 2:
                 # confirmed_swing_lows[0] is the most recent confirmed pivot low, [1] is the prior
                 has_higher_lows = confirmed_swing_lows[0] > confirmed_swing_lows[1]
-            else:
-                # Fallback to local session lows if fewer pivots
-                recent_lows = [float(x) for x in l.iloc[-5:]]
-                has_higher_lows = recent_lows[-1] > min(recent_lows[:-1]) if len(recent_lows) >= 3 else False
+                structure_status = "CONFIRMED_HIGHER_LOWS" if has_higher_lows else "LOWER_LOWS"
 
-            has_lower_highs = False
             if len(confirmed_swing_highs) >= 2:
                 # confirmed_swing_highs[0] is most recent confirmed pivot high, [1] is prior
                 has_lower_highs = confirmed_swing_highs[0] < confirmed_swing_highs[1]
-            else:
-                recent_highs = [float(x) for x in h.iloc[-5:]]
-                has_lower_highs = recent_highs[-1] < max(recent_highs[:-1]) if len(recent_highs) >= 3 else False
+                if has_lower_highs:
+                    structure_status = "CONFIRMED_LOWER_HIGHS"
 
             # 6. Directional Pre-Breakout / Compression Filters (No Ambiguous Dual Qualification):
             # Bullish Coil: Price firmly above VWAP, higher-lows or EMA9 > EMA21, volatility compression (NR4/NR7/BB Squeeze)
@@ -258,4 +256,4 @@ class FNOMomentumFilter:
         top_bull = bullish[:15]
         top_bear = bearish[:15]
 
-        return top_bull, top_bear, raw_dfs
+        return top_bull, top_bear, raw_dfs, results

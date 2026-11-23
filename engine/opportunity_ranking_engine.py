@@ -240,7 +240,7 @@ class OpportunityRankingEngine:
         is_pdh_retest_hold_bull = (is_broken_above_pdh and curr_l >= (pdh * 0.998)) if pdh else False
         is_pdl_retest_hold_bear = (is_broken_below_pdl and curr_h <= (pdl * 1.002)) if pdl else False
 
-        # Confirmed Swing Pivot Structure in Opportunity Engine
+        # Confirmed Swing Pivot Structure in Opportunity Engine (No silent unconfirmed fallback)
         low_vals = [float(x) for x in l.values]
         high_vals = [float(x) for x in h.values]
         n_bars = len(low_vals)
@@ -256,8 +256,15 @@ class OpportunityRankingEngine:
                     c_highs.append(high_vals[i])
             if len(c_lows) >= 2 and len(c_highs) >= 2:
                 break
-        has_swing_higher_lows = (c_lows[0] > c_lows[1]) if len(c_lows) >= 2 else (curr_l > min(low_vals[-5:-1]) if n_bars >= 5 else False)
-        has_swing_lower_highs = (c_highs[0] < c_highs[1]) if len(c_highs) >= 2 else (curr_h < max(high_vals[-5:-1]) if n_bars >= 5 else False)
+        
+        has_swing_higher_lows = (len(c_lows) >= 2 and c_lows[0] > c_lows[1])
+        has_swing_lower_highs = (len(c_highs) >= 2 and c_highs[0] < c_highs[1])
+
+        # Establish structural invalidation levels:
+        # Bullish invalidation: Most recent confirmed swing low or ORL
+        # Bearish invalidation: Most recent confirmed swing high or ORH
+        bull_invalidation = c_lows[0] if c_lows else (orl if orl and orl < curr_c else None)
+        bear_invalidation = c_highs[0] if c_highs else (orh if orh and orh > curr_c else None)
 
         # 5. Synchronized Relative Strength Acceleration
         rs_data = OpportunityRankingEngine.calculate_relative_strength_acceleration(stock_df, nifty_df, sector_change)
@@ -426,29 +433,36 @@ class OpportunityRankingEngine:
         )
 
         # Direction-specific IGNITION trigger:
-        # Bullish ignition: broken above ORH/PDH, or expanding upwards with volume surge
-        # Bearish ignition: broken below ORL/PDL, or expanding downwards with selling volume surge
-        is_bull_ignition = direction == "BULLISH" and (is_broken_above_orh or is_broken_above_pdh or (is_expanding_now and curr_c > curr_o) or (rvol >= 1.4 and conviction_score >= 40 and curr_c > curr_vwap))
-        is_bear_ignition = direction == "BEARISH" and (is_broken_below_orl or is_broken_below_pdl or (is_expanding_now and curr_c < curr_o) or (rvol >= 1.4 and conviction_score >= 40 and curr_c < curr_vwap))
+        # Cannot qualify on weak level break alone! Requires candle close-through level AND volume expansion (RVOL >= 1.25 or expanding range >= 1.4x ATR)
+        is_bull_ignition = direction == "BULLISH" and (
+            ((is_broken_above_orh or is_broken_above_pdh) and curr_c > curr_o and (rvol >= 1.25 or is_expanding_now)) or
+            (is_expanding_now and curr_c > curr_o and rvol >= 1.4 and curr_c > curr_vwap)
+        )
+        is_bear_ignition = direction == "BEARISH" and (
+            ((is_broken_below_orl or is_broken_below_pdl) and curr_c < curr_o and (rvol >= 1.25 or is_expanding_now)) or
+            (is_expanding_now and curr_c < curr_o and rvol >= 1.4 and curr_c < curr_vwap)
+        )
 
-        # Strict PREPARING Requirement (Cannot qualify purely on above/below VWAP!):
-        # Must have genuine structural evidence before the move:
-        # 1. Volatility compression (range squeezed / NR4 / NR7) or coiling near key breakout levels (ORH/ORL or PDH/PDL)
-        # 2. Confirmed swing pivot structure (higher lows for bull, lower highs for bear)
-        # 3. Directional relative strength / early opportunity score >= 40
-        # 4. Clear structural invalidation level (ORL/PDL for bull, ORH/PDH for bear)
+        # Strict PREPARING Requirement:
+        # 1. Structural evidence: Volatility compression (range squeezed / NR4 / NR7) or coiling near key breakout level (ORH/ORL/PDH/PDL)
+        # 2. Confirmed swing pivot structure OR validated liquidity sweep & reclaim (NO single candle substitution!)
+        # 3. Established structural invalidation level present
+        # 4. Early opportunity score >= 40 and aligned with VWAP
+        has_bull_structure = (has_swing_higher_lows or is_pdl_liquidity_sweep_bull) and (bull_invalidation is not None and bull_invalidation < curr_c)
+        has_bear_structure = (has_swing_lower_highs or is_pdh_liquidity_sweep_bear) and (bear_invalidation is not None and bear_invalidation > curr_c)
+
         is_strict_bull_preparing = (
             direction == "BULLISH" and 
-            (is_coiling_near_orh or is_coiling_near_pdh or is_range_squeezed or is_pdl_liquidity_sweep_bull) and 
-            (has_swing_higher_lows or curr_c > curr_o) and 
+            (is_coiling_near_orh or is_coiling_near_pdh or is_range_squeezed) and 
+            has_bull_structure and 
             early_bull_score >= 40 and 
             above_vwap
         )
 
         is_strict_bear_preparing = (
             direction == "BEARISH" and 
-            (is_coiling_near_orl or is_coiling_near_pdl or is_range_squeezed or is_pdh_liquidity_sweep_bear) and 
-            (has_swing_lower_highs or curr_c < curr_o) and 
+            (is_coiling_near_orl or is_coiling_near_pdl or is_range_squeezed) and 
+            has_bear_structure and 
             early_bear_score >= 40 and 
             below_vwap
         )
@@ -487,6 +501,8 @@ class OpportunityRankingEngine:
         elif below_vwap: reasons.append("Below VWAP")
         if potential_pct > 1.0: reasons.append(f"+{potential_pct}% room")
 
+        rvol_confidence = "HIGH" if rvol_obs >= 3 else ("MEDIUM" if rvol_obs >= 1 else "LOW")
+
         return {
             "symbol": symbol,
             "sector": sector_name,
@@ -499,7 +515,10 @@ class OpportunityRankingEngine:
             "stage": stage,
             "stage_desc": stage_desc,
             "entry_trigger": entry_trigger,
+            "invalidation_level": bull_invalidation if direction == "BULLISH" else bear_invalidation,
             "rvol": rvol,
+            "rvol_obs": rvol_obs,
+            "rvol_confidence": rvol_confidence,
             "vol_consecutive_rise": vol_consecutive_rise,
             "is_range_squeezed": is_range_squeezed,
             "rs_nifty": rs_nifty,
