@@ -33,17 +33,34 @@ class FNOMomentumFilter:
             l = cdf['Low']
             v = cdf['Volume']
 
-            curr_c = float(c.iloc[-1])
-            curr_o = float(o.iloc[-1])
-
             # Intraday calculation: Compare against the actual start of the latest trading session
             df_temp = cdf.copy()
             if not pd.api.types.is_datetime64_any_dtype(df_temp.index):
                 df_temp.index = pd.to_datetime(df_temp.index)
-            df_temp['Date'] = df_temp.index.date
-            dates = sorted(df_temp['Date'].unique())
+
+            # Determine strictly completed candles using feed validation
+            from engine.market_validator import MarketValidator
+            feed_val = MarketValidator.validate_feed_freshness(df_temp, max_delay_seconds=900, candle_duration_seconds=300)
+            is_completed = feed_val.get("is_completed_candle", True)
+            
+            # If the last candle is still actively forming during market hours, trim to last completed candle
+            eval_df = df_temp if is_completed else df_temp.iloc[:-1]
+            if len(eval_df) < 15:
+                return None
+
+            c = eval_df['Close']
+            o = eval_df['Open']
+            h = eval_df['High']
+            l = eval_df['Low']
+            v = eval_df['Volume']
+
+            curr_c = float(c.iloc[-1])
+            curr_o = float(o.iloc[-1])
+
+            eval_df['Date'] = eval_df.index.date
+            dates = sorted(eval_df['Date'].unique())
             if dates:
-                today_df = df_temp[df_temp['Date'] == dates[-1]]
+                today_df = eval_df[eval_df['Date'] == dates[-1]]
                 session_o = float(today_df['Open'].iloc[0]) if not today_df.empty else float(o.iloc[0])
             else:
                 session_o = float(o.iloc[0])
@@ -55,14 +72,11 @@ class FNOMomentumFilter:
             if recent_v < 5000 or (recent_v * curr_c) < 1500000:  # < 15 Lakhs turnover per 5-min
                 return None
 
-            # 2. Time-Slot Adjusted Relative Volume (RVOL) on Completed 5-Minute Candles
-            # Validates against completed matching historical time-of-day slots
-            df_temp['Time'] = df_temp.index.time
-            # If the latest candle is still forming, use the previous completed candle time
-            comp_idx = -2 if len(df_temp) >= 2 else -1
-            slot_time = df_temp['Time'].iloc[comp_idx]
-            same_slot_vols = df_temp[df_temp['Time'] == slot_time]['Volume']
-            curr_vol = float(v.iloc[comp_idx])
+            # 2. Time-Slot Adjusted Relative Volume (RVOL) on the exact same completed candle
+            eval_df['Time'] = eval_df.index.time
+            slot_time = eval_df['Time'].iloc[-1]
+            same_slot_vols = eval_df[eval_df['Time'] == slot_time]['Volume']
+            curr_vol = float(v.iloc[-1])
 
             obs_count = len(same_slot_vols)
             if obs_count > 1:
@@ -70,7 +84,7 @@ class FNOMomentumFilter:
                 rvol = round(curr_vol / hist_slot_avg, 2) if hist_slot_avg > 0 else 1.0
             else:
                 vol_sma20 = v.rolling(20).mean()
-                avg_vol = float(vol_sma20.iloc[comp_idx]) if not vol_sma20.empty and not pd.isna(vol_sma20.iloc[comp_idx]) else 1.0
+                avg_vol = float(vol_sma20.iloc[-1]) if not vol_sma20.empty and not pd.isna(vol_sma20.iloc[-1]) else 1.0
                 rvol = round(curr_vol / avg_vol, 2) if avg_vol > 0 else 1.0
 
             # 3. ATR & Volatility Compression (NR4 / NR7 & Bollinger Squeeze detection)

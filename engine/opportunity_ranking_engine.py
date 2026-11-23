@@ -327,19 +327,37 @@ class OpportunityRankingEngine:
             exhaustion_risk != "HIGH"
         ) if opp_eval else False
 
-        # Stage Classification with Separate Early vs Confirmation Triggers
-        if (is_viable_opportunity and (conf_bull_score >= 45 or conf_bear_score >= 45)) or (conviction_score >= 60 and potential_pct >= 0.70):
+        # Stage Classification with Strictly Enforced Quality Gates:
+        # A stock can ONLY be CONFIRMED (ENTRY READY) if EVERY condition is met simultaneously:
+        # 1. is_viable_opportunity (opp_eval viable, potential >= 0.70%, RR >= 1.30, not high exhaustion)
+        # 2. Valid structural stop-loss and target defined
+        # 3. Confirmation score meets threshold (>= 45) in the setup direction
+        # 4. Conviction score >= 50
+        is_strictly_confirmed = (
+            is_viable_opportunity and 
+            sl is not None and 
+            tp1 is not None and 
+            rr_ratio >= 1.30 and 
+            potential_pct >= 0.70 and 
+            exhaustion_risk != "HIGH" and
+            ((direction == "BULLISH" and conf_bull_score >= 45) or 
+             (direction == "BEARISH" and conf_bear_score >= 45)) and
+            conviction_score >= 50
+        )
+
+        if is_strictly_confirmed:
             stage = "CONFIRMED"
             stage_desc = f"Verified Completed Trade: RR 1:{rr_ratio:.2f}, +{potential_pct:.1f}% Room"
-            entry_trigger = f"Demand/Supply OB Entry confirmed with RR 1:{rr_ratio:.1f}"
+            entry_trigger = f"{'Demand OB (Buy)' if direction == 'BULLISH' else 'Supply OB (Sell)'} Entry confirmed with RR 1:{rr_ratio:.1f}"
         elif is_broken_above_orh or is_broken_below_orl or is_expanding_now or (rvol >= 1.4 and conviction_score >= 40):
             stage = "IGNITION"
             stage_desc = f"Momentum Breaking Out: RVOL {rvol:.1f}x, Range {curr_range/atr14:.1f}x ATR"
             entry_trigger = "Breakout confirmed above ORH" if direction == "BULLISH" else "Breakdown confirmed below ORL"
-        elif is_coiling_near_orh or is_coiling_near_orl or is_range_squeezed or is_flat_open_ignition or (early_bull_score >= 35 or early_bear_score >= 35):
+        elif (direction == "BULLISH" and (is_coiling_near_orh or is_range_squeezed or early_bull_score >= 35 or above_vwap)) or \
+             (direction == "BEARISH" and (is_coiling_near_orl or is_range_squeezed or early_bear_score >= 35 or below_vwap)):
             stage = "PREPARING"
-            stage_desc = "⚡ Pre-Breakout Coil: Institutional accumulation before the blast"
-            entry_trigger = f"Coil ready: Enter above ₹{orh:.1f} (ORH)" if direction == "BULLISH" else f"Coil ready: Enter below ₹{orl:.1f} (ORL)"
+            stage_desc = "⚡ Pre-Breakout/Breakdown Coil: Institutional accumulation before the move"
+            entry_trigger = f"Pre-Breakout: Enter above ₹{orh:.1f} (ORH)" if direction == "BULLISH" else f"Pre-Breakdown: Enter below ₹{orl:.1f} (ORL)"
         else:
             stage = "MONITORING"
             stage_desc = "Normal intraday action"

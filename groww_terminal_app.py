@@ -628,6 +628,8 @@ def status():
         "profile": screener_state["user_profile"],
         "margin": screener_state["margin"],
         "fno_count": len(screener_state["fno_universe"]),
+        "fno_scanned": len(screener_state.get("bullish_momentum_watchlist", [])) + len(screener_state.get("bearish_momentum_watchlist", [])),
+        "last_scan_time": screener_state.get("last_screener_update", 0),
         "is_market_open": mkt_open,
         "market_status": "LIVE MARKET OPEN" if mkt_open else "MARKET CLOSED (Using Last Session Data)"
     })

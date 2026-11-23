@@ -623,7 +623,12 @@
                 const res = await fetch('/api/status');
                 const d = await res.json();
                 if (d.fno_count) {
-                    document.getElementById('fnoBadge').innerText = `FNO Universe: ${d.fno_count} Active`;
+                    const scannedCount = d.fno_scanned || 30;
+                    document.getElementById('fnoBadge').innerText = `FNO Universe: ${d.fno_count} (${scannedCount} Active Scanned)`;
+                    const pulse = document.getElementById('scannerLivePulse');
+                    if (pulse) {
+                        pulse.innerText = `● ${d.fno_count} F&O LIVE (${scannedCount} Evaluated)`;
+                    }
                 }
                 if (d.market_status) {
                     const mb = document.getElementById('mktBadge');
