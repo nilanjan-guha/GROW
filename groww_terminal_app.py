@@ -171,6 +171,10 @@ def classify_stock_sector(sym):
         return cached
 
     # Query yfinance metadata for the stock
+    if clean_sym in {"^NSEI", "NIFTY", "^BSESN", "SENSEX", "^NSEBANK", "BANKNIFTY"}:
+        screener_state["stock_sector_cache"][clean_sym] = "NIFTY 50"
+        return "NIFTY 50"
+
     yf_ticker = f"{clean_sym}.NS"
     sector_name = "NIFTY INFRA"  # Default fallback
     try:
