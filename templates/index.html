@@ -191,22 +191,32 @@
                     <span id="activeNewsSentiment" style="font-size:0.62rem; padding:1px 6px; border-radius:3px; background:rgba(255,255,255,0.06); font-weight:bold; color:#94a3b8;">SCANNING</span>
                 </div>
 
-                <!-- Top Ranked Opportunities Bar (Bullish & Bearish F&O Opportunities) -->
+                <!-- Focused Two-Stage Trade Selection: PREPARING (Max 5) vs ENTRY-READY (Max 2) -->
                 <div id="rankedOpportunitiesSection">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
                         <span style="font-family:'Inter', sans-serif; font-size:0.75rem; font-weight:bold; color:var(--text-primary); display:flex; align-items:center; gap:6px;">
-                            🎯 TOP SECTOR OPPORTUNITY RANKINGS (Top 3 Bullish & Bearish)
+                            🎯 FOCUSED TRADE SELECTION (5-MIN DISCOVERY & EXECUTION)
                         </span>
                         <span style="font-family:'JetBrains Mono', monospace; font-size:0.65rem; color:var(--neon-cyan);" id="rankSyncTime">SYNCING...</span>
                     </div>
                     <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
-                        <div id="rankedBullishList" style="display:flex; flex-direction:column; gap:6px;">
-                            <div style="font-family:'Inter', sans-serif; font-size:0.68rem; font-weight:bold; color:var(--neon-green); border-bottom:1px solid rgba(0,255,170,0.3); padding-bottom:3px;">▲ TOP 3 BULLISH (PRE-BREAKOUT / CONFIRMED)</div>
-                            <div style="font-size:0.7rem; color:var(--text-muted);">Evaluating F&O universe...</div>
+                        <div id="rankedPreparingSection" style="display:flex; flex-direction:column; gap:6px;">
+                            <div style="font-family:'Inter', sans-serif; font-size:0.68rem; font-weight:bold; color:var(--neon-amber); border-bottom:1px solid rgba(255,170,0,0.3); padding-bottom:3px; display:flex; justify-content:space-between;">
+                                <span>⚡ PREPARING (MAX 5) — PRE-BREAKOUT / COIL</span>
+                                <span style="font-size:0.6rem; color:#94a3b8;">BEFORE THE MOVE</span>
+                            </div>
+                            <div id="rankedPreparingList" style="display:flex; flex-direction:column; gap:6px;">
+                                <div style="font-size:0.7rem; color:var(--text-muted); padding:6px 0;">Scanning 219 F&O for NR4/NR7 and volume coils...</div>
+                            </div>
                         </div>
-                        <div id="rankedBearishList" style="display:flex; flex-direction:column; gap:6px;">
-                            <div style="font-family:'Inter', sans-serif; font-size:0.68rem; font-weight:bold; color:var(--neon-red); border-bottom:1px solid rgba(255,51,102,0.3); padding-bottom:3px;">▼ TOP 3 BEARISH (PRE-BREAKDOWN / CONFIRMED)</div>
-                            <div style="font-size:0.7rem; color:var(--text-muted);">Evaluating F&O universe...</div>
+                        <div id="rankedEntryReadySection" style="display:flex; flex-direction:column; gap:6px;">
+                            <div style="font-family:'Inter', sans-serif; font-size:0.68rem; font-weight:bold; color:var(--neon-green); border-bottom:1px solid rgba(0,255,170,0.3); padding-bottom:3px; display:flex; justify-content:space-between;">
+                                <span>🔥 ENTRY READY (MAX 2) — CONFIRMED 5M</span>
+                                <span style="font-size:0.6rem; color:#94a3b8;">5-MIN CANDLE CONFIRMED</span>
+                            </div>
+                            <div id="rankedEntryReadyList" style="display:flex; flex-direction:column; gap:6px;">
+                                <div style="font-size:0.7rem; color:var(--text-muted); padding:6px 0;">No 5-min confirmed setups right now. Waiting for trigger.</div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1243,86 +1253,64 @@
         }
 
         function renderRankedOpportunitiesUI(ranked) {
-            const bullContainer = document.getElementById('rankedBullishList');
-            const bearContainer = document.getElementById('rankedBearishList');
-            if (!bullContainer || !bearContainer) return;
+            const prepContainer = document.getElementById('rankedPreparingList');
+            const entryContainer = document.getElementById('rankedEntryReadyList');
+            if (!prepContainer || !entryContainer) return;
 
-            const topBull = ranked.top_bullish || [];
-            const topBear = ranked.top_bearish || [];
+            const entryReady = ranked.entry_ready || (ranked.top_bullish || []).filter(c => c.stage === 'CONFIRMED').slice(0, 2);
+            const preparing = ranked.preparing || [...(ranked.top_bullish || []), ...(ranked.top_bearish || [])].filter(c => c.stage !== 'CONFIRMED').slice(0, 5);
 
-            let bullHtml = '<div style="font-family:\'Inter\', sans-serif; font-size:0.68rem; font-weight:bold; color:var(--neon-green); border-bottom:1px solid rgba(0,255,170,0.3); padding-bottom:3px; display:flex; justify-content:space-between;"><span>▲ TOP 3 BULLISH</span><span style="font-size:0.6rem; color:#94a3b8;">EARLY COIL / BREAKOUT</span></div>';
-            if (topBull.length === 0) {
-                bullHtml += '<div style="font-size:0.7rem; color:var(--text-muted); padding:6px 0;">Evaluating F&O sector leaders...</div>';
+            // 1. Render Preparing List (Max 5)
+            if (preparing.length === 0) {
+                prepContainer.innerHTML = '<div style="font-size:0.7rem; color:var(--text-muted); padding:6px 0;">No stocks currently in compression/coil. Scanning 219 F&O...</div>';
             } else {
-                topBull.forEach((c, i) => {
+                let prepHtml = '';
+                preparing.forEach((c, i) => {
                     const sym = c.symbol;
-                    const stageColor = c.stage === 'CONFIRMED' ? 'var(--neon-green)' : (c.stage === 'IGNITION' ? 'var(--neon-cyan)' : 'var(--neon-amber)');
-                    const stageTag = c.stage === 'PREPARING' ? '⚡ PRE-BREAKOUT COIL' : c.stage;
-                    
-                    let setupDetails = '';
-                    if (c.stage === 'CONFIRMED' && c.suggested_sl && c.suggested_tp1) {
-                        setupDetails = `<div style="font-size:0.62rem; color:#f8fafc; margin-top:2px; background:rgba(0,255,170,0.1); padding:2px 6px; border-radius:3px; display:flex; justify-content:space-between;">
-                            <span>SL: <b style="color:var(--neon-amber);">₹${c.suggested_sl}</b> | TP: <b style="color:var(--neon-cyan);">₹${c.suggested_tp1}</b></span>
-                            <span style="color:var(--neon-green); font-weight:bold;">RR 1:${c.risk_reward_ratio || 1.4}</span>
-                        </div>`;
-                    } else {
-                        setupDetails = `<div style="font-size:0.62rem; color:#94a3b8; margin-top:2px;">
-                            ${c.entry_trigger || 'Watching breakout level'}
-                        </div>`;
-                    }
+                    const isBull = c.direction === 'BULLISH';
+                    const dirCol = isBull ? 'var(--neon-green)' : 'var(--neon-red)';
+                    const sign = isBull ? '+' : '';
 
-                    bullHtml += `
-                    <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(0,255,170,0.25); border-radius:4px; padding:6px 8px; cursor:pointer;" onclick="selectStock('${sym}')" title="Click to view ${sym} in Radar">
+                    prepHtml += `
+                    <div style="background:rgba(255,255,255,0.02); border:1px solid rgba(255,170,0,0.2); border-left:3px solid var(--neon-amber); border-radius:4px; padding:6px 8px; cursor:pointer;" onclick="selectStock('${sym}')" title="Click to view ${sym} in Radar">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <span style="font-size:0.75rem; font-weight:bold; color:#fff;">#${i+1} ${sym.replace('.NS', '')} <span style="font-size:0.62rem; color:${stageColor}; background:rgba(255,255,255,0.06); padding:1px 5px; border-radius:3px;">${stageTag}</span></span>
-                            <span style="font-size:0.72rem; color:var(--neon-green); font-weight:800;">+${c.change_pct}%</span>
+                            <span style="font-size:0.75rem; font-weight:bold; color:#fff;">#${i+1} ${sym.replace('.NS', '')} <span style="font-size:0.60rem; color:var(--neon-amber); background:rgba(255,170,0,0.12); border:1px solid rgba(255,170,0,0.3); padding:1px 5px; border-radius:3px;">⚡ PREPARING COIL</span></span>
+                            <span style="font-size:0.72rem; color:${dirCol}; font-weight:800;">${sign}${c.change_pct}%</span>
                         </div>
-                        <div style="font-size:0.63rem; color:var(--text-muted); display:flex; justify-content:space-between; margin-top:2px;">
-                            <span>Score: ${c.conviction_score}/100</span>
-                            <span style="color:var(--neon-cyan);">${c.potential_pct ? '+' + c.potential_pct + '% room' : ''}</span>
+                        <div style="font-size:0.62rem; color:var(--text-muted); display:flex; justify-content:space-between; margin-top:2px;">
+                            <span>Coil Conviction: <b style="color:#fff;">${c.conviction_score}/100</b></span>
+                            <span style="color:var(--neon-cyan);">${c.entry_trigger || 'Coiling at key level'}</span>
                         </div>
-                        ${setupDetails}
                     </div>`;
                 });
+                prepContainer.innerHTML = prepHtml;
             }
-            bullContainer.innerHTML = bullHtml;
 
-            let bearHtml = '<div style="font-family:\'Inter\', sans-serif; font-size:0.68rem; font-weight:bold; color:var(--neon-red); border-bottom:1px solid rgba(255,51,102,0.3); padding-bottom:3px; display:flex; justify-content:space-between;"><span>▼ TOP 3 BEARISH</span><span style="font-size:0.6rem; color:#94a3b8;">EARLY BREAKDOWN</span></div>';
-            if (topBear.length === 0) {
-                bearHtml += '<div style="font-size:0.7rem; color:var(--text-muted); padding:6px 0;">Evaluating F&O sector laggards...</div>';
+            // 2. Render Entry Ready List (Max 2)
+            if (entryReady.length === 0) {
+                entryContainer.innerHTML = '<div style="font-size:0.7rem; color:var(--text-muted); padding:6px 0; background:rgba(0,0,0,0.2); border-radius:4px; text-align:center;">NO 5M TRADE (Default state: waiting for confirmed structure)</div>';
             } else {
-                topBear.forEach((c, i) => {
+                let entryHtml = '';
+                entryReady.forEach((c, i) => {
                     const sym = c.symbol;
-                    const stageColor = c.stage === 'CONFIRMED' ? 'var(--neon-green)' : (c.stage === 'IGNITION' ? 'var(--neon-cyan)' : 'var(--neon-amber)');
-                    const stageTag = c.stage === 'PREPARING' ? '⚡ PRE-BREAKDOWN COIL' : c.stage;
+                    const isBull = c.direction === 'BULLISH';
+                    const dirCol = isBull ? 'var(--neon-green)' : 'var(--neon-red)';
+                    const actLabel = isBull ? 'BUY / CALL (CE)' : 'SELL / PUT (PE)';
 
-                    let setupDetails = '';
-                    if (c.stage === 'CONFIRMED' && c.suggested_sl && c.suggested_tp1) {
-                        setupDetails = `<div style="font-size:0.62rem; color:#f8fafc; margin-top:2px; background:rgba(255,51,102,0.1); padding:2px 6px; border-radius:3px; display:flex; justify-content:space-between;">
-                            <span>SL: <b style="color:var(--neon-amber);">₹${c.suggested_sl}</b> | TP: <b style="color:var(--neon-cyan);">₹${c.suggested_tp1}</b></span>
-                            <span style="color:var(--neon-green); font-weight:bold;">RR 1:${c.risk_reward_ratio || 1.4}</span>
-                        </div>`;
-                    } else {
-                        setupDetails = `<div style="font-size:0.62rem; color:#94a3b8; margin-top:2px;">
-                            ${c.entry_trigger || 'Watching breakdown level'}
-                        </div>`;
-                    }
-
-                    bearHtml += `
-                    <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,51,102,0.25); border-radius:4px; padding:6px 8px; cursor:pointer;" onclick="selectStock('${sym}')" title="Click to view ${sym} in Radar">
+                    entryHtml += `
+                    <div style="background:rgba(0,255,170,0.06); border:1px solid var(--neon-green); border-radius:4px; padding:6px 8px; cursor:pointer;" onclick="selectStock('${sym}')" title="Click to view confirmed 5m setup">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <span style="font-size:0.75rem; font-weight:bold; color:#fff;">#${i+1} ${sym.replace('.NS', '')} <span style="font-size:0.62rem; color:${stageColor}; background:rgba(255,255,255,0.06); padding:1px 5px; border-radius:3px;">${stageTag}</span></span>
-                            <span style="font-size:0.72rem; color:var(--neon-red); font-weight:800;">${c.change_pct}%</span>
+                            <span style="font-size:0.78rem; font-weight:bold; color:#fff;">#${i+1} ${sym.replace('.NS', '')} <span style="font-size:0.60rem; color:${dirCol}; background:rgba(0,0,0,0.4); padding:1px 5px; border-radius:3px; font-weight:bold;">${actLabel}</span></span>
+                            <span style="font-size:0.72rem; color:${dirCol}; font-weight:800;">${c.change_pct >= 0 ? '+' : ''}${c.change_pct}%</span>
                         </div>
-                        <div style="font-size:0.63rem; color:var(--text-muted); display:flex; justify-content:space-between; margin-top:2px;">
-                            <span>Score: ${c.conviction_score}/100</span>
-                            <span style="color:var(--neon-cyan);">${c.potential_pct ? '-' + c.potential_pct + '% room' : ''}</span>
+                        <div style="font-size:0.62rem; color:#f8fafc; margin-top:3px; background:rgba(0,0,0,0.3); padding:3px 6px; border-radius:3px; display:flex; justify-content:space-between;">
+                            <span>SL: <b style="color:var(--neon-amber);">₹${c.suggested_sl}</b> | TP: <b style="color:var(--neon-cyan);">₹${c.suggested_tp1}</b></span>
+                            <span style="color:var(--neon-green); font-weight:bold;">RR 1:${c.risk_reward_ratio || 1.5}</span>
                         </div>
-                        ${setupDetails}
                     </div>`;
                 });
+                entryContainer.innerHTML = entryHtml;
             }
-            bearContainer.innerHTML = bearHtml;
         }
 
         // Automated continuous background scanning loop

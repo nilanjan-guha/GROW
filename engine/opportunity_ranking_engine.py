@@ -421,14 +421,29 @@ class OpportunityRankingEngine:
             else:
                 main_score = cand.get("early_opportunity_score", cand.get("conviction_score", 0))
             
-            rs_acc = cand.get("rs_accel_3", 0.0) if is_bull else abs(cand.get("rs_accel_3", 0.0))
-            rs_acc6 = cand.get("rs_accel_6", 0.0) if is_bull else abs(cand.get("rs_accel_6", 0.0))
+            # Directional Relative Strength Acceleration:
+            # Bullish: higher positive RS acceleration is rewarded.
+            # Bearish: more negative RS acceleration is rewarded (underperforming and deteriorating faster!).
+            if is_bull:
+                rs_acc = cand.get("rs_accel_3", 0.0)
+                rs_acc6 = cand.get("rs_accel_6", 0.0)
+            else:
+                rs_acc = -cand.get("rs_accel_3", 0.0)
+                rs_acc6 = -cand.get("rs_accel_6", 0.0)
+
             return base + main_score + (rs_acc * 10) + (rs_acc6 * 5)
 
         bullish.sort(key=lambda x: score_candidate(x, is_bull=True), reverse=True)
         bearish.sort(key=lambda x: score_candidate(x, is_bull=False), reverse=True)
 
+        # Separate into PREPARING (Max 5) and ENTRY-READY / CONFIRMED (Max 2)
+        all_candidates = bullish + bearish
+        entry_ready_list = [c for c in all_candidates if c.get("stage") == "CONFIRMED"][:2]
+        preparing_list = [c for c in all_candidates if c.get("stage") in ("PREPARING", "IGNITION") and c not in entry_ready_list][:5]
+
         return {
             "top_bullish": bullish[:top_n],
-            "top_bearish": bearish[:top_n]
+            "top_bearish": bearish[:top_n],
+            "entry_ready": entry_ready_list,
+            "preparing": preparing_list
         }
