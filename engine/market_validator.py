@@ -169,10 +169,11 @@ class MarketValidator:
     def validate_historical_replay_data(df, candle_duration_seconds=300):
         """
         Validates historical data integrity for backtesting/replay (NO current wall-clock checks):
-        - Enforces monotonic datetime index ordering.
-        - Validates candle structure (Open, High, Low, Close, Volume) and non-negative values.
-        - Rejects incomplete / corrupted history.
-        - In historical simulation, all historical candles prior to the slice end are completed by definition.
+        - Enforces strictly unique, monotonic datetime index ordering.
+        - Validates all OHLCV values: rejects NaN, infinite, or negative values.
+        - Enforces strict mathematical OHLC relationships:
+          High >= Open, High >= Close, Low <= Open, Low <= Close, High >= Low.
+        - Validates volume is non-negative and finite.
         """
         if df is None or df.empty:
             return {"is_valid": False, "status": "EMPTY_FEED", "reason": "Historical dataframe is empty"}
@@ -190,21 +191,46 @@ class MarketValidator:
             except Exception as e:
                 return {"is_valid": False, "status": "INVALID_INDEX", "reason": f"Cannot parse datetime index: {e}"}
 
-        # Check monotonic ordering
+        # Check unique chronological ordering
+        if df_eval.index.has_duplicates:
+            return {"is_valid": False, "status": "DUPLICATE_TIMESTAMPS", "reason": "Duplicate candle timestamps detected in historical slice"}
+
         if not df_eval.index.is_monotonic_increasing:
             return {"is_valid": False, "status": "NON_MONOTONIC_INDEX", "reason": "Historical candles not strictly chronological"}
 
-        # Validate finite OHLCV data
+        # Validate required columns
         req_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
         if not all(col in df_eval.columns for col in req_cols):
             return {"is_valid": False, "status": "MISSING_COLUMNS", "reason": f"Required OHLCV columns missing: {[c for c in req_cols if c not in df_eval.columns]}"}
 
-        c = df_eval['Close']
-        h = df_eval['High']
-        l = df_eval['Low']
-        o = df_eval['Open']
-        if (c <= 0).any() or (h <= 0).any() or (l <= 0).any() or (o <= 0).any():
+        c = df_eval['Close'].values
+        h = df_eval['High'].values
+        l = df_eval['Low'].values
+        o = df_eval['Open'].values
+        v = df_eval['Volume'].values
+
+        import numpy as np
+        # Finite number check (no NaN, no Inf)
+        for name, arr in [('Open', o), ('High', h), ('Low', l), ('Close', c), ('Volume', v)]:
+            if not np.all(np.isfinite(arr)):
+                return {"is_valid": False, "status": "NON_FINITE_DATA", "reason": f"NaN or Inf values detected in {name} array"}
+
+        # Price values must be strictly positive
+        if np.any(c <= 0) or np.any(h <= 0) or np.any(l <= 0) or np.any(o <= 0):
             return {"is_valid": False, "status": "INVALID_PRICES", "reason": "Non-positive price values detected in historical slice"}
+
+        # Volume must be non-negative
+        if np.any(v < 0):
+            return {"is_valid": False, "status": "NEGATIVE_VOLUME", "reason": "Negative volume values detected in historical slice"}
+
+        # Strict OHLC logical relationships
+        # High must be the absolute highest: High >= Low, High >= Open, High >= Close
+        if np.any(h < l) or np.any(h < o) or np.any(h < c):
+            return {"is_valid": False, "status": "CORRUPT_OHLC_HIGH", "reason": "High price violated boundary (High < Low, High < Open, or High < Close)"}
+
+        # Low must be the absolute lowest: Low <= High, Low <= Open, Low <= Close
+        if np.any(l > o) or np.any(l > c):
+            return {"is_valid": False, "status": "CORRUPT_OHLC_LOW", "reason": "Low price violated boundary (Low > Open or Low > Close)"}
 
         last_dt = df_eval.index[-1]
         last_ts = last_dt.timestamp() if hasattr(last_dt, 'timestamp') else float(last_dt)

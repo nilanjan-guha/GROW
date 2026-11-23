@@ -117,35 +117,69 @@ class InstitutionalStrategyEngine:
         from engine.anomaly_engine import AnomalyDetector
         rvol = AnomalyDetector.calculate_time_of_day_rvol(df)
 
-        # SMC: Order Blocks & Liquidity Sweeps
+        # SMC: Incremental Candle-by-Candle Order Blocks & Liquidity Sweeps (Zero Lookahead):
+        # We track OB creation and mitigation sequentially over time strictly up to candle len(df)-1.
         bull_obs, bear_obs = [], []
         swing_highs, swing_lows = [], []
-        # df already contains strictly completed candles; utilize all of it without artificial one-candle delay
         hist_df = df
+        
+        # 1. Swing points identified using strictly completed past bars
         for i in range(2, len(hist_df)-2):
             if float(h.iloc[i]) == max([float(x) for x in h.iloc[i-2:i+3]]):
                 swing_highs.append(float(h.iloc[i]))
             if float(l.iloc[i]) == min([float(x) for x in l.iloc[i-2:i+3]]):
                 swing_lows.append(float(l.iloc[i]))
 
-        for i in range(1, len(hist_df)-1):
-            if float(c.iloc[i]) < float(o.iloc[i]) and float(c.iloc[i+1]) > float(h.iloc[i]):
-                # Order block created: check if mitigated by subsequent candles
-                ob_top = float(h.iloc[i])
-                ob_bottom = float(l.iloc[i])
-                is_mitigated = any(float(l.iloc[k]) <= ob_top for k in range(i+2, len(hist_df)))
-                bull_obs.append({"top": ob_top, "bottom": ob_bottom, "mitigated": is_mitigated})
-            if float(c.iloc[i]) > float(o.iloc[i]) and float(c.iloc[i+1]) < float(l.iloc[i]):
-                ob_top = float(h.iloc[i])
-                ob_bottom = float(l.iloc[i])
-                is_mitigated = any(float(h.iloc[k]) >= ob_bottom for k in range(i+2, len(hist_df)))
-                bear_obs.append({"top": ob_top, "bottom": ob_bottom, "mitigated": is_mitigated})
-
-        # STRICT RULE: Only allow FRESH (UNMITIGATED) Order Blocks to trigger trades
-        fresh_bull_obs = [ob for ob in bull_obs if not ob.get("mitigated")]
-        fresh_bear_obs = [ob for ob in bear_obs if not ob.get("mitigated")]
+        # 2. Incremental order block state machine:
+        # At each step k, new OBs created at k-1 are added as unmitigated.
+        # Any existing active OB pierced by candle k's range is marked mitigated at candle k.
+        active_bull_obs = []
+        active_bear_obs = []
         
-        # Select the nearest, most relevant fresh order block to current price (not just arbitrary last one):
+        for k in range(1, len(hist_df)):
+            c_prev = float(c.iloc[k-1])
+            o_prev = float(o.iloc[k-1])
+            h_prev = float(h.iloc[k-1])
+            l_prev = float(l.iloc[k-1])
+            c_curr = float(c.iloc[k])
+            
+            # Check if previous bar formed a Bullish OB (Down candle immediately engulfed upward)
+            if c_prev < o_prev and c_curr > h_prev:
+                active_bull_obs.append({
+                    "top": h_prev,
+                    "bottom": l_prev,
+                    "created_at_idx": k,
+                    "mitigated": False
+                })
+            
+            # Check if previous bar formed a Bearish OB (Up candle immediately engulfed downward)
+            if c_prev > o_prev and c_curr < l_prev:
+                active_bear_obs.append({
+                    "top": h_prev,
+                    "bottom": l_prev,
+                    "created_at_idx": k,
+                    "mitigated": False
+                })
+            
+            # Check mitigation by current candle k on existing active OBs formed prior to k
+            curr_low = float(l.iloc[k])
+            curr_high = float(h.iloc[k])
+            
+            for ob in active_bull_obs:
+                if not ob["mitigated"] and ob["created_at_idx"] < k:
+                    if curr_low <= ob["top"]:
+                        ob["mitigated"] = True
+            
+            for ob in active_bear_obs:
+                if not ob["mitigated"] and ob["created_at_idx"] < k:
+                    if curr_high >= ob["bottom"]:
+                        ob["mitigated"] = True
+
+        # STRICT RULE: Only consider active, unmitigated order blocks as of the CURRENT candle
+        fresh_bull_obs = [ob for ob in active_bull_obs if not ob["mitigated"]]
+        fresh_bear_obs = [ob for ob in active_bear_obs if not ob["mitigated"]]
+        
+        # Select the nearest, most relevant fresh order block to current price:
         near_demand_ob = min(fresh_bull_obs, key=lambda ob: abs(curr_c - ob['top'])) if fresh_bull_obs else None
         near_supply_ob = min(fresh_bear_obs, key=lambda ob: abs(curr_c - ob['bottom'])) if fresh_bear_obs else None
 

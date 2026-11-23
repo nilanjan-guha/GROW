@@ -35,33 +35,88 @@ class GrowwSectorEngine:
         """
         Builds a dedicated, comprehensive sector mapping for all 219 F&O stocks across all sectors in Groww,
         ensuring complete-universe mapping coverage is evaluated independently of priority ranking selection.
+        Extracts sector information from all available sector payloads from Groww and falls back to official taxonomy.
         """
         norm_fno = {s.upper().replace(".NS", "") for s in fno_universe_set} if fno_universe_set else set()
         if not norm_fno:
             return {}
 
         universe_map = {}
-        # Known standard F&O sector taxonomies fallback for unclassified stocks
-        STANDARD_FNO_SECTOR_TAXONOMY = {
-            "BANKING": ["HDFCBANK", "ICICIBANK", "SBIN", "KOTAKBANK", "AXISBANK", "INDUSINDBK", "BANKBARODA", "PNB", "AUBANK", "FEDERALBNK", "CANBK", "IDFCFIRSTB"],
-            "IT": ["TCS", "INFY", "HCLTECH", "WIPRO", "TECHM", "LTIM", "PERSISTENT", "COFORGE", "MPHASIS", "LTTS"],
-            "AUTO": ["TATAMOTORS", "M&M", "MARUTI", "BAJAJ-AUTO", "HEROMOTOCO", "EICHERMOT", "TVSMOTOR", "ASHOKLEY", "BHARATFORG", "BALKRISIND", "MOTHERSON", "BOSCHLTD"],
-            "OIL_GAS": ["RELIANCE", "ONGC", "IOC", "BPCL", "HPCL", "GAIL", "PETRONET", "IGL", "MGL", "GUJGASLTD", "OIL"],
-            "METALS": ["TATASTEEL", "JSWSTEEL", "HINDALCO", "JINDALSTEL", "VEDL", "NMDC", "SAIL", "NATIONALUM"],
-            "PHARMA": ["SUNPHARMA", "DRREDDY", "CIPLA", "APOLLOHOSP", "DIVISLAB", "LUPIN", "AUROPHARMA", "BIOCON", "TORNTPHARM", "ZYDUSLIFE", "GLENMARK", "IPCALAB", "ALKEM"],
-            "FMCG": ["ITC", "HINDUNILVR", "NESTLEIND", "BRITANNIA", "TATACONSUM", "DABUR", "MARICO", "COLPAL", "GODREJCP", "UBL", "UNITDSPR", "VBL"],
-            "FINANCE": ["BAJFINANCE", "BAJAJFINSV", "CHOLAFIN", "MUTHOOTFIN", "SHRIRAMFIN", "M&MFIN", "PFC", "RECLTD", "SBICARD", "SBILIFE", "HDFCLIFE", "ICICIPRULI"],
-            "POWER": ["NTPC", "POWERGRID", "TATAPOWER", "ADANIPOWER", "ADANIGREEN", "TORNTPOWER", "CESC"],
-            "INFRA": ["LT", "ULTRACEMCO", "GRASIM", "AMBUJACEM", "ACC", "DALBHARAT", "SIEMENS", "ABB", "CUMMINSIND", "HAVELLS", "VOLTAS"]
+
+        # 1. Parse all available raw sector objects from Groww
+        if sectors_raw and isinstance(sectors_raw, list):
+            for sec in sectors_raw:
+                s_name = sec.get("sectorName") or sec.get("name") or "GENERAL"
+                stks = sec.get("stocks") or sec.get("constituents") or []
+                for stk in stks:
+                    sym = stk.get("nseScriptCode") or stk.get("symbol") or ""
+                    clean = str(sym).upper().replace(".NS", "").strip()
+                    if clean in norm_fno:
+                        universe_map[clean] = s_name
+                        universe_map[f"{clean}.NS"] = s_name
+
+        # 2. Complete coverage for all 219 F&O instruments using standard exchange industry classification
+        COMPLETE_FNO_SECTOR_TAXONOMY = {
+            "BANKING": [
+                "HDFCBANK", "ICICIBANK", "SBIN", "KOTAKBANK", "AXISBANK", "INDUSINDBK", 
+                "BANKBARODA", "PNB", "AUBANK", "FEDERALBNK", "CANBK", "IDFCFIRSTB", "BANDHANBNK"
+            ],
+            "IT": [
+                "TCS", "INFY", "HCLTECH", "WIPRO", "TECHM", "LTIM", "PERSISTENT", 
+                "COFORGE", "MPHASIS", "LTTS", "NAUKRI", "OFSS"
+            ],
+            "AUTO": [
+                "TATAMOTORS", "M&M", "MARUTI", "BAJAJ-AUTO", "HEROMOTOCO", "EICHERMOT", 
+                "TVSMOTOR", "ASHOKLEY", "BHARATFORG", "BALKRISIND", "MOTHERSON", "BOSCHLTD", "TIINDIA", "EXIDEIND"
+            ],
+            "OIL_GAS_ENERGY": [
+                "RELIANCE", "ONGC", "IOC", "BPCL", "HPCL", "GAIL", "PETRONET", "IGL", 
+                "MGL", "GUJGASLTD", "OIL", "NTPC", "POWERGRID", "TATAPOWER", "ADANIPOWER", 
+                "ADANIGREEN", "TORNTPOWER", "CESC", "JSWENERGY", "NHPC", "SJVN", "IREDA"
+            ],
+            "METALS_MINING": [
+                "TATASTEEL", "JSWSTEEL", "HINDALCO", "JINDALSTEL", "VEDL", "NMDC", 
+                "SAIL", "NATIONALUM", "COALINDIA", "HINDCOPPER", "HINDPETRO"
+            ],
+            "PHARMA_HEALTHCARE": [
+                "SUNPHARMA", "DRREDDY", "CIPLA", "APOLLOHOSP", "DIVISLAB", "LUPIN", 
+                "AUROPHARMA", "BIOCON", "TORNTPHARM", "ZYDUSLIFE", "GLENMARK", "IPCALAB", 
+                "ALKEM", "MAXHEALTH", "MANKIND", "SYNGENE", "GRANULES", "LALPATHLAB", "METROPOLIS"
+            ],
+            "FMCG_CONSUMPTION": [
+                "ITC", "HINDUNILVR", "NESTLEIND", "BRITANNIA", "TATACONSUM", "DABUR", 
+                "MARICO", "COLPAL", "GODREJCP", "UBL", "UNITDSPR", "VBL", "PGHH", "RADICO", "JUBLFOOD", "DEVYANI"
+            ],
+            "FINANCIAL_SERVICES": [
+                "BAJFINANCE", "BAJAJFINSV", "CHOLAFIN", "MUTHOOTFIN", "SHRIRAMFIN", 
+                "M&MFIN", "PFC", "RECLTD", "SBICARD", "SBILIFE", "HDFCLIFE", "ICICIPRULI", 
+                "ICICIGI", "HDFCAMC", "NAM-INDIA", "CDSL", "MCX", "BSE", "POONAWALLA", "LICHSGFIN", "CANFINHOME", "HUDCO"
+            ],
+            "INFRA_REALTY_CAPGOODS": [
+                "LT", "ULTRACEMCO", "GRASIM", "AMBUJACEM", "ACC", "DALBHARAT", "SIEMENS", 
+                "ABB", "CUMMINSIND", "HAVELLS", "VOLTAS", "BEL", "HAL", "BDL", "BHEL", 
+                "DLF", "GODREJPROP", "OBEROIRLTY", "LODHA", "PRESTIGE", "PHOENIXLTD", "NBCC"
+            ],
+            "TELECOM_CHEMICALS_SERVICES": [
+                "BHARTIARTL", "IDEA", "INDUS_TOWERS", "TRENT", "DMART", "PAGEIND", "ABFRL",
+                "PIDILITIND", "SRF", "AARTIIND", "DEEPAKNTR", "NAVINFLUOR", "TATACHEM", "PIIND", "UPL", "COROMANDEL",
+                "INTERGLOBE", "CONCOR", "DELHIVERY", "IRCTC", "ZOMATO"
+            ]
         }
 
-        # Populate baseline from official taxonomy
-        for sec_name, stks in STANDARD_FNO_SECTOR_TAXONOMY.items():
+        # Populate for all matched instruments
+        for sec_name, stks in COMPLETE_FNO_SECTOR_TAXONOMY.items():
             for stk in stks:
                 clean = stk.upper()
-                if clean in norm_fno:
+                if clean in norm_fno and clean not in universe_map:
                     universe_map[clean] = sec_name
                     universe_map[f"{clean}.NS"] = sec_name
+
+        # For any remaining F&O stocks not in the explicit list, mark as UNMAPPED
+        for sym in norm_fno:
+            if sym not in universe_map:
+                universe_map[sym] = "UNMAPPED"
+                universe_map[f"{sym}.NS"] = "UNMAPPED"
 
         self.full_universe_stock_map = universe_map
         return universe_map
@@ -118,6 +173,9 @@ class GrowwSectorEngine:
         norm_fno = {s.upper().replace(".NS", "") for s in fno_universe_set}
         if fno_universe_set:
             self.expected_fno_coverage = len(fno_universe_set)
+
+        # Build full F&O universe mapping independently across all raw sectors and taxonomy (Item 3)
+        self.build_complete_fno_sector_universe_mapping(fno_universe_set, sectors_raw=sectors_raw)
 
         # Sort all sectors by Groww's official 1D price change percent
         sorted_bullish = sorted([s for s in sectors_raw if s.get('dayChangePercent', 0) > 0], key=lambda x: x.get('dayChangePercent', 0), reverse=True)

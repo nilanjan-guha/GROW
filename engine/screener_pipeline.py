@@ -77,9 +77,20 @@ class ScreenerPipeline:
         if nifty_df is not None and not nifty_df.empty:
             if isinstance(nifty_df.columns, pd.MultiIndex):
                 nifty_df.columns = nifty_df.columns.get_level_values(0)
-            n_val = MarketValidator.validate_feed_freshness(nifty_df, max_delay_seconds=300, candle_duration_seconds=300)
-            is_n_comp = n_val.get("is_completed_candle", False)
-            eval_nifty = nifty_df if is_n_comp else nifty_df.iloc[:-1]
+            
+            # Apply historical validator to NIFTY as well when is_replay=True!
+            if is_replay:
+                n_val = MarketValidator.validate_historical_replay_data(nifty_df, candle_duration_seconds=300)
+                if not n_val.get("is_valid", False):
+                    return None  # Reject corrupted benchmark slice
+                eval_nifty = nifty_df
+            else:
+                n_val = MarketValidator.validate_feed_freshness(nifty_df, max_delay_seconds=300, candle_duration_seconds=300)
+                if not n_val.get("is_valid", False):
+                    return None
+                is_n_comp = n_val.get("is_completed_candle", False)
+                eval_nifty = nifty_df if is_n_comp else nifty_df.iloc[:-1]
+
             if not eval_nifty.empty:
                 nifty_regime = MarketRegimeEngine.evaluate_benchmark_regime(eval_nifty)
 

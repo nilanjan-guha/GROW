@@ -47,6 +47,7 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
         "rejected_no_risk": 0,
         "wins": 0,
         "losses": 0,
+        "gross_pnl_pct": 0.0,
         "total_pnl_pct": 0.0,
         "mfes": [],
         "maes": [],
@@ -188,21 +189,24 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
                 stats["watch_only_candidates"] += 1
                 continue
 
-            # Validate structural boundaries
+            # Model execution price with realistic bid-ask spread and entry slippage (0.03% on entry)
+            actual_entry = entry_price * (1.0 + entry_slippage_pct/100) if direction == "BULLISH" else entry_price * (1.0 - entry_slippage_pct/100)
+
+            # Recalculate Risk/Reward using the ACTUAL slipped entry price (Item 6):
             if direction == "BULLISH":
-                if not (sl < entry_price and tp1 > entry_price):
+                if not (sl < actual_entry and tp1 > actual_entry):
                     stats["rejected_no_risk"] += 1
                     stats["watch_only_candidates"] += 1
                     continue
-                risk = entry_price - sl
-                reward = tp1 - entry_price
+                risk = actual_entry - sl
+                reward = tp1 - actual_entry
             else:
-                if not (sl > entry_price and tp1 < entry_price):
+                if not (sl > actual_entry and tp1 < actual_entry):
                     stats["rejected_no_risk"] += 1
                     stats["watch_only_candidates"] += 1
                     continue
-                risk = sl - entry_price
-                reward = entry_price - tp1
+                risk = sl - actual_entry
+                reward = actual_entry - tp1
 
             if risk <= 0 or (reward / risk) < 1.20:
                 stats["rejected_no_risk"] += 1
@@ -211,7 +215,6 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
 
             # Executable trade verified
             stats["trades_executed"] += 1
-            actual_entry = entry_price * (1.0 + entry_slippage_pct/100) if direction == "BULLISH" else entry_price * (1.0 - entry_slippage_pct/100)
             
             forward_candles = df.iloc[idx:min(idx + max_holding_candles, len(df))]
             if forward_candles.empty:
@@ -233,10 +236,20 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
                 in_trade_highs.append(h)
                 in_trade_lows.append(l)
                 
+                # Check for simultaneous same-candle SL and TP touch:
+                # Conservative conservative resolution: If both touched on same 5m bar, assume Stop-Loss was triggered first!
                 if direction == "BULLISH":
-                    if c_open <= sl:
+                    touched_sl = (l <= sl) or (c_open <= sl)
+                    touched_tp = (h >= tp1) or (c_open >= tp1)
+                    
+                    if touched_sl and touched_tp:
                         hit_sl = True
-                        exit_price_actual = c_open
+                        exit_price_actual = c_open if c_open <= sl else (sl - sl * 0.0003)
+                        exit_offset = c_i + 1
+                        break
+                    elif c_open <= sl:
+                        hit_sl = True
+                        exit_price_actual = c_open  # Gap-through stop fill
                         exit_offset = c_i + 1
                         break
                     elif l <= sl:
@@ -255,9 +268,17 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
                         exit_offset = c_i + 1
                         break
                 else:  # BEARISH
-                    if c_open >= sl:
+                    touched_sl = (h >= sl) or (c_open >= sl)
+                    touched_tp = (l <= tp1) or (c_open <= tp1)
+                    
+                    if touched_sl and touched_tp:
                         hit_sl = True
-                        exit_price_actual = c_open
+                        exit_price_actual = c_open if c_open >= sl else (sl + sl * 0.0003)
+                        exit_offset = c_i + 1
+                        break
+                    elif c_open >= sl:
+                        hit_sl = True
+                        exit_price_actual = c_open  # Gap-through stop fill
                         exit_offset = c_i + 1
                         break
                     elif h >= sl:
@@ -291,20 +312,29 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
             is_out_of_sample = (idx >= int(len(df) * 0.60))
             is_win = False
 
+            # Separate Gross vs Net PnL (Entry friction: 0.05% + Exit friction: 0.05% = 0.10% total)
             if hit_tp:
-                stats["wins"] += 1
-                is_win = True
-                diff = (exit_price_actual - actual_entry) / actual_entry * 100 if direction == "BULLISH" else (actual_entry - exit_price_actual) / actual_entry * 100
-                stats["total_pnl_pct"] += (diff - total_friction_pct)
+                gross_diff = (exit_price_actual - actual_entry) / actual_entry * 100 if direction == "BULLISH" else (actual_entry - exit_price_actual) / actual_entry * 100
+                net_pnl = gross_diff - total_friction_pct
+                stats["gross_pnl_pct"] += gross_diff
+                stats["total_pnl_pct"] += net_pnl
+                if net_pnl > 0:
+                    stats["wins"] += 1
+                    is_win = True
+                else:
+                    stats["losses"] += 1
             elif hit_sl:
                 stats["losses"] += 1
-                diff = -(abs(actual_entry - exit_price_actual) / actual_entry * 100)
-                stats["total_pnl_pct"] += (diff - total_friction_pct)
+                gross_diff = -(abs(actual_entry - exit_price_actual) / actual_entry * 100)
+                net_pnl = gross_diff - total_friction_pct
+                stats["gross_pnl_pct"] += gross_diff
+                stats["total_pnl_pct"] += net_pnl
             else:
-                diff = ((exit_price_actual - actual_entry) / actual_entry * 100) if direction == "BULLISH" else ((actual_entry - exit_price_actual) / actual_entry * 100)
-                pnl = diff - total_friction_pct
-                stats["total_pnl_pct"] += pnl
-                if pnl > 0:
+                gross_diff = ((exit_price_actual - actual_entry) / actual_entry * 100) if direction == "BULLISH" else ((actual_entry - exit_price_actual) / actual_entry * 100)
+                net_pnl = gross_diff - total_friction_pct
+                stats["gross_pnl_pct"] += gross_diff
+                stats["total_pnl_pct"] += net_pnl
+                if net_pnl > 0:
                     stats["wins"] += 1
                     is_win = True
                 else:
@@ -379,7 +409,8 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
         print(f"Non-Expanding Trigger Rate:  {fpr_expansion}%")
         print(f"Average MFE (In-Trade):      +{avg_mfe}%")
         print(f"Average MAE (In-Trade):      -{avg_mae}%")
-        print(f"Net Realized PnL:            {round(stats['total_pnl_pct'], 2)}%")
+        print(f"Gross PnL (Before Costs):   {round(stats['gross_pnl_pct'], 2)}%")
+        print(f"Net Realized PnL (After):    {round(stats['total_pnl_pct'], 2)}%")
         
         if stats["in_sample_trades"] > 0:
             is_wr = round(stats["in_sample_wins"] / stats["in_sample_trades"] * 100, 1)
