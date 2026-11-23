@@ -231,6 +231,7 @@ class OpportunityRankingEngine:
         is_gap_down = False
         is_flat_open = False
         is_flat_open_ignition = False
+        is_exhausted_gap = False  # Gap too huge (> 2.5%) where move is already over/exhausted!
 
         if prev_date is not None:
             prev_day_df = df_copy[df_copy.index.date == prev_date]
@@ -239,11 +240,20 @@ class OpportunityRankingEngine:
                 today_first_open = float(today_df['Open'].iloc[0])
                 if prev_day_close > 0:
                     open_gap_pct = round(((today_first_open - prev_day_close) / prev_day_close) * 100, 2)
-                    is_gap_up = (open_gap_pct >= 0.75)
-                    is_gap_down = (open_gap_pct <= -0.75)
-                    is_flat_open = (abs(open_gap_pct) <= 0.30)
-                    if is_flat_open and (curr_c > today_first_open) and (rvol >= 1.5 or is_expanding_now):
+                    # Detect exhausted gap: if stock opened with massive gap (> 2.5% or < -2.5%), retail chases, move already done
+                    if abs(open_gap_pct) >= 2.50:
+                        is_exhausted_gap = True
+
+                    is_gap_up = (open_gap_pct >= 0.60)
+                    is_gap_down = (open_gap_pct <= -0.60)
+                    is_flat_open = (abs(open_gap_pct) <= 0.40)
+                    # Flat open with clean breakout initiation: best risk-reward setups!
+                    if is_flat_open and (curr_c > today_first_open) and (rvol >= 1.2 or is_expanding_now):
                         is_flat_open_ignition = True
+
+        # If move is already exhausted by extreme overnight gap, reject or severely penalize
+        if is_exhausted_gap:
+            return None
 
         # Gap Hold Confirmation (Holding above gap open)
         is_gap_up_holding = is_gap_up and (curr_c >= float(today_df['Open'].iloc[0]))

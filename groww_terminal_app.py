@@ -883,8 +883,18 @@ def smc_scan():
         res["daily_atr_source"] = inst_res.get("daily_atr_source", "DEDICATED_DAILY_WILDER_ATR14")
         res["confidence_penalty"] = atr_penalty
         
-        # Enforce strict institutional action: if institutional engine is NEUTRAL, action MUST be NO TRADE
-        if inst_res["direction"] != "NEUTRAL":
+        # Enforce strict institutional action: if institutional engine is NEUTRAL or MARKET IS CLOSED, action MUST be NO TRADE
+        mkt_is_open = is_market_open()
+        if not mkt_is_open:
+            res["action"] = "MARKET CLOSED (WAIT FOR NEXT LIVE SESSION)"
+            res["verdict"] = f"SCORE {inst_res['composite_score']}/100 | {inst_res.get('primary_strategy', 'OFFLINE')}"
+            res["suggested_sl"] = None
+            res["suggested_tp1"] = None
+            res["suggested_tp2"] = None
+            res["reasoning"] = f"NSE/BSE Indian Market is currently closed. Showing end-of-day closing structure for {clean_sym}. Real-time trade signals will activate at 09:15 AM IST."
+            res["signal_id"] = None
+            res["signal_status"] = "MARKET CLOSED"
+        elif inst_res["direction"] != "NEUTRAL":
             res["action"] = f"{inst_res['direction']} / {'CALL (CE)' if inst_res['direction'] == 'BUY' else 'PUT (PE)'} [{inst_res['primary_strategy'].upper()}]"
             res["verdict"] = f"SCORE {inst_res['composite_score']}/100 | WIN PROB {inst_res['probability_pct']}%"
             res["suggested_sl"] = inst_res["suggested_sl"]
@@ -894,7 +904,7 @@ def smc_scan():
             res["signal_status"] = "CONFIRMED (Completed Candle)" if is_completed_candle else "PROVISIONAL (Live Candle)"
             
             # Persist ONLY CONFIRMED signals generated during live market hours to historical signals database
-            if is_completed_candle and is_market_open():
+            if is_completed_candle and mkt_is_open:
                 signal_id = log_signal({
                     "symbol": symbol,
                     "direction": inst_res["direction"],

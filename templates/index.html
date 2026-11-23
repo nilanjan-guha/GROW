@@ -572,7 +572,7 @@
                             <span style="color:var(--neon-green); font-size:0.75rem; font-weight:800;">+${stk.change.toFixed(1)}%</span>
                         </div>
                         <div style="font-size:0.63rem; color:var(--text-muted); display:flex; justify-content:space-between; margin-top:2px;">
-                            <span>Vel: <b style="color:var(--neon-cyan);">${stk.velocity || 1.0}x</b></span>
+                            <span>Mom Vel: <b style="color:var(--neon-cyan);">${Number(stk.velocity || 1.2).toFixed(1)}x</b></span>
                             <span style="color:#94a3b8; font-weight:bold;">CALL MOVER</span>
                         </div>
                     `;
@@ -597,7 +597,7 @@
                             <span style="color:var(--neon-red); font-size:0.75rem; font-weight:800;">${stk.change.toFixed(1)}%</span>
                         </div>
                         <div style="font-size:0.63rem; color:var(--text-muted); display:flex; justify-content:space-between; margin-top:2px;">
-                            <span>Vel: <b style="color:var(--neon-amber);">${stk.velocity || 1.0}x</b></span>
+                            <span>Mom Vel: <b style="color:var(--neon-amber);">${Number(stk.velocity || 1.2).toFixed(1)}x</b></span>
                             <span style="color:#94a3b8; font-weight:bold;">PUT MOVER</span>
                         </div>
                     `;
