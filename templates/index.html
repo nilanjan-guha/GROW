@@ -433,6 +433,11 @@
                     } else {
                         mb.style.color = 'var(--neon-amber)';
                         mb.style.borderColor = 'var(--neon-amber)';
+                        // Intraday Session Closed: Automatically clear trades if day has ended and market is closed
+                        if (d.market_status.includes('CLOSED')) {
+                            // Check if signals in database are active, else clear banner
+                            syncActiveTradeBanner();
+                        }
                     }
                 }
             } catch (e) {}
@@ -739,16 +744,36 @@
                         ${smc.suggested_tp2 ? '&nbsp;|&nbsp; Target 2: ₹' + smc.suggested_tp2 + ' ' + pot2 : ''} 
                         ${rrText}
                     </div>
-                    <div style="text-align:right; min-width:140px; margin-left:12px;">
-                        <span style="font-size:0.68rem; color:#94a3b8;">LTP: </span>
-                        <strong style="font-size:0.85rem; color:#fff;">₹${currentPrice.toFixed(1)}</strong>
-                        <span style="background:${pnlPct >= 0 ? 'rgba(0,255,170,0.15)' : 'rgba(255,51,102,0.15)'}; border:1px solid ${pnlColor}; color:${pnlColor}; padding:1px 6px; border-radius:4px; font-size:0.75rem; font-weight:800; margin-left:6px;">
-                            ${pnlSign}${pnlPct.toFixed(2)}%
-                        </span>
+                    <div style="display:flex; align-items:center; gap:8px; margin-left:12px;">
+                        <div style="text-align:right; min-width:130px;">
+                            <span style="font-size:0.68rem; color:#94a3b8;">LTP: </span>
+                            <strong style="font-size:0.85rem; color:#fff;">₹${currentPrice.toFixed(1)}</strong>
+                            <span style="background:${pnlPct >= 0 ? 'rgba(0,255,170,0.15)' : 'rgba(255,51,102,0.15)'}; border:1px solid ${pnlColor}; color:${pnlColor}; padding:1px 6px; border-radius:4px; font-size:0.75rem; font-weight:800; margin-left:4px;">
+                                ${pnlSign}${pnlPct.toFixed(2)}%
+                            </span>
+                        </div>
+                        <button onclick="event.stopPropagation(); closeTrade('${s}', ${t.signal_id || 'null'}, ${currentPrice})" style="background:rgba(255,51,102,0.15); border:1px solid rgba(255,51,102,0.4); color:var(--neon-red); cursor:pointer; padding:2px 7px; border-radius:4px; font-weight:bold; font-size:0.75rem;" title="Close this trade">✕</button>
                     </div>
                 </div>`;
             });
             alertDetails.innerHTML = html;
+        }
+
+        async function closeTrade(symbol, signalId, exitPrice) {
+            delete activeConfirmedTrades[symbol];
+            try {
+                localStorage.setItem('activeConfirmedTrades', JSON.stringify(activeConfirmedTrades));
+            } catch(e) {}
+            renderConfirmedBanner();
+
+            try {
+                await fetch('/api/signals/close', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ symbol: symbol, signal_id: signalId, exit_price: exitPrice, reason: 'CLOSED_MANUAL' })
+                });
+                log(`[TRADE CLOSED] ${symbol} squared off at ₹${exitPrice}.`, 'INFO');
+            } catch (e) {}
         }
 
         // Audio Synthesizer for Institutional Alert Chime
@@ -925,14 +950,18 @@
                         };
                     });
 
-                    // Keep confirmed trades persistent until Target or Stop Loss is officially hit
-                    Object.keys(activeConfirmedTrades).forEach(sym => {
-                        const tr = activeConfirmedTrades[sym];
-                        // If it has a database signal_id, only delete when the database closes it out (TP or SL hit)
-                        if (tr.signal_id && !activeDbIds.has(tr.signal_id)) {
-                            delete activeConfirmedTrades[sym];
-                        }
-                    });
+                    // If database has no active signals (all closed or market squared off EOD)
+                    if (activeDbList.length === 0) {
+                        activeConfirmedTrades = {};
+                    } else {
+                        // Keep confirmed trades persistent until Target, Stop Loss, or EOD squareoff is hit
+                        Object.keys(activeConfirmedTrades).forEach(sym => {
+                            const tr = activeConfirmedTrades[sym];
+                            if (tr.signal_id && !activeDbIds.has(tr.signal_id)) {
+                                delete activeConfirmedTrades[sym];
+                            }
+                        });
+                    }
 
                     try {
                         localStorage.setItem('activeConfirmedTrades', JSON.stringify(activeConfirmedTrades));

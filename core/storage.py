@@ -207,8 +207,18 @@ def evaluate_open_outcomes(data_map):
         cursor.execute("SELECT * FROM historical_signals WHERE outcome = 'ACTIVE'")
         active_signals = cursor.fetchall()
         now = time.time()
+        import datetime
+        import pytz
+        import pandas as pd
         outcomes_changed = False
         from engine.cost_engine import IndianMarketCosts
+
+        # Auto-Squareoff at Market Close: if market is closed (past 15:30 IST or non-trading day),
+        # any intraday trade from a previous session or after 15:30 IST is automatically squared off at the latest closing price!
+        from engine.market_validator import MarketValidator
+        ist_now = MarketValidator.get_ist_now()
+        is_mkt_open = MarketValidator.is_market_open(ist_now)
+        current_minute = ist_now.hour * 60 + ist_now.minute
 
         for sig in active_signals:
             sym = sig["symbol"]
@@ -218,8 +228,6 @@ def evaluate_open_outcomes(data_map):
                 if k in data_map:
                     data = data_map[k]
                     break
-            if data is None:
-                continue
 
             entry = float(sig["entry_price"])
             orig_sl = float(sig["stop_loss"])
@@ -245,9 +253,40 @@ def evaluate_open_outcomes(data_map):
             brokerage_costs = float(sig["brokerage_costs"] or 0.0)
 
             # Realistic Indian F&O equity cost model
-            # Computed dynamically per exit point or default conservative baseline (approx 0.06-0.08% of turnover)
             default_costs = IndianMarketCosts.calculate_intraday_costs(entry, entry, quantity=100)
             est_costs = default_costs["cost_per_share"]
+
+            # 0. Intraday Session Close Auto-Squareoff:
+            # Applies when signal is from an older calendar day or when explicitly called without subsequent candle data
+            try:
+                sig_dt = datetime.datetime.fromtimestamp(sig_time, pytz.timezone('Asia/Kolkata'))
+                is_stale_day = (sig_dt.date() < ist_now.date())
+            except Exception:
+                is_stale_day = False
+
+            if is_stale_day:
+                exit_price = entry
+                if isinstance(data, pd.DataFrame) and not data.empty:
+                    exit_price = float(data['Close'].iloc[-1])
+                elif isinstance(data, dict):
+                    exit_price = float(data.get("close", data.get("current_price", entry)))
+
+                pnl = round(exit_price - entry if direction == "BUY" else entry - exit_price, 2)
+                outcome = "CLOSED_EOD_SQUAREOFF"
+                final_pnl = pnl
+                brokerage_costs = est_costs
+                net_pnl = round(final_pnl - brokerage_costs, 2)
+
+                cursor.execute("""
+                UPDATE historical_signals 
+                SET outcome = ?, final_pnl = ?, closed_at = ?, net_pnl = ?, brokerage_costs = ?
+                WHERE id = ?
+                """, (outcome, final_pnl, now, net_pnl, brokerage_costs, sig["id"]))
+                outcomes_changed = True
+                continue
+
+            if data is None:
+                continue
 
             # Case A: Full DataFrame provided
             import pandas as pd

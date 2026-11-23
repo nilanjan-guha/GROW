@@ -1051,6 +1051,39 @@ def get_active_signals_endpoint():
     except Exception as e:
         return jsonify({"success": False, "error": str(e), "active_signals": []})
 
+@app.route("/api/signals/close", methods=["POST"])
+def close_signal_endpoint():
+    """Manually or auto-closes an active signal at market close / user dismissal"""
+    try:
+        data = request.get_json() or {}
+        symbol = data.get("symbol")
+        signal_id = data.get("signal_id")
+        exit_price = data.get("exit_price")
+        reason = data.get("reason", "CLOSED_MANUAL")
+
+        from core.storage import get_db_connection
+        conn = get_db_connection()
+        c = conn.cursor()
+
+        if signal_id:
+            c.execute("UPDATE historical_signals SET outcome = ?, closed_at = ? WHERE id = ?", (reason, time.time(), signal_id))
+        elif symbol:
+            c.execute("UPDATE historical_signals SET outcome = ?, closed_at = ? WHERE symbol = ? AND outcome = 'ACTIVE'", (reason, time.time(), symbol))
+        
+        conn.commit()
+        conn.close()
+
+        # Update in-memory active signals map
+        if symbol:
+            clean = symbol.replace(".NS", "")
+            screener_state.get("active_signals_map", {}).pop(symbol, None)
+            screener_state.get("active_signals_map", {}).pop(clean, None)
+            screener_state.get("active_signals_map", {}).pop(f"{clean}.NS", None)
+
+        return jsonify({"success": True, "message": f"Signal for {symbol or signal_id} closed."})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
 @app.route("/api/signals/recent")
 def get_recent_logged_signals():
     """Returns persistent learning signals and trade history"""
