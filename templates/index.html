@@ -106,22 +106,38 @@
                         <span id="decisionPillTag" style="font-size:0.65rem; background:rgba(255,255,255,0.06); padding:2px 8px; border-radius:4px; font-weight:bold; color:var(--neon-cyan);">MONITORING</span>
                     </div>
 
-                    <div class="radar-metrics" style="grid-template-columns: repeat(4, 1fr); gap:8px;">
+                    <div class="radar-metrics">
                         <div class="metric-cell">
                             <div class="m-lbl">Price / VWAP</div>
                             <div class="m-val" id="valPrice" style="color:#fff;">--</div>
                         </div>
                         <div class="metric-cell">
-                            <div class="m-lbl">RSI (14) & RVOL</div>
-                            <div class="m-val yellow" id="valRsi">--</div>
+                            <div class="m-lbl">RSI (14) & RVOL (Volume Multiplier)</div>
+                            <div class="m-val yellow" id="valRsi" style="display:flex; align-items:baseline; gap:6px; flex-wrap:wrap;">--</div>
                         </div>
                         <div class="metric-cell">
                             <div class="m-lbl">EMA 9 / 21 Trend</div>
                             <div class="m-val cyan" id="valEma">--</div>
                         </div>
                         <div class="metric-cell">
-                            <div class="m-lbl">Quant Score & Prob</div>
+                            <div class="m-lbl">Quant Score & Win Prob</div>
                             <div class="m-val green" id="valQuantScore">--</div>
+                        </div>
+                        <div class="metric-cell">
+                            <div class="m-lbl" style="color:var(--neon-green);">Demand Order Block (Buy Zone)</div>
+                            <div class="m-val green" id="valDemandOb" style="font-size:0.80rem;">--</div>
+                        </div>
+                        <div class="metric-cell">
+                            <div class="m-lbl" style="color:var(--neon-red);">Supply Order Block (Sell Ceiling)</div>
+                            <div class="m-val red" id="valSupplyOb" style="font-size:0.80rem;">--</div>
+                        </div>
+                        <div class="metric-cell">
+                            <div class="m-lbl" style="color:var(--neon-cyan);">Buy-Side Liquidity (BSL Pool)</div>
+                            <div class="m-val cyan" id="valBslLiq" style="font-size:0.80rem;">--</div>
+                        </div>
+                        <div class="metric-cell">
+                            <div class="m-lbl" style="color:var(--neon-amber);">Sell-Side Liquidity (SSL Pool)</div>
+                            <div class="m-val yellow" id="valSslLiq" style="font-size:0.80rem;">--</div>
                         </div>
                         <div class="metric-cell" style="grid-column: span 2;">
                             <div class="m-lbl">Institutional Triggers & Bias</div>
@@ -522,11 +538,19 @@
                     if (dealsEl) {
                         const deals = data.large_deals || [];
                         if (deals.length > 0) {
-                            dealsEl.innerHTML = deals.slice(0, 2).map(d => 
-                                `<span style="color:${d.action === 'BUY' ? 'var(--neon-green)' : 'var(--neon-red)'}; font-weight:bold;">[${d.type} ${d.action}]</span> ${d.client || d.name} (${d.qty.toLocaleString()} @ ₹${d.price})`
-                            ).join(' | ');
+                            dealsEl.innerHTML = deals.slice(0, 3).map(d => {
+                                const isBuy = d.action === 'BUY';
+                                const col = isBuy ? 'var(--neon-green)' : 'var(--neon-red)';
+                                const qtyStr = Number(d.qty || 0).toLocaleString();
+                                const prcStr = Number(d.price || 0).toFixed(1);
+                                return `<span style="background:rgba(255,255,255,0.04); border:1px solid ${col}; padding:2px 8px; border-radius:4px; display:inline-flex; align-items:center; gap:5px;">
+                                    <b style="color:${col};">[${d.type || 'DEAL'} ${d.action}]</b> 
+                                    <span style="color:#fff;">${d.client || d.name || 'INSTITUTION'}</span> 
+                                    <span style="color:#94a3b8;">(${qtyStr} shs @ ₹${prcStr})</span>
+                                </span>`;
+                            }).join(' ');
                         } else {
-                            dealsEl.innerText = `No block/bulk deals recorded today for ${sym.replace('.NS', '') || 'selected stock'}.`;
+                            dealsEl.innerHTML = `<span style="color:#94a3b8;">No block or bulk deals recorded today for ${sym.replace('.NS', '') || 'selected stock'}. Order flow from regular exchange book.</span>`;
                         }
                     }
                 }
@@ -1143,8 +1167,50 @@
 
         function renderRadarData(symbol, smc) {
             document.getElementById('valPrice').innerText = `₹${Number(smc.current_price).toFixed(1)} (VWAP: ₹${smc.vwap})`;
-            document.getElementById('valRsi').innerText = `RSI: ${smc.rsi} | VOL: ${smc.vol_multiplier}x`;
+            
+            const rvolVal = Number(smc.vol_multiplier || 1.0).toFixed(2);
+            document.getElementById('valRsi').innerHTML = `<span>RSI: <b style="color:#fff;">${smc.rsi}</b></span> <span style="color:#64748b;">|</span> <span>VOL: <b style="color:var(--neon-green);">${rvolVal}x</b></span>`;
             document.getElementById('valEma').innerText = `EMA9: ${smc.ema9} | EMA21: ${smc.ema21}`;
+
+            // Demand & Supply Order Blocks
+            const demEl = document.getElementById('valDemandOb');
+            if (demEl) {
+                if (smc.nearest_demand_ob && smc.nearest_demand_ob.top) {
+                    demEl.innerText = `₹${Number(smc.nearest_demand_ob.bottom).toFixed(1)} - ₹${Number(smc.nearest_demand_ob.top).toFixed(1)}`;
+                } else {
+                    demEl.innerText = 'No Active Demand OB';
+                }
+            }
+
+            const supEl = document.getElementById('valSupplyOb');
+            if (supEl) {
+                if (smc.nearest_supply_ob && smc.nearest_supply_ob.top) {
+                    supEl.innerText = `₹${Number(smc.nearest_supply_ob.bottom).toFixed(1)} - ₹${Number(smc.nearest_supply_ob.top).toFixed(1)}`;
+                } else {
+                    supEl.innerText = 'No Active Supply OB';
+                }
+            }
+
+            // Liquidity Levels (BSL / SSL)
+            const bslEl = document.getElementById('valBslLiq');
+            if (bslEl) {
+                if (smc.bsl_liquidity) {
+                    const dist = (smc.bsl_liquidity - smc.current_price).toFixed(1);
+                    bslEl.innerText = `₹${Number(smc.bsl_liquidity).toFixed(1)} (${dist >= 0 ? '+' : ''}${dist})`;
+                } else {
+                    bslEl.innerText = 'Pool Untapped';
+                }
+            }
+
+            const sslEl = document.getElementById('valSslLiq');
+            if (sslEl) {
+                if (smc.ssl_liquidity) {
+                    const dist = (smc.current_price - smc.ssl_liquidity).toFixed(1);
+                    sslEl.innerText = `₹${Number(smc.ssl_liquidity).toFixed(1)} (-${dist})`;
+                } else {
+                    sslEl.innerText = 'Pool Untapped';
+                }
+            }
             
             // Dynamic Telemetry updates
             const isBull = smc.action && smc.action.includes('BUY');
