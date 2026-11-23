@@ -140,18 +140,18 @@
                 <!-- Top Ranked Opportunities Bar (Bullish & Bearish F&O Opportunities) -->
                 <div id="rankedOpportunitiesSection">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                        <span style="font-family:'Orbitron', monospace; font-size:0.75rem; font-weight:bold; color:var(--text-primary); display:flex; align-items:center; gap:6px;">
+                        <span style="font-family:'Inter', sans-serif; font-size:0.75rem; font-weight:bold; color:var(--text-primary); display:flex; align-items:center; gap:6px;">
                             🎯 TOP SECTOR OPPORTUNITY RANKINGS (Top 3 Bullish & Bearish)
                         </span>
                         <span style="font-family:'JetBrains Mono', monospace; font-size:0.65rem; color:var(--neon-cyan);" id="rankSyncTime">SYNCING...</span>
                     </div>
                     <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
                         <div id="rankedBullishList" style="display:flex; flex-direction:column; gap:6px;">
-                            <div style="font-family:'Orbitron', monospace; font-size:0.68rem; font-weight:bold; color:var(--neon-green); border-bottom:1px solid rgba(0,255,170,0.3); padding-bottom:3px;">▲ TOP 3 BULLISH (PRE-BREAKOUT / CONFIRMED)</div>
+                            <div style="font-family:'Inter', sans-serif; font-size:0.68rem; font-weight:bold; color:var(--neon-green); border-bottom:1px solid rgba(0,255,170,0.3); padding-bottom:3px;">▲ TOP 3 BULLISH (PRE-BREAKOUT / CONFIRMED)</div>
                             <div style="font-size:0.7rem; color:var(--text-muted);">Evaluating F&O universe...</div>
                         </div>
                         <div id="rankedBearishList" style="display:flex; flex-direction:column; gap:6px;">
-                            <div style="font-family:'Orbitron', monospace; font-size:0.68rem; font-weight:bold; color:var(--neon-red); border-bottom:1px solid rgba(255,51,102,0.3); padding-bottom:3px;">▼ TOP 3 BEARISH (PRE-BREAKDOWN / CONFIRMED)</div>
+                            <div style="font-family:'Inter', sans-serif; font-size:0.68rem; font-weight:bold; color:var(--neon-red); border-bottom:1px solid rgba(255,51,102,0.3); padding-bottom:3px;">▼ TOP 3 BEARISH (PRE-BREAKDOWN / CONFIRMED)</div>
                             <div style="font-size:0.7rem; color:var(--text-muted);">Evaluating F&O universe...</div>
                         </div>
                     </div>
@@ -850,7 +850,7 @@
             const topBull = ranked.top_bullish || [];
             const topBear = ranked.top_bearish || [];
 
-            let bullHtml = '<div style="font-family:\'Orbitron\', monospace; font-size:0.68rem; font-weight:bold; color:var(--neon-green); border-bottom:1px solid rgba(0,255,170,0.3); padding-bottom:3px;">▲ TOP 3 BULLISH (PRE-BREAKOUT / CONFIRMED)</div>';
+            let bullHtml = '<div style="font-family:\'Inter\', sans-serif; font-size:0.68rem; font-weight:bold; color:var(--neon-green); border-bottom:1px solid rgba(0,255,170,0.3); padding-bottom:3px;">▲ TOP 3 BULLISH (PRE-BREAKOUT / CONFIRMED)</div>';
             if (topBull.length === 0) {
                 bullHtml += '<div style="font-size:0.7rem; color:var(--text-muted);">No high-conviction bullish setups currently qualifying.</div>';
             } else {
@@ -873,8 +873,8 @@
                     bullHtml += `
                     <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(0,255,170,0.25); border-radius:4px; padding:6px 8px; cursor:pointer;" onclick="selectStock('${sym}')" title="Click to view ${sym} in Radar">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <span style="font-family:\'Orbitron\', monospace; font-size:0.75rem; font-weight:bold; color:#fff;">#${i+1} ${sym.replace('.NS', '')} <span style="font-size:0.65rem; color:${stageColor};">(${c.stage})</span></span>
-                            <span style="font-family:\'Orbitron\', monospace; font-size:0.7rem; color:var(--neon-green); font-weight:bold;">+${c.change_pct}%</span>
+                            <span style="font-family:\'Inter\', sans-serif; font-size:0.75rem; font-weight:bold; color:#fff;">#${i+1} ${sym.replace('.NS', '')} <span style="font-size:0.65rem; color:${stageColor};">(${c.stage})</span></span>
+                            <span style="font-family:\'Inter\', sans-serif; font-size:0.7rem; color:var(--neon-green); font-weight:bold;">+${c.change_pct}%</span>
                         </div>
                         <div style="font-size:0.65rem; color:var(--text-muted); display:flex; justify-content:space-between; margin-top:2px;">
                             <span>Score: ${c.conviction_score}/100 | ${reasons}</span>
@@ -886,7 +886,7 @@
             }
             bullContainer.innerHTML = bullHtml;
 
-            let bearHtml = '<div style="font-family:\'Orbitron\', monospace; font-size:0.68rem; font-weight:bold; color:var(--neon-red); border-bottom:1px solid rgba(255,51,102,0.3); padding-bottom:3px;">▼ TOP 3 BEARISH (PRE-BREAKDOWN / CONFIRMED)</div>';
+            let bearHtml = '<div style="font-family:\'Inter\', sans-serif; font-size:0.68rem; font-weight:bold; color:var(--neon-red); border-bottom:1px solid rgba(255,51,102,0.3); padding-bottom:3px;">▼ TOP 3 BEARISH (PRE-BREAKDOWN / CONFIRMED)</div>';
             if (topBear.length === 0) {
                 bearHtml += '<div style="font-size:0.7rem; color:var(--text-muted);">No high-conviction bearish setups currently qualifying.</div>';
             } else {
@@ -909,8 +909,8 @@
                     bearHtml += `
                     <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,51,102,0.25); border-radius:4px; padding:6px 8px; cursor:pointer;" onclick="selectStock('${sym}')" title="Click to view ${sym} in Radar">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <span style="font-family:\'Orbitron\', monospace; font-size:0.75rem; font-weight:bold; color:#fff;">#${i+1} ${sym.replace('.NS', '')} <span style="font-size:0.65rem; color:${stageColor};">(${c.stage})</span></span>
-                            <span style="font-family:\'Orbitron\', monospace; font-size:0.7rem; color:var(--neon-red); font-weight:bold;">${c.change_pct}%</span>
+                            <span style="font-family:\'Inter\', sans-serif; font-size:0.75rem; font-weight:bold; color:#fff;">#${i+1} ${sym.replace('.NS', '')} <span style="font-size:0.65rem; color:${stageColor};">(${c.stage})</span></span>
+                            <span style="font-family:\'Inter\', sans-serif; font-size:0.7rem; color:var(--neon-red); font-weight:bold;">${c.change_pct}%</span>
                         </div>
                         <div style="font-size:0.65rem; color:var(--text-muted); display:flex; justify-content:space-between; margin-top:2px;">
                             <span>Score: ${c.conviction_score}/100 | ${reasons}</span>
