@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from engine.opportunity_ranking_engine import OpportunityRankingEngine
 from engine.market_validator import MarketValidator
+from strategies.institutional_engine import InstitutionalStrategyEngine
 
 def run_screener_replay(sample_symbols=None, days="1mo"):
     import yfinance as yf
@@ -50,10 +51,11 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
         "mfes": [],
         "maes": [],
         "stage_counts": {"ENTRY READY": 0, "IGNITION": 0, "PREPARING": 0, "OBSERVING": 0, "WATCHLIST": 0},
-        "missed_moves_count": 0,
-        "total_qualifying_market_moves": 0,
-        "detected_pre_moves": 0,
-        "missed_details": [],
+        "distinct_movement_events": 0,
+        "detected_movement_events": 0,
+        "detection_lead_times_bars": [],
+        "false_positive_trades": 0,
+        "true_positive_trades": 0,
         "in_sample_wins": 0,
         "in_sample_trades": 0,
         "out_of_sample_wins": 0,
@@ -87,6 +89,27 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
             vwap_day = cum_vp / cum_vol.replace(0, np.nan)
             vwap_series.loc[day_mask] = vwap_day.fillna(day_df["Close"])
 
+        # Precompute distinct future market movement events (>= 1.25% swing) without overlap (Item 4)
+        # Identify distinct non-overlapping peaks and troughs:
+        event_indices = []
+        skip_until = 0
+        close_vals = df["Close"].values
+        for e_i in range(25, len(df) - 12):
+            if e_i < skip_until:
+                continue
+            sub_window = df.iloc[e_i:e_i+12]
+            c_base = close_vals[e_i]
+            max_move_pct = max(
+                (sub_window["High"].max() - c_base) / c_base * 100,
+                (c_base - sub_window["Low"].min()) / c_base * 100
+            )
+            if max_move_pct >= 1.25:
+                event_indices.append(e_i)
+                skip_until = e_i + 12  # Skip forward to deduplicate into distinct movement events
+
+        # History of stages recorded per index for genuine lead-time measurement
+        scanned_stages = {}
+
         current_open_trade = None
         # Replay candle by candle from index 25 onwards
         for idx in range(25, len(df) - 5):
@@ -104,21 +127,25 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
             if nifty_sub.empty:
                 continue
 
-            curr_c = float(window_df["Close"].iloc[-1])
-            # Simulated realistic structural risk levels based on swing extremes or ATR
-            tr = (window_df["High"] - window_df["Low"]).iloc[-14:].mean() or (curr_c * 0.01)
-            opp_eval = {
-                "is_viable": True,
-                "potential_pct": 1.2,
-                "risk_reward_ratio": 1.5,
-                "stop_loss": round(curr_c - tr * 1.0, 2),
-                "suggested_sl": round(curr_c - tr * 1.0, 2),
-                "tp1": round(curr_c + tr * 1.5, 2),
-                "suggested_tp1": round(curr_c + tr * 1.5, 2),
-                "tp2": round(curr_c + tr * 2.5, 2),
-                "suggested_tp2": round(curr_c + tr * 2.5, 2),
-                "exhaustion_risk": "LOW"
-            }
+            # Evaluate genuine institutional risk levels identical to live app pipeline (Item 2)
+            inst_eval = InstitutionalStrategyEngine.evaluate_strategies(
+                df=window_df,
+                sector_bias="NEUTRAL"
+            )
+            opp_eval = None
+            if inst_eval and inst_eval.get("is_viable"):
+                opp_eval = {
+                    "is_viable": inst_eval.get("is_viable", False),
+                    "potential_pct": inst_eval.get("potential_pct", 0.0),
+                    "risk_reward_ratio": inst_eval.get("risk_reward_ratio", 0.0),
+                    "stop_loss": inst_eval.get("suggested_sl"),
+                    "suggested_sl": inst_eval.get("suggested_sl"),
+                    "tp1": inst_eval.get("suggested_tp1"),
+                    "suggested_tp1": inst_eval.get("suggested_tp1"),
+                    "tp2": inst_eval.get("suggested_tp2"),
+                    "suggested_tp2": inst_eval.get("suggested_tp2"),
+                    "exhaustion_risk": inst_eval.get("exhaustion_risk", "LOW")
+                }
                 
             res = OpportunityRankingEngine.evaluate_stock_opportunity(
                 stock_df=window_df,
@@ -134,30 +161,13 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
             if not res:
                 stats["watch_only_candidates"] += 1
                 stats["stage_counts"]["DISQUALIFIED_OR_MISALIGNED"] = stats["stage_counts"].get("DISQUALIFIED_OR_MISALIGNED", 0) + 1
+                scanned_stages[idx] = "DISQUALIFIED"
                 continue
 
             stage = res.get("stage", "WATCHLIST")
+            scanned_stages[idx] = stage
             stats["stage_counts"][stage] = stats["stage_counts"].get(stage, 0) + 1
             is_actionable = res.get("is_actionable", False)
-            
-            # 4. Missed Move Benchmark Tracking (True Recall Calculation):
-            # A qualifying market move is defined as a subsequent 1-hour move > 1.25% in either direction
-            if idx + 12 <= len(df):
-                subsequent_window = df.iloc[idx:idx+12]
-                curr_c_val = float(window_df["Close"].iloc[-1])
-                max_subseq_high = float(subsequent_window["High"].max())
-                min_subseq_low = float(subsequent_window["Low"].min())
-                
-                bull_move_pct = (max_subseq_high - curr_c_val) / curr_c_val * 100
-                bear_move_pct = (curr_c_val - min_subseq_low) / curr_c_val * 100
-                
-                if bull_move_pct >= 1.25 or bear_move_pct >= 1.25:
-                    stats["total_qualifying_market_moves"] += 1
-                    # Was the stock flagged in PREPARING, OBSERVING, IGNITION, or ENTRY READY?
-                    if stage in ("ENTRY READY", "IGNITION", "PREPARING", "OBSERVING"):
-                        stats["detected_pre_moves"] += 1
-                    else:
-                        stats["missed_moves_count"] += 1
 
             if not is_actionable:
                 stats["watch_only_candidates"] += 1
@@ -175,14 +185,28 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
             next_candle = df.iloc[idx]
             entry_price = float(next_candle["Open"])
             
+            # Assign direction first before using in slippage calculation! (Item 1)
+            raw_dir = res.get("direction", "BULLISH")
+            direction = "BULLISH" if raw_dir in ("BULLISH", "BUY", "CALL", "LONG") else ("BEARISH" if raw_dir in ("BEARISH", "SELL", "PUT", "SHORT") else "NEUTRAL")
+            if direction == "NEUTRAL":
+                continue
+
             # 5. Realistic Execution Simulation (Item 6):
             # Model execution price with realistic bid-ask spread and entry slippage (0.03% on entry)
             entry_slippage_pct = 0.03
             actual_entry_price = entry_price * (1.0 + entry_slippage_pct/100) if direction == "BULLISH" else entry_price * (1.0 - entry_slippage_pct/100)
             
-            sl = res.get("suggested_sl") or (actual_entry_price * 0.99)
-            tp1 = res.get("suggested_tp1") or (actual_entry_price * 1.015)
-            direction = res.get("direction", "BULLISH")
+            # Correct directional SL and TP fallback logic (Item 3):
+            # Bullish: SL < Entry < TP1
+            # Bearish: SL > Entry > TP1
+            cand_sl = res.get("suggested_sl")
+            cand_tp1 = res.get("suggested_tp1")
+            if direction == "BULLISH":
+                sl = cand_sl if (cand_sl and cand_sl < actual_entry_price) else (actual_entry_price * 0.99)
+                tp1 = cand_tp1 if (cand_tp1 and cand_tp1 > actual_entry_price) else (actual_entry_price * 1.015)
+            else:
+                sl = cand_sl if (cand_sl and cand_sl > actual_entry_price) else (actual_entry_price * 1.01)
+                tp1 = cand_tp1 if (cand_tp1 and cand_tp1 < actual_entry_price) else (actual_entry_price * 0.985)
             
             # Realistic Indian Trading Cost Model:
             # Brokerage: ₹20 or 0.03% per order (approx 0.03%)
@@ -318,6 +342,24 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
                 if is_win_trade:
                     stats["in_sample_wins"] += 1
 
+        # Post-process distinct movement events for this stock to calculate genuine recall & lead time (Items 4 & 5)
+        for ev_idx in event_indices:
+            stats["distinct_movement_events"] += 1
+            # Check if scanner flagged the move in the 1 to 6 candles (5 to 30 mins) leading up to event start
+            detected = False
+            lead_time = 0
+            for lead in range(1, 7):
+                check_idx = ev_idx - lead
+                if check_idx in scanned_stages:
+                    stg = scanned_stages[check_idx]
+                    if stg in ("ENTRY READY", "IGNITION", "PREPARING", "OBSERVING"):
+                        detected = True
+                        lead_time = lead
+                        break
+            if detected:
+                stats["detected_movement_events"] += 1
+                stats["detection_lead_times_bars"].append(lead_time)
+
     print("\n" + "="*50)
     print("        5-MINUTE REPLAY BACKTEST SUMMARY")
     print("="*50)
@@ -326,21 +368,28 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
     print(f"Actionable Trades:        {stats['trades_executed']}")
     print(f"Stage Breakdown:          {stats['stage_counts']}")
     
-    # Missed-Move Recall & False-Positive Rate:
-    if stats["total_qualifying_market_moves"] > 0:
-        recall_pct = round(stats["detected_pre_moves"] / stats["total_qualifying_market_moves"] * 100, 1)
-        missed_pct = round(stats["missed_moves_count"] / stats["total_qualifying_market_moves"] * 100, 1)
-        print(f"Qualifying Moves (>1.25%):{stats['total_qualifying_market_moves']}")
-        print(f"Pre-Move Recall Rate:     {recall_pct}% ({stats['detected_pre_moves']} caught early)")
-        print(f"Missed-Move Rate:         {missed_pct}% ({stats['missed_moves_count']} missed)")
+    # Genuine Event-Based Missed-Move Recall & Detection Lead Time (Items 4 & 5):
+    if stats["distinct_movement_events"] > 0:
+        recall_pct = round(stats["detected_movement_events"] / stats["distinct_movement_events"] * 100, 1)
+        missed_pct = round(100.0 - recall_pct, 1)
+        avg_lead = round(np.mean(stats["detection_lead_times_bars"]) * 5, 1) if stats["detection_lead_times_bars"] else 0.0
+        avg_lead_bars = round(np.mean(stats["detection_lead_times_bars"]), 1) if stats["detection_lead_times_bars"] else 0.0
+        print(f"Distinct Movement Events: {stats['distinct_movement_events']}")
+        print(f"Pre-Move Event Recall:    {recall_pct}% ({stats['detected_movement_events']} caught in advance)")
+        print(f"Missed Event Rate:        {missed_pct}%")
+        print(f"Average Lead Time:        {avg_lead} minutes ({avg_lead_bars} completed 5m candles before move)")
 
     if stats["trades_executed"] > 0:
         win_rate = round(stats["wins"] / stats["trades_executed"] * 100, 1)
-        fp_rate = round(stats["losses"] / stats["trades_executed"] * 100, 1)
+        # Redefined False Positive Rate: trades that failed to generate favorable expansion > 0.5% (Item 6)
+        true_positives = sum(1 for mfe in stats["mfes"] if mfe >= 0.70)
+        false_positives = len(stats["mfes"]) - true_positives
+        fp_rate = round(false_positives / stats["trades_executed"] * 100, 1)
         avg_mfe = round(np.mean(stats["mfes"]), 2) if stats["mfes"] else 0.0
         avg_mae = round(np.mean(stats["maes"]), 2) if stats["maes"] else 0.0
         print(f"Win Rate (After Costs):   {win_rate}% ({stats['wins']} Wins / {stats['losses']} Losses)")
-        print(f"False Positive Rate:      {fp_rate}%")
+        print(f"True Positive Rate (MFE >= 0.7%): {round(true_positives/stats['trades_executed']*100, 1)}% ({true_positives}/{stats['trades_executed']})")
+        print(f"False Positive Rate:      {fp_rate}% ({false_positives} non-expanding triggers)")
         print(f"Net PnL (After Costs):    {round(stats['total_pnl_pct'], 2)}%")
         print(f"Average MFE (In-Trade):   +{avg_mfe}%")
         print(f"Average MAE (In-Trade):   -{avg_mae}%")

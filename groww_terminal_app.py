@@ -1342,16 +1342,31 @@ def log_confirmed_signal_endpoint():
         if cand_stage not in ("CONFIRMED", "IGNITION", "ENTRY READY"):
             return jsonify({"success": False, "error": f"Server rejection: Stage {cand_stage} is strictly watch-only."}), 403
 
-        # 2. Revalidate completed 5m candle freshness: must match the active ranked candle timestamp
+        # 2. Revalidate completed 5m candle freshness: must match the actual latest completed 5-minute market data
+        # Never trust client's timestamp or an unverified candidate timestamp!
+        nifty_cached = screener_state.get("raw_market_cache", {}).get("^NSEI", {})
+        nifty_df = nifty_cached.get("df")
+        latest_market_completed_ts = None
+        if nifty_df is not None and not nifty_df.empty:
+            nifty_val = MarketValidator.validate_feed_freshness(nifty_df, max_delay_seconds=300, candle_duration_seconds=300)
+            is_nifty_comp = nifty_val.get("is_completed_candle", False)
+            eval_nifty = nifty_df if is_nifty_comp else nifty_df.iloc[:-1]
+            if not eval_nifty.empty:
+                latest_market_completed_ts = str(eval_nifty.index[-1])
+
         server_ranked_ts = screener_state.get("ranked_candle_ts")
         cand_ts = matching_cand.get("candle_ts")
         client_candle_ts = data.get("candle_ts")
-        
-        # Mandatory server validation: Reject missing timestamp or mismatch against server's active completed candle
-        active_server_ts = server_ranked_ts or cand_ts
+
+        # Active server completed timestamp established strictly from market validator or verified ranked cache
+        active_server_ts = latest_market_completed_ts or server_ranked_ts or cand_ts
         if not active_server_ts:
             return jsonify({"success": False, "error": "Server rejection: Server has not established an active completed candle baseline."}), 409
         
+        # Verify candidate itself belongs to this completed market candle
+        if cand_ts and latest_market_completed_ts and str(cand_ts).strip() != str(latest_market_completed_ts).strip():
+            return jsonify({"success": False, "error": f"Server rejection: Candidate candle ({cand_ts}) is stale compared to latest completed market candle ({latest_market_completed_ts})."}), 409
+
         if not client_candle_ts or str(client_candle_ts).strip() == "":
             return jsonify({"success": False, "error": "Server rejection: Missing candle timestamp in trade submission."}), 400
         
@@ -1406,17 +1421,30 @@ def log_confirmed_signal_endpoint():
             return jsonify({"success": False, "error": "Server rejection: Invalid non-positive execution prices."}), 400
 
         # Validate that:
-        # - BUY: SL is below entry; targets are above entry.
-        # - SELL: SL is above entry; targets are below entry.
+        # - BUY: SL is below entry; targets (TP1 & TP2) are above entry.
+        # - SELL: SL is above entry; targets (TP1 & TP2) are below entry.
         # - Risk/reward meets configured minimum (>= 1.20).
+        validated_tp2 = None
+        if server_tp2 is not None:
+            try:
+                tp2_num = float(server_tp2)
+                if tp2_num > 0:
+                    validated_tp2 = tp2_num
+            except (ValueError, TypeError):
+                validated_tp2 = None
+
         if server_direction == "BULLISH":
             if not (sl_val < entry_val and tp1_val > entry_val):
                 return jsonify({"success": False, "error": f"Server rejection: Structural boundary violation for BULLISH (SL {sl_val} must be < Entry {entry_val} < TP1 {tp1_val})."}), 400
+            if validated_tp2 is not None and validated_tp2 <= tp1_val:
+                return jsonify({"success": False, "error": f"Server rejection: Target 2 ({validated_tp2}) must be strictly higher than Target 1 ({tp1_val}) for BULLISH."}), 400
             risk = entry_val - sl_val
             reward = tp1_val - entry_val
         elif server_direction == "BEARISH":
             if not (sl_val > entry_val and tp1_val < entry_val):
                 return jsonify({"success": False, "error": f"Server rejection: Structural boundary violation for BEARISH (SL {sl_val} must be > Entry {entry_val} > TP1 {tp1_val})."}), 400
+            if validated_tp2 is not None and validated_tp2 >= tp1_val:
+                return jsonify({"success": False, "error": f"Server rejection: Target 2 ({validated_tp2}) must be strictly lower than Target 1 ({tp1_val}) for BEARISH."}), 400
             risk = sl_val - entry_val
             reward = entry_val - tp1_val
         else:
@@ -1436,7 +1464,7 @@ def log_confirmed_signal_endpoint():
             "entry_price": entry_val,
             "stop_loss": sl_val,
             "target_1": tp1_val,
-            "target_2": float(server_tp2) if server_tp2 else None,
+            "target_2": validated_tp2,
             "score": matching_cand.get("conviction_score", 75),
             "confidence": f"{matching_cand.get('confirmation_score', 75)}%",
             "catalyst": "SMC Order Flow Ignition",

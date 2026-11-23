@@ -544,7 +544,8 @@ class OpportunityRankingEngine:
         is_bull_early_rs_accel = (rs_accel_3 > 0.15 and (curr_c >= curr_o or vol_consecutive_rise))
         is_bear_early_rs_accel = (rs_accel_3 < -0.15 and (curr_c <= curr_o or vol_consecutive_rise))
 
-        is_volume_burst_pre_trend = (rvol >= 1.5 and is_expanding_now)
+        is_bull_volume_burst = (rvol >= 1.5 and is_expanding_now and curr_c > curr_o)
+        is_bear_volume_burst = (rvol >= 1.5 and is_expanding_now and curr_c < curr_o)
 
         has_bull_early_momentum = (
             direction == "BULLISH" and (
@@ -552,7 +553,7 @@ class OpportunityRankingEngine:
                 is_bull_accumulation or
                 is_bull_sweep_reversal or
                 is_bull_early_rs_accel or
-                is_volume_burst_pre_trend
+                is_bull_volume_burst
             )
         )
         has_bear_early_momentum = (
@@ -561,7 +562,7 @@ class OpportunityRankingEngine:
                 is_bear_distribution or
                 is_bear_sweep_reversal or
                 is_bear_early_rs_accel or
-                is_volume_burst_pre_trend
+                is_bear_volume_burst
             )
         )
 
