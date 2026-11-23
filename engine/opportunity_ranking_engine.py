@@ -465,11 +465,11 @@ class OpportunityRankingEngine:
         # Cannot qualify on weak level break alone! Requires candle close-through level AND volume expansion (RVOL >= 1.25 or expanding range >= 1.4x ATR)
         is_bull_ignition = direction == "BULLISH" and (
             ((is_broken_above_orh or is_broken_above_pdh) and curr_c > curr_o and (rvol >= 1.25 or is_expanding_now)) or
-            (is_expanding_now and curr_c > curr_o and rvol >= 1.4 and curr_c > curr_vwap)
+            (is_expanding_now and curr_c > curr_o and rvol >= 1.4 and (above_vwap or vwap is None))
         )
         is_bear_ignition = direction == "BEARISH" and (
             ((is_broken_below_orl or is_broken_below_pdl) and curr_c < curr_o and (rvol >= 1.25 or is_expanding_now)) or
-            (is_expanding_now and curr_c < curr_o and rvol >= 1.4 and curr_c < curr_vwap)
+            (is_expanding_now and curr_c < curr_o and rvol >= 1.4 and (below_vwap or vwap is None))
         )
 
         # Strict PREPARING Requirement:
