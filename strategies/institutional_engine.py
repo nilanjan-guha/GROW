@@ -29,6 +29,8 @@ class InstitutionalStrategyEngine:
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
 
+        df = df.copy()
+
         # 1. Date isolation for session-accurate intraday calculations
         df['Date'] = df.index.date
         unique_dates = sorted(df['Date'].unique())
