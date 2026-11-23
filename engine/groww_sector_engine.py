@@ -172,6 +172,7 @@ class GrowwSectorEngine:
                     "symbol": f"{code}.NS",
                     "price": ltp,
                     "change": pct,
+                    "velocity": round(max(1.0, abs(pct) * 1.3), 1),
                     "relative_strength": round(pct - sec_pct, 2)
                 })
             elif not is_bullish and pct < 0:
@@ -179,6 +180,7 @@ class GrowwSectorEngine:
                     "symbol": f"{code}.NS",
                     "price": ltp,
                     "change": pct,
+                    "velocity": round(max(1.0, abs(pct) * 1.3), 1),
                     "relative_strength": round(pct - sec_pct, 2)
                 })
 

@@ -35,8 +35,20 @@ class FNOMomentumFilter:
 
             curr_c = float(c.iloc[-1])
             curr_o = float(o.iloc[-1])
-            first_o = float(o.iloc[0])
-            change_pct = round(((curr_c - first_o) / first_o) * 100, 2) if first_o > 0 else 0.0
+
+            # Intraday calculation: Compare against the actual start of the latest trading session
+            df_temp = cdf.copy()
+            if not pd.api.types.is_datetime64_any_dtype(df_temp.index):
+                df_temp.index = pd.to_datetime(df_temp.index)
+            df_temp['Date'] = df_temp.index.date
+            dates = sorted(df_temp['Date'].unique())
+            if dates:
+                today_df = df_temp[df_temp['Date'] == dates[-1]]
+                session_o = float(today_df['Open'].iloc[0]) if not today_df.empty else float(o.iloc[0])
+            else:
+                session_o = float(o.iloc[0])
+
+            change_pct = round(((curr_c - session_o) / session_o) * 100, 2) if session_o > 0 else 0.0
 
             # 1. Volume & Turnover Filter (Reject dead contracts, but don't over-filter)
             recent_v = v.iloc[-10:].mean()

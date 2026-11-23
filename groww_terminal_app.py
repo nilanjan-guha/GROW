@@ -666,9 +666,15 @@ def smc_scan():
     try:
         # Check raw market cache for pre-fetched dataframe to minimize network latency
         raw_cached = screener_state["raw_market_cache"].get(symbol)
-        if raw_cached and (now - raw_cached["timestamp"] < 120) and raw_cached.get("df") is not None:
+        if raw_cached and (now - raw_cached.get("timestamp", 0) < 120) and raw_cached.get("df") is not None:
             df = raw_cached["df"]
-            res = raw_cached["data"].copy()
+            if "data" in raw_cached and raw_cached["data"]:
+                res = raw_cached["data"].copy()
+            else:
+                res = evaluate_explosive_momentum(df, symbol)
+                if not res:
+                    return jsonify({"success": False, "error": "Insufficient market data"}), 400
+                raw_cached["data"] = res
         else:
             df = yf.download(symbol, period="5d", interval="5m", progress=False)
             if isinstance(df.columns, pd.MultiIndex):
@@ -1168,11 +1174,21 @@ if __name__ == "__main__":
 
         bull_watchlist = []
         for b in bull_sectors:
-            bull_watchlist.extend(b.get("top_5", []))
+            for stk in b.get("top_5", []):
+                bull_watchlist.append({
+                    "symbol": stk["symbol"],
+                    "change": stk["change"],
+                    "velocity": stk.get("velocity", round(max(1.0, abs(stk["change"]) * 1.3), 1))
+                })
 
         bear_watchlist = []
         for b in bear_sectors:
-            bear_watchlist.extend(b.get("top_5", []))
+            for stk in b.get("top_5", []):
+                bear_watchlist.append({
+                    "symbol": stk["symbol"],
+                    "change": stk["change"],
+                    "velocity": stk.get("velocity", round(max(1.0, abs(stk["change"]) * 1.3), 1))
+                })
 
         screener_state["bullish_momentum_watchlist"] = bull_watchlist
         screener_state["bearish_momentum_watchlist"] = bear_watchlist
