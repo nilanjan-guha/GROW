@@ -966,8 +966,11 @@ def get_ranked_opportunities_endpoint():
     try:
         allowed_sector_symbols = set([x["symbol"] for x in (screener_state.get("bullish_momentum_watchlist", []) + screener_state.get("bearish_momentum_watchlist", []))])
         
+        now = time.time()
         cached_ranked = screener_state.get("ranked_opportunities")
-        if cached_ranked:
+        cached_ts = screener_state.get("ranked_opportunities_ts", 0)
+        # Reject stale ranked cache (older than 180 seconds or invalid)
+        if cached_ranked and (now - cached_ts < 180):
             filtered_bull = [c for c in cached_ranked.get("top_bullish", []) if not allowed_sector_symbols or c.get("symbol") in allowed_sector_symbols]
             filtered_bear = [c for c in cached_ranked.get("top_bearish", []) if not allowed_sector_symbols or c.get("symbol") in allowed_sector_symbols]
             filtered_ready = [c for c in cached_ranked.get("entry_ready", []) if not allowed_sector_symbols or c.get("symbol") in allowed_sector_symbols]
@@ -1020,8 +1023,10 @@ def get_ranked_opportunities_endpoint():
                 sec_data = screener_state.get("sectors", {}).get(sec_name, {})
                 sec_chg = sec_data.get("change", 0.0)
             
-            # Retrieve enriched cache if present
-            enriched = screener_state.get("enriched_signals_cache", {}).get(sym, {}).get("data", {})
+            # Retrieve enriched cache if present and fresh (within 300s)
+            enriched_entry = screener_state.get("enriched_signals_cache", {}).get(sym, {})
+            enriched_ts = enriched_entry.get("timestamp", 0)
+            enriched = enriched_entry.get("data", {}) if (now - enriched_ts < 300) else {}
             opp_eval = {
                 "is_viable": enriched.get("is_viable", False),
                 "potential_pct": enriched.get("potential_pct", 0.0),
@@ -1043,8 +1048,23 @@ def get_ranked_opportunities_endpoint():
             if eval_res:
                 candidates.append(eval_res)
 
+        if not candidates:
+            # Explicit fresh scan empty state: clear old memory ranking so stale candidates never persist
+            screener_state["ranked_opportunities"] = {
+                "top_bullish": [], "top_bearish": [], "entry_ready": [], "preparing": []
+            }
+            screener_state["ranked_opportunities_ts"] = now
+            return jsonify({
+                "success": True,
+                "status": "NO_TRADE",
+                "ranked": {
+                    "top_bullish": [], "top_bearish": [], "entry_ready": [], "preparing": []
+                }
+            })
+
         ranked = OpportunityRankingEngine.rank_top_opportunities(candidates, top_n=3)
         screener_state["ranked_opportunities"] = ranked
+        screener_state["ranked_opportunities_ts"] = now
         return jsonify({"success": True, "ranked": ranked})
     except Exception as e:
         return jsonify({"success": False, "error": str(e), "ranked": {"top_bullish": [], "top_bearish": []}})

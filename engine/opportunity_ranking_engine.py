@@ -328,27 +328,34 @@ class OpportunityRankingEngine:
         ) if opp_eval else False
 
         # Structural numerical SL/TP and actual mathematical RR validation:
-        # 1. SL must be positive number
+        # 1. SL and TP must be finite, positive numbers (not NaN or Inf)
         # 2. For BUY: SL < curr_c and TP1 > curr_c
         # 3. For SELL: SL > curr_c and TP1 < curr_c
-        # 4. Computed RR = abs(TP1 - curr_c) / abs(curr_c - SL) >= 1.30
+        # 4. Computed RR = (reward / risk) >= 1.30 without lossy premature rounding
+        import math
         computed_rr = 0.0
         has_valid_structural_risk = False
         if sl is not None and tp1 is not None:
             try:
                 sl_val = float(sl)
                 tp1_val = float(tp1)
-                if sl_val > 0 and tp1_val > 0:
-                    if direction == "BULLISH" and sl_val < curr_c and tp1_val > curr_c:
-                        risk = curr_c - sl_val
-                        reward = tp1_val - curr_c
-                        computed_rr = round(reward / risk, 2) if risk > 0 else 0.0
-                        has_valid_structural_risk = (computed_rr >= 1.30)
-                    elif direction == "BEARISH" and sl_val > curr_c and tp1_val < curr_c:
-                        risk = sl_val - curr_c
-                        reward = curr_c - tp1_val
-                        computed_rr = round(reward / risk, 2) if risk > 0 else 0.0
-                        has_valid_structural_risk = (computed_rr >= 1.30)
+                curr_c_val = float(curr_c)
+                if (math.isfinite(sl_val) and math.isfinite(tp1_val) and math.isfinite(curr_c_val) and
+                        sl_val > 0 and tp1_val > 0 and curr_c_val > 0):
+                    if direction == "BULLISH" and sl_val < curr_c_val and tp1_val > curr_c_val:
+                        risk = curr_c_val - sl_val
+                        reward = tp1_val - curr_c_val
+                        raw_rr = reward / risk if risk > 0 else 0.0
+                        if math.isfinite(raw_rr) and raw_rr >= 1.30:
+                            computed_rr = round(raw_rr, 2)
+                            has_valid_structural_risk = True
+                    elif direction == "BEARISH" and sl_val > curr_c_val and tp1_val < curr_c_val:
+                        risk = sl_val - curr_c_val
+                        reward = curr_c_val - tp1_val
+                        raw_rr = reward / risk if risk > 0 else 0.0
+                        if math.isfinite(raw_rr) and raw_rr >= 1.30:
+                            computed_rr = round(raw_rr, 2)
+                            has_valid_structural_risk = True
             except (ValueError, TypeError):
                 has_valid_structural_risk = False
 
