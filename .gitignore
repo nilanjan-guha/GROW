@@ -41,3 +41,6 @@ trading_signals.db
 *.swo
 .DS_Store
 Thumbs.db
+
+nse-mcp/node_modules/
+nse-mcp/dist/

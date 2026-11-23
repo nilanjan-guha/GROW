@@ -24,9 +24,11 @@ from engine.momentum_ignition_engine import MomentumIgnitionEngine
 from engine.missed_move_detector import MissedMoveDetector
 from engine.strategy_learning_engine import StrategyLearningEngine
 from engine.dhan_engine import DhanLiveEngine
+from engine.nse_data_engine import NSEDataEngine
 
-# Initialize Dhan HQ Integration Engine
+# Initialize Dhan HQ & NSE Institutional Data Engines
 dhan_client = DhanLiveEngine()
+nse_engine = NSEDataEngine()
 
 def is_market_open():
     """Returns True if the Indian market (NSE/BSE) is open right now, strictly respecting weekends and holidays"""
@@ -798,6 +800,16 @@ def smc_scan():
             market_regime_info=nifty_regime
         )
 
+        # 6a. Blend Official NSE Live Institutional Flows & Large Deals (FII/DII + Block Deals)
+        nse_inst = nse_engine.get_institutional_bias(symbol)
+        if nse_inst.get("score_modifier"):
+            inst_res["composite_score"] = min(100, max(0, inst_res["composite_score"] + nse_inst["score_modifier"]))
+            if nse_inst["score_modifier"] > 0:
+                inst_res["triggered_strategies"].append(f"NSE Large Deals (Net Buying)")
+            elif nse_inst["score_modifier"] < 0:
+                inst_res["triggered_strategies"].append(f"NSE Large Deals (Net Selling)")
+        res["nse_institutional"] = nse_inst
+
         # Apply Daily ATR Fallback Confidence Penalty (15 pts if unmeasured baseline 1.8% was used)
         atr_penalty = inst_res.get("confidence_penalty", 0)
         if atr_penalty > 0:
@@ -1038,6 +1050,23 @@ def get_recent_logged_signals():
 def get_live_news():
     """Returns curated live market and catalyst headlines"""
     return jsonify({"success": True, "news": news_engine.fetch_market_news()})
+
+@app.route("/api/nse/institutional")
+def get_nse_institutional_data():
+    """Returns official NSE India live FII/DII activity and Bulk/Block deals"""
+    try:
+        symbol = request.args.get("symbol")
+        fii_dii = nse_engine.get_fii_dii_activity()
+        bias = nse_engine.get_institutional_bias(symbol)
+        large_deals = nse_engine.get_large_deals(symbol)
+        return jsonify({
+            "success": True,
+            "fii_dii": fii_dii,
+            "bias": bias,
+            "large_deals": large_deals[:20]
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
 
 if __name__ == "__main__":
     print("Auto-connecting to Groww API...")
