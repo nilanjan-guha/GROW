@@ -530,13 +530,25 @@ def background_screener_worker():
                 except Exception:
                     pass
 
-                # Build scanner list from Watchlists + Open ACTIVE Signals requiring outcome tracking
+                # Build scanner list from:
+                # 1. Watchlists + Open ACTIVE Signals (high priority)
+                # 2. Rotating batch of 25 stocks from the full F&O universe (ensuring every F&O stock refreshes continuously)
                 watchlist_stks = [x["symbol"] for x in (screener_state["bullish_momentum_watchlist"] + screener_state["bearish_momentum_watchlist"])]
-                current_watchlist_set = set(watchlist_stks)
-                
-                # Retrieve any currently open ACTIVE trade signals so they are always monitored for TP/SL outcome tracking
                 active_open_symbols = list(get_active_signal_symbols())
-                all_stk_symbols = list(dict.fromkeys(watchlist_stks + active_open_symbols))
+                
+                fno_full_list = screener_state.get("fno_universe", [])
+                rotating_batch = []
+                if fno_full_list:
+                    batch_size = 25
+                    start_idx = fno_universe_index % len(fno_full_list)
+                    end_idx = start_idx + batch_size
+                    if end_idx <= len(fno_full_list):
+                        rotating_batch = [f"{s}.NS" if not s.endswith(".NS") else s for s in fno_full_list[start_idx:end_idx]]
+                    else:
+                        rotating_batch = [f"{s}.NS" if not s.endswith(".NS") else s for s in (fno_full_list[start_idx:] + fno_full_list[:end_idx % len(fno_full_list)])]
+                    fno_universe_index = (fno_universe_index + batch_size) % len(fno_full_list)
+
+                all_stk_symbols = list(dict.fromkeys(watchlist_stks + active_open_symbols + rotating_batch))
                 
                 # Filter all evaluated candidates strictly to verified F&O instruments
                 valid_fno_set = set(screener_state.get("fno_universe", []))
@@ -1000,10 +1012,18 @@ def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
         if norm_fno_set and clean_sym not in norm_fno_set:
             continue
         
-        # Sector-First Priority Filter: If priority sector constituents are known, prioritize them
+        # Sector-First Priority with Stock-Level Discovery Exception:
+        # Prioritize top sector constituents, BUT allow stocks with exceptional 5m momentum/coils (pre_coil or high RVOL)
+        fno_data_item = item.get("fno_filter_data", {})
+        has_standalone_setup = (
+            fno_data_item.get("is_pre_coil", False) or 
+            fno_data_item.get("rvol", 0.0) >= 1.5 or 
+            fno_data_item.get("velocity", 0.0) >= 2.0
+        ) if fno_data_item else False
+
         if sector_constituents and sym not in sector_constituents and f"{clean_sym}.NS" not in sector_constituents:
-            # Still scan if allowed_sector_symbols specifically requests, else prioritize top sectors
-            if not allowed_sector_symbols or sym not in allowed_sector_symbols:
+            # If outside top sectors, only evaluate if it has an exceptional standalone pre-breakout or RVOL setup
+            if not has_standalone_setup and (not allowed_sector_symbols or sym not in allowed_sector_symbols):
                 continue
 
         df_sym = item["df"]

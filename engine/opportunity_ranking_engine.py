@@ -502,9 +502,10 @@ class OpportunityRankingEngine:
         has_bull_participation = (vol_consecutive_rise and curr_c >= curr_o) or (rs_accel_3 > 0.15)
         has_bear_participation = (vol_consecutive_rise and curr_c <= curr_o) or (rs_accel_3 < -0.15)
         
-        # Structural evidence:
-        has_bull_structure_setup = is_range_squeezed or is_coiling_near_orh or is_coiling_near_pdh or has_swing_higher_lows
-        has_bear_structure_setup = is_range_squeezed or is_coiling_near_orl or is_coiling_near_pdl or has_swing_lower_highs
+        # Structural evidence: Must be near key breakout level (ORH/ORL/PDH/PDL) or have confirmed swing structure
+        # (Generic sideways range squeeze without structural level proximity is insufficient!)
+        has_bull_structure_setup = is_coiling_near_orh or is_coiling_near_pdh or has_swing_higher_lows or (is_range_squeezed and dist_to_orh_pct <= 1.0)
+        has_bear_structure_setup = is_coiling_near_orl or is_coiling_near_pdl or has_swing_lower_highs or (is_range_squeezed and dist_to_orl_pct <= 1.0)
 
         is_early_observing = (
             (direction == "BULLISH" and has_bull_participation and has_bull_structure_setup and above_vwap and early_bull_score >= 30) or
