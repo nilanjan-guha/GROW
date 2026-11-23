@@ -1263,14 +1263,16 @@
             const entryContainer = document.getElementById('rankedEntryReadyList');
             if (!prepContainer || !entryContainer) return;
 
-            const entryReady = ranked.entry_ready || (ranked.top_bullish || []).filter(c => c.stage === 'CONFIRMED').slice(0, 2);
-            const preparing = ranked.preparing || [...(ranked.top_bullish || []), ...(ranked.top_bearish || [])].filter(c => c.stage !== 'CONFIRMED').slice(0, 5);
+            const entryReady = ranked.entry_ready || [];
+            const preparing = ranked.preparing || [];
+            const ignition = ranked.ignition || [];
 
-            // 1. Render Preparing List (Max 5)
-            if (preparing.length === 0) {
+            // 1. Render Preparing List (Max 5) - Strictly Coils before the move
+            if (preparing.length === 0 && ignition.length === 0) {
                 prepContainer.innerHTML = '<div style="font-size:0.7rem; color:var(--text-muted); padding:6px 0;">No stocks currently in compression/coil. Scanning 219 F&O...</div>';
             } else {
                 let prepHtml = '';
+                // Render true PREPARING coils first
                 preparing.forEach((c, i) => {
                     const sym = c.symbol;
                     const isBull = c.direction === 'BULLISH';
@@ -1294,6 +1296,32 @@
                         </div>
                     </div>`;
                 });
+
+                // Display IGNITION separately if any are breaking out now
+                ignition.forEach((c, i) => {
+                    const sym = c.symbol;
+                    const isBull = c.direction === 'BULLISH';
+                    const dirCol = isBull ? 'var(--neon-green)' : 'var(--neon-red)';
+                    const sign = isBull ? '+' : '';
+
+                    prepHtml += `
+                    <div style="background:rgba(255,170,0,0.05); border:1px solid rgba(255,170,0,0.4); border-left:3px solid var(--neon-amber); border-radius:4px; padding:6px 8px; cursor:pointer; margin-top:4px;" onclick="selectStock('${sym}')" title="Active Ignition / Expanding Now">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <span style="font-size:0.75rem; font-weight:bold; color:#fff;">
+                                ⚡ ${sym.replace('.NS', '')} 
+                                <span style="font-size:0.60rem; color:var(--neon-amber); background:rgba(255,170,0,0.15); border:1px solid var(--neon-amber); padding:1px 5px; border-radius:3px; font-weight:bold; margin-left:4px;">
+                                    IGNITION EXPANDING
+                                </span>
+                            </span>
+                            <span style="font-size:0.72rem; color:${dirCol}; font-weight:800;">${sign}${c.change_pct}%</span>
+                        </div>
+                        <div style="font-size:0.62rem; color:var(--text-muted); display:flex; justify-content:space-between; margin-top:3px;">
+                            <span>RVOL: <b style="color:var(--neon-cyan);">${c.rvol || 1.4}x</b></span>
+                            <span style="color:var(--neon-amber); font-weight:600;">${c.entry_trigger}</span>
+                        </div>
+                    </div>`;
+                });
+
                 prepContainer.innerHTML = prepHtml;
             }
 

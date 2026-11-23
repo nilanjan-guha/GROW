@@ -123,11 +123,43 @@ class FNOMomentumFilter:
             ema9 = float(c.ewm(span=9, adjust=False).mean().iloc[-1])
             ema21 = float(c.ewm(span=21, adjust=False).mean().iloc[-1])
 
-            # Recent higher-lows or lower-highs (Last 3 candles structure)
-            recent_lows = [float(x) for x in l.iloc[-4:]]
-            recent_highs = [float(x) for x in h.iloc[-4:]]
-            has_higher_lows = (recent_lows[-1] >= recent_lows[-2] >= recent_lows[-3]) if len(recent_lows) >= 3 else False
-            has_lower_highs = (recent_highs[-1] <= recent_highs[-2] <= recent_highs[-3]) if len(recent_highs) >= 3 else False
+            # Confirmed Swing Pivot Detection (2 bars on each side)
+            # A swing low is confirmed when low[i] <= min(low[i-2], low[i-1], low[i+1], low[i+2])
+            # A swing high is confirmed when high[i] >= max(high[i-2], high[i-1], high[i+1], high[i+2])
+            # We look for the last 2 confirmed swing lows / swing highs up to index -2 (excluding unconfirmed forming bars)
+            confirmed_swing_lows = []
+            confirmed_swing_highs = []
+            low_vals = [float(x) for x in l.values]
+            high_vals = [float(x) for x in h.values]
+            n_bars = len(low_vals)
+            # Scan backwards from n_bars - 3 down to max(0, n_bars - 30)
+            for i in range(n_bars - 3, max(1, n_bars - 35), -1):
+                if (i >= 2 and i + 2 < n_bars):
+                    if (low_vals[i] <= low_vals[i-1] and low_vals[i] <= low_vals[i-2] and
+                        low_vals[i] <= low_vals[i+1] and low_vals[i] <= low_vals[i+2]):
+                        confirmed_swing_lows.append(low_vals[i])
+                    if (high_vals[i] >= high_vals[i-1] and high_vals[i] >= high_vals[i-2] and
+                        high_vals[i] >= high_vals[i+1] and high_vals[i] >= high_vals[i+2]):
+                        confirmed_swing_highs.append(high_vals[i])
+                if len(confirmed_swing_lows) >= 2 and len(confirmed_swing_highs) >= 2:
+                    break
+
+            has_higher_lows = False
+            if len(confirmed_swing_lows) >= 2:
+                # confirmed_swing_lows[0] is the most recent confirmed pivot low, [1] is the prior
+                has_higher_lows = confirmed_swing_lows[0] > confirmed_swing_lows[1]
+            else:
+                # Fallback to local session lows if fewer pivots
+                recent_lows = [float(x) for x in l.iloc[-5:]]
+                has_higher_lows = recent_lows[-1] > min(recent_lows[:-1]) if len(recent_lows) >= 3 else False
+
+            has_lower_highs = False
+            if len(confirmed_swing_highs) >= 2:
+                # confirmed_swing_highs[0] is most recent confirmed pivot high, [1] is prior
+                has_lower_highs = confirmed_swing_highs[0] < confirmed_swing_highs[1]
+            else:
+                recent_highs = [float(x) for x in h.iloc[-5:]]
+                has_lower_highs = recent_highs[-1] < max(recent_highs[:-1]) if len(recent_highs) >= 3 else False
 
             # 6. Directional Pre-Breakout / Compression Filters (No Ambiguous Dual Qualification):
             # Bullish Coil: Price firmly above VWAP, higher-lows or EMA9 > EMA21, volatility compression (NR4/NR7/BB Squeeze)

@@ -130,7 +130,7 @@ class OpportunityRankingEngine:
         }
 
     @staticmethod
-    def evaluate_stock_opportunity(stock_df, symbol, sector_name="GENERAL", sector_change=0.0, nifty_df=None, vwap=None, opp_eval=None):
+    def evaluate_stock_opportunity(stock_df, symbol, sector_name="GENERAL", sector_change=0.0, nifty_df=None, vwap=None, opp_eval=None, time_slot_rvol=None, rvol_obs=0):
         """
         Computes comprehensive quantitative opportunity score, breakout proximity, and prediction stage.
         """
@@ -178,8 +178,19 @@ class OpportunityRankingEngine:
             atr14 = curr_c * 0.01
 
         # 2. Time-of-day & Consecutive Volume Acceleration
-        vol_mean_15 = float(v.iloc[-16:-1].mean()) if len(v) >= 16 else curr_v
-        rvol = round(curr_v / (vol_mean_15 or 1), 2)
+        # Use consistent time-slot adjusted RVOL if provided, else compute time-of-day slot matching
+        if time_slot_rvol is not None and time_slot_rvol > 0:
+            rvol = round(float(time_slot_rvol), 2)
+        else:
+            df_copy['Time'] = df_copy.index.time
+            slot_t = df_copy['Time'].iloc[-1]
+            same_slot_vols = df_copy[df_copy['Time'] == slot_t]['Volume']
+            if len(same_slot_vols) > 1:
+                hist_avg = float(same_slot_vols.iloc[:-1].mean())
+                rvol = round(curr_v / hist_avg, 2) if hist_avg > 0 else 1.0
+            else:
+                vol_mean_15 = float(v.iloc[-16:-1].mean()) if len(v) >= 16 else curr_v
+                rvol = round(curr_v / (vol_mean_15 or 1), 2)
         
         # 3-bar consecutive rising volume
         vol_consecutive_rise = False
@@ -196,7 +207,7 @@ class OpportunityRankingEngine:
         orh = float(today_df['High'].iloc[:3].max()) if len(today_df) >= 3 else float(today_df['High'].iloc[0])
         orl = float(today_df['Low'].iloc[:3].min()) if len(today_df) >= 3 else float(today_df['Low'].iloc[0])
         
-        # Previous Day High / Low
+        # Previous Day High / Low (PDH / PDL)
         pdh = None
         pdl = None
         if prev_date is not None:
@@ -212,6 +223,41 @@ class OpportunityRankingEngine:
         is_coiling_near_orl = (0.0 <= dist_to_orl_pct <= 0.50)
         is_broken_above_orh = (curr_c > orh)
         is_broken_below_orl = (curr_c < orl)
+
+        # PDH/PDL Proximity, Sweeps, and Retests
+        dist_to_pdh_pct = ((pdh - curr_c) / curr_c * 100) if pdh else 999.0
+        dist_to_pdl_pct = ((curr_c - pdl) / curr_c * 100) if pdl else 999.0
+        is_coiling_near_pdh = (0.0 <= dist_to_pdh_pct <= 0.50) if pdh else False
+        is_coiling_near_pdl = (0.0 <= dist_to_pdl_pct <= 0.50) if pdl else False
+        is_broken_above_pdh = (curr_c > pdh) if pdh else False
+        is_broken_below_pdl = (curr_c < pdl) if pdl else False
+
+        # Liquidity Sweep & Retest Logic:
+        # Bullish PDH retest: Price broke above PDH or swept it, and now holding above PDH
+        # Bullish PDL sweep: Price dipped below PDL earlier, but rejected and reclaimed above PDL (liquidity grab)
+        is_pdl_liquidity_sweep_bull = (float(today_df['Low'].min()) < pdl and curr_c > pdl) if pdl else False
+        is_pdh_liquidity_sweep_bear = (float(today_df['High'].max()) > pdh and curr_c < pdh) if pdh else False
+        is_pdh_retest_hold_bull = (is_broken_above_pdh and curr_l >= (pdh * 0.998)) if pdh else False
+        is_pdl_retest_hold_bear = (is_broken_below_pdl and curr_h <= (pdl * 1.002)) if pdl else False
+
+        # Confirmed Swing Pivot Structure in Opportunity Engine
+        low_vals = [float(x) for x in l.values]
+        high_vals = [float(x) for x in h.values]
+        n_bars = len(low_vals)
+        c_lows = []
+        c_highs = []
+        for i in range(n_bars - 3, max(1, n_bars - 35), -1):
+            if (i >= 2 and i + 2 < n_bars):
+                if (low_vals[i] <= low_vals[i-1] and low_vals[i] <= low_vals[i-2] and
+                    low_vals[i] <= low_vals[i+1] and low_vals[i] <= low_vals[i+2]):
+                    c_lows.append(low_vals[i])
+                if (high_vals[i] >= high_vals[i-1] and high_vals[i] >= high_vals[i-2] and
+                    high_vals[i] >= high_vals[i+1] and high_vals[i] >= high_vals[i+2]):
+                    c_highs.append(high_vals[i])
+            if len(c_lows) >= 2 and len(c_highs) >= 2:
+                break
+        has_swing_higher_lows = (c_lows[0] > c_lows[1]) if len(c_lows) >= 2 else (curr_l > min(low_vals[-5:-1]) if n_bars >= 5 else False)
+        has_swing_lower_highs = (c_highs[0] < c_highs[1]) if len(c_highs) >= 2 else (curr_h < max(high_vals[-5:-1]) if n_bars >= 5 else False)
 
         # 5. Synchronized Relative Strength Acceleration
         rs_data = OpportunityRankingEngine.calculate_relative_strength_acceleration(stock_df, nifty_df, sector_change)
@@ -267,17 +313,19 @@ class OpportunityRankingEngine:
         conf_bull_score = 0
         conf_bear_score = 0
 
-        # Bullish Early Opportunity Factors:
-        if is_coiling_near_orh: early_bull_score += 25
-        if is_range_squeezed and curr_c > curr_o: early_bull_score += 20
-        if vol_consecutive_rise and curr_c > curr_o: early_bull_score += 20
+        # Bullish Early Opportunity Factors (Must reflect true structural accumulation):
+        if is_coiling_near_orh or is_coiling_near_pdh: early_bull_score += 25
+        if is_range_squeezed and has_swing_higher_lows: early_bull_score += 20
+        if vol_consecutive_rise and curr_c > curr_o: early_bull_score += 15
         if rs_accel_3 > 0.3: early_bull_score += 15
-        if is_flat_open_ignition: early_bull_score += 20
-        if is_gap_up_holding: early_bull_score += 15
+        if is_pdl_liquidity_sweep_bull: early_bull_score += 20
+        if is_pdh_retest_hold_bull: early_bull_score += 15
+        if is_flat_open_ignition: early_bull_score += 15
+        if is_gap_up_holding: early_bull_score += 10
         if above_vwap: early_bull_score += 10
 
         # Bullish Confirmation Factors:
-        if is_broken_above_orh: conf_bull_score += 25
+        if is_broken_above_orh or is_broken_above_pdh: conf_bull_score += 25
         if is_expanding_now and curr_c > curr_o: conf_bull_score += 20
         if rvol >= 1.5: conf_bull_score += 20
         if above_vwap: conf_bull_score += 15
@@ -285,15 +333,17 @@ class OpportunityRankingEngine:
         if rs_accel_6 > 0.3: conf_bull_score += 15
 
         # Bearish Early Opportunity Factors:
-        if is_coiling_near_orl: early_bear_score += 25
-        if is_range_squeezed and curr_c < curr_o: early_bear_score += 20
-        if vol_consecutive_rise and curr_c < curr_o: early_bear_score += 20
+        if is_coiling_near_orl or is_coiling_near_pdl: early_bear_score += 25
+        if is_range_squeezed and has_swing_lower_highs: early_bear_score += 20
+        if vol_consecutive_rise and curr_c < curr_o: early_bear_score += 15
         if rs_accel_3 < -0.3: early_bear_score += 15
-        if is_gap_down_holding: early_bear_score += 15
+        if is_pdh_liquidity_sweep_bear: early_bear_score += 20
+        if is_pdl_retest_hold_bear: early_bear_score += 15
+        if is_gap_down_holding: early_bear_score += 10
         if below_vwap: early_bear_score += 10
 
         # Bearish Confirmation Factors:
-        if is_broken_below_orl: conf_bear_score += 25
+        if is_broken_below_orl or is_broken_below_pdl: conf_bear_score += 25
         if is_expanding_now and curr_c < curr_o: conf_bear_score += 20
         if rvol >= 1.5: conf_bear_score += 20
         if below_vwap: conf_bear_score += 15
@@ -376,10 +426,32 @@ class OpportunityRankingEngine:
         )
 
         # Direction-specific IGNITION trigger:
-        # Bullish ignition: broken above ORH, or expanding upwards with volume surge
-        # Bearish ignition: broken below ORL, or expanding downwards with selling volume surge
-        is_bull_ignition = direction == "BULLISH" and (is_broken_above_orh or (is_expanding_now and curr_c > curr_o) or (rvol >= 1.4 and conviction_score >= 40 and curr_c > curr_vwap))
-        is_bear_ignition = direction == "BEARISH" and (is_broken_below_orl or (is_expanding_now and curr_c < curr_o) or (rvol >= 1.4 and conviction_score >= 40 and curr_c < curr_vwap))
+        # Bullish ignition: broken above ORH/PDH, or expanding upwards with volume surge
+        # Bearish ignition: broken below ORL/PDL, or expanding downwards with selling volume surge
+        is_bull_ignition = direction == "BULLISH" and (is_broken_above_orh or is_broken_above_pdh or (is_expanding_now and curr_c > curr_o) or (rvol >= 1.4 and conviction_score >= 40 and curr_c > curr_vwap))
+        is_bear_ignition = direction == "BEARISH" and (is_broken_below_orl or is_broken_below_pdl or (is_expanding_now and curr_c < curr_o) or (rvol >= 1.4 and conviction_score >= 40 and curr_c < curr_vwap))
+
+        # Strict PREPARING Requirement (Cannot qualify purely on above/below VWAP!):
+        # Must have genuine structural evidence before the move:
+        # 1. Volatility compression (range squeezed / NR4 / NR7) or coiling near key breakout levels (ORH/ORL or PDH/PDL)
+        # 2. Confirmed swing pivot structure (higher lows for bull, lower highs for bear)
+        # 3. Directional relative strength / early opportunity score >= 40
+        # 4. Clear structural invalidation level (ORL/PDL for bull, ORH/PDH for bear)
+        is_strict_bull_preparing = (
+            direction == "BULLISH" and 
+            (is_coiling_near_orh or is_coiling_near_pdh or is_range_squeezed or is_pdl_liquidity_sweep_bull) and 
+            (has_swing_higher_lows or curr_c > curr_o) and 
+            early_bull_score >= 40 and 
+            above_vwap
+        )
+
+        is_strict_bear_preparing = (
+            direction == "BEARISH" and 
+            (is_coiling_near_orl or is_coiling_near_pdl or is_range_squeezed or is_pdh_liquidity_sweep_bear) and 
+            (has_swing_lower_highs or curr_c < curr_o) and 
+            early_bear_score >= 40 and 
+            below_vwap
+        )
 
         if is_strictly_confirmed:
             stage = "CONFIRMED"
@@ -389,11 +461,10 @@ class OpportunityRankingEngine:
             stage = "IGNITION"
             stage_desc = f"Momentum Breaking Out: RVOL {rvol:.1f}x, Range {curr_range/atr14:.1f}x ATR"
             entry_trigger = "Breakout confirmed above ORH" if direction == "BULLISH" else "Breakdown confirmed below ORL"
-        elif (direction == "BULLISH" and (is_coiling_near_orh or is_range_squeezed or early_bull_score >= 35 or above_vwap)) or \
-             (direction == "BEARISH" and (is_coiling_near_orl or is_range_squeezed or early_bear_score >= 35 or below_vwap)):
+        elif is_strict_bull_preparing or is_strict_bear_preparing:
             stage = "PREPARING"
             stage_desc = "⚡ Pre-Breakout/Breakdown Coil: Institutional accumulation before the move"
-            entry_trigger = f"Pre-Breakout: Enter above ₹{orh:.1f} (ORH)" if direction == "BULLISH" else f"Pre-Breakdown: Enter below ₹{orl:.1f} (ORL)"
+            entry_trigger = f"Pre-Breakout: Enter above ₹{min(orh, pdh if pdh else orh):.1f}" if direction == "BULLISH" else f"Pre-Breakdown: Enter below ₹{max(orl, pdl if pdl else orl):.1f}"
         else:
             stage = "MONITORING"
             stage_desc = "Normal intraday action"
@@ -502,15 +573,24 @@ class OpportunityRankingEngine:
         # 1. ENTRY READY (Max 2): Strictly CONFIRMED 5-minute setups with valid structure & RR >= 1.30
         entry_ready_list = [c for c in all_candidates if c.get("stage") == "CONFIRMED"][:2]
 
-        # 2. PREPARING (Max 5): Developing coils/pre-breakout/pre-breakdown setups before the move
+        # 2. IGNITION (Expanding right now across ORH/PDH or high volume breakout)
+        ignition_list = [
+            c for c in all_candidates 
+            if c.get("stage") == "IGNITION" and c not in entry_ready_list
+        ][:3]
+
+        # 3. PREPARING (Max 5): Strictly Pre-Breakout / Pre-Breakdown COILS before expansion begins
+        # Distinct from IGNITION stocks that have already started expanding!
         preparing_list = [
             c for c in all_candidates 
-            if c.get("stage") in ("PREPARING", "IGNITION") and c not in entry_ready_list
+            if c.get("stage") == "PREPARING" and c not in entry_ready_list
         ][:5]
 
+        # If preparing has fewer than 5, allow high-quality coiling monitoring candidates, but keep separate from ignition
         return {
             "top_bullish": bullish[:top_n],
             "top_bearish": bearish[:top_n],
             "entry_ready": entry_ready_list,
+            "ignition": ignition_list,
             "preparing": preparing_list
         }

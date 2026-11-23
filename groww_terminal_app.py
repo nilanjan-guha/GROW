@@ -347,7 +347,7 @@ def evaluate_explosive_momentum(df, symbol):
     if is_bullish_chartink and is_at_demand:
         action = "BUY / CALL (CE) [HIGH CONFLUENCE: DEMAND OB + MOMENTUM]"
         verdict = "DEMAND ORDER BLOCK REACTION + MOMENTUM ACTIVE"
-        confidence = "95% VERY HIGH ACCURACY"
+        confidence = "A+ HIGH CONFLUENCE"
         sl = round(min(curr_l, nearest_demand_ob['bottom']) * 0.995, 2)
         risk = max(curr_price - sl, curr_price * 0.005)
         tp1 = round(curr_price + (risk * 1.5), 2)
@@ -356,7 +356,7 @@ def evaluate_explosive_momentum(df, symbol):
     elif is_bullish_chartink and is_pullback_demand:
         action = "BUY / CALL (CE) [PULLBACK TO VWAP/EMA9 SUPPORT]"
         verdict = "BULLISH TREND PULLBACK ENTRY"
-        confidence = "89% HIGH CONFIDENCE"
+        confidence = "A GRADE PULLBACK"
         sl = round(min(curr_vwap, curr_ema9, curr_l) * 0.995, 2)
         risk = max(curr_price - sl, curr_price * 0.005)
         tp1 = round(curr_price + (risk * 1.5), 2)
@@ -365,7 +365,7 @@ def evaluate_explosive_momentum(df, symbol):
     elif is_bullish_chartink:
         action = "BUY / CALL (CE) [EXPLOSIVE MOMENTUM RALLY]"
         verdict = "CHARTINK MOMENTUM BREAKOUT"
-        confidence = "84% CONFIRMED MOMENTUM"
+        confidence = "MOMENTUM CONFIRMED"
         sl = round(curr_ema9 * 0.994, 2)
         risk = max(curr_price - sl, curr_price * 0.005)
         tp1 = round(curr_price + (risk * 1.5), 2)
@@ -374,7 +374,7 @@ def evaluate_explosive_momentum(df, symbol):
     elif is_bearish_chartink and is_at_supply:
         action = "SELL / PUT (PE) [HIGH CONFLUENCE: SUPPLY OB + BREAKDOWN]"
         verdict = "SUPPLY ORDER BLOCK REJECTION + BEARISH BREAKDOWN"
-        confidence = "95% VERY HIGH ACCURACY"
+        confidence = "A+ HIGH CONFLUENCE"
         sl = round(max(curr_h, nearest_supply_ob['top']) * 1.005, 2)
         risk = max(sl - curr_price, curr_price * 0.005)
         tp1 = round(curr_price - (risk * 1.5), 2)
@@ -383,7 +383,7 @@ def evaluate_explosive_momentum(df, symbol):
     elif is_bearish_chartink and is_pullback_supply:
         action = "SELL / PUT (PE) [PULLBACK TO VWAP/EMA9 RESISTANCE]"
         verdict = "BEARISH TREND PULLBACK SHORT ENTRY"
-        confidence = "89% HIGH CONFIDENCE"
+        confidence = "A GRADE PULLBACK"
         sl = round(max(curr_vwap, curr_ema9, curr_h) * 1.005, 2)
         risk = max(sl - curr_price, curr_price * 0.005)
         tp1 = round(curr_price - (risk * 1.5), 2)
@@ -392,7 +392,7 @@ def evaluate_explosive_momentum(df, symbol):
     elif is_bearish_chartink:
         action = "SELL / PUT (PE) [EXPLOSIVE DUMP BREAKDOWN]"
         verdict = "CHARTINK BREAKDOWN DUMP"
-        confidence = "84% CONFIRMED DUMP"
+        confidence = "MOMENTUM CONFIRMED"
         sl = round(curr_ema9 * 1.006, 2)
         risk = max(sl - curr_price, curr_price * 0.005)
         tp1 = round(curr_price - (risk * 1.5), 2)
@@ -962,51 +962,57 @@ def get_ranked_opportunities_endpoint():
     """
     Returns dynamically computed Top 3 Bullish and Top 3 Bearish F&O opportunities 
     across the active watchlist using multi-factor RS acceleration, breakout proximity and early stages.
+    Ties cache freshness directly to the exact completed 5-minute candle timestamp.
     """
     try:
-        allowed_sector_symbols = set([x["symbol"] for x in (screener_state.get("bullish_momentum_watchlist", []) + screener_state.get("bearish_momentum_watchlist", []))])
-        
         now = time.time()
-        cached_ranked = screener_state.get("ranked_opportunities")
-        cached_ts = screener_state.get("ranked_opportunities_ts", 0)
-        # Reject stale ranked cache (older than 180 seconds or invalid)
-        if cached_ranked and (now - cached_ts < 180):
-            filtered_bull = [c for c in cached_ranked.get("top_bullish", []) if not allowed_sector_symbols or c.get("symbol") in allowed_sector_symbols]
-            filtered_bear = [c for c in cached_ranked.get("top_bearish", []) if not allowed_sector_symbols or c.get("symbol") in allowed_sector_symbols]
-            filtered_ready = [c for c in cached_ranked.get("entry_ready", []) if not allowed_sector_symbols or c.get("symbol") in allowed_sector_symbols]
-            filtered_prep = [c for c in cached_ranked.get("preparing", []) if not allowed_sector_symbols or c.get("symbol") in allowed_sector_symbols]
-            if filtered_bull or filtered_bear or filtered_ready or filtered_prep:
-                return jsonify({
-                    "success": True, 
-                    "ranked": {
-                        "top_bullish": filtered_bull, 
-                        "top_bearish": filtered_bear,
-                        "entry_ready": filtered_ready[:2],
-                        "preparing": filtered_prep[:5]
-                    }
-                })
-
-        candidates = []
+        
+        # Determine latest completed candle timestamp from NIFTY or market cache
         nifty_cached = screener_state.get("raw_market_cache", {}).get("^NSEI", {})
         nifty_df = nifty_cached.get("df")
-        
+        current_candle_ts = None
+        if nifty_df is not None and not nifty_df.empty:
+            current_candle_ts = str(nifty_df.index[-1])
+        else:
+            # Fallback to any active stock df index
+            for s, item in screener_state.get("raw_market_cache", {}).items():
+                if item.get("df") is not None and not item["df"].empty:
+                    current_candle_ts = str(item["df"].index[-1])
+                    break
+
+        cached_ranked = screener_state.get("ranked_opportunities")
+        cached_candle_ts = screener_state.get("ranked_candle_ts")
+        cached_wall_ts = screener_state.get("ranked_opportunities_ts", 0)
+
+        # Cache is valid ONLY if the evaluated completed candle timestamp matches AND wall-clock age < 300s
+        if cached_ranked and (current_candle_ts and cached_candle_ts == current_candle_ts) and (now - cached_wall_ts < 300):
+            return jsonify({
+                "success": True, 
+                "ranked": {
+                    "top_bullish": cached_ranked.get("top_bullish", []), 
+                    "top_bearish": cached_ranked.get("top_bearish", []),
+                    "entry_ready": cached_ranked.get("entry_ready", [])[:2],
+                    "ignition": cached_ranked.get("ignition", [])[:3],
+                    "preparing": cached_ranked.get("preparing", [])[:5]
+                }
+            })
+
+        candidates = []
         valid_fno_set = set(screener_state.get("fno_universe", []))
         norm_fno_set = {s.upper().replace(".NS", "") for s in valid_fno_set}
 
-        # Restrict strictly to stocks fetched in the 5-minute sector watchlists
-        allowed_sector_symbols = set([x["symbol"] for x in (screener_state["bullish_momentum_watchlist"] + screener_state["bearish_momentum_watchlist"])])
-
-        # Collect cached evaluations
-        for sym, item in screener_state.get("raw_market_cache", {}).items():
+        # High Recall Discovery: Scan all valid F&O stocks present in raw_market_cache (not restricted only to high velocity watchlist)
+        # This guarantees pre-breakout coils quietly accumulating before moving are evaluated!
+        raw_items = screener_state.get("raw_market_cache", {})
+        for sym, item in raw_items.items():
             if sym == "^NSEI" or item.get("df") is None:
-                continue
-            if allowed_sector_symbols and sym not in allowed_sector_symbols:
                 continue
             clean_sym = sym.replace(".NS", "").upper()
             if norm_fno_set and clean_sym not in norm_fno_set:
                 continue
             df_sym = item["df"]
-            # Enforce validation
+            
+            # Enforce unified 5m feed validation
             f_val = MarketValidator.validate_feed_freshness(df_sym, max_delay_seconds=300, candle_duration_seconds=300)
             if not f_val.get("is_valid", False):
                 continue
@@ -1014,6 +1020,8 @@ def get_ranked_opportunities_endpoint():
             eval_df_sym = df_sym if is_comp else df_sym.iloc[:-1]
             if len(eval_df_sym) < 15:
                 continue
+
+            stock_candle_ts = str(eval_df_sym.index[-1])
 
             sec_info = groww_sector_engine.stock_to_sector_map.get(sym, {})
             sec_name = sec_info.get("sector")
@@ -1023,10 +1031,11 @@ def get_ranked_opportunities_endpoint():
                 sec_data = screener_state.get("sectors", {}).get(sec_name, {})
                 sec_chg = sec_data.get("change", 0.0)
             
-            # Retrieve enriched cache if present and fresh (within 300s)
+            # Retrieve enriched cache ONLY if its evaluated candle timestamp matches the current candle
             enriched_entry = screener_state.get("enriched_signals_cache", {}).get(sym, {})
-            enriched_ts = enriched_entry.get("timestamp", 0)
-            enriched = enriched_entry.get("data", {}) if (now - enriched_ts < 300) else {}
+            enriched_candle_ts = enriched_entry.get("candle_ts")
+            enriched = enriched_entry.get("data", {}) if (enriched_candle_ts == stock_candle_ts or (now - enriched_entry.get("timestamp", 0) < 300)) else {}
+            
             opp_eval = {
                 "is_viable": enriched.get("is_viable", False),
                 "potential_pct": enriched.get("potential_pct", 0.0),
@@ -1036,14 +1045,20 @@ def get_ranked_opportunities_endpoint():
                 "tp2": enriched.get("suggested_tp2"),
                 "exhaustion_risk": enriched.get("exhaustion_risk", "LOW")
             }
+
+            # Retrieve time-slot RVOL calculated by the F&O filter
+            item_data = item.get("data", {})
+            time_slot_rvol = item_data.get("rvol") if isinstance(item_data, dict) else None
+
             eval_res = OpportunityRankingEngine.evaluate_stock_opportunity(
                 stock_df=eval_df_sym,
                 symbol=sym,
                 sector_name=sec_name,
                 sector_change=sec_chg,
                 nifty_df=nifty_df,
-                vwap=enriched.get("vwap"),
-                opp_eval=opp_eval
+                vwap=enriched.get("vwap") or (item_data.get("vwap") if isinstance(item_data, dict) else None),
+                opp_eval=opp_eval,
+                time_slot_rvol=time_slot_rvol
             )
             if eval_res:
                 candidates.append(eval_res)
@@ -1051,20 +1066,22 @@ def get_ranked_opportunities_endpoint():
         if not candidates:
             # Explicit fresh scan empty state: clear old memory ranking so stale candidates never persist
             screener_state["ranked_opportunities"] = {
-                "top_bullish": [], "top_bearish": [], "entry_ready": [], "preparing": []
+                "top_bullish": [], "top_bearish": [], "entry_ready": [], "ignition": [], "preparing": []
             }
             screener_state["ranked_opportunities_ts"] = now
+            screener_state["ranked_candle_ts"] = current_candle_ts
             return jsonify({
                 "success": True,
                 "status": "NO_TRADE",
                 "ranked": {
-                    "top_bullish": [], "top_bearish": [], "entry_ready": [], "preparing": []
+                    "top_bullish": [], "top_bearish": [], "entry_ready": [], "ignition": [], "preparing": []
                 }
             })
 
         ranked = OpportunityRankingEngine.rank_top_opportunities(candidates, top_n=3)
         screener_state["ranked_opportunities"] = ranked
         screener_state["ranked_opportunities_ts"] = now
+        screener_state["ranked_candle_ts"] = current_candle_ts
         return jsonify({"success": True, "ranked": ranked})
     except Exception as e:
         return jsonify({"success": False, "error": str(e), "ranked": {"top_bullish": [], "top_bearish": []}})
