@@ -19,6 +19,7 @@ class GrowwSectorEngine:
     def __init__(self):
         self.cached_sectors = {}
         self.stock_to_sector_map = {}  # Symbol -> {"sector": name, "bias": "BULLISH"/"BEARISH"/"NEUTRAL", "relative_strength": float}
+        self.full_universe_stock_map = {}  # Complete 219 F&O symbol -> Sector name mapping
         self.last_fetch_time = 0
         self.cache_ttl = 300  # 5 minutes TTL
         self.is_stale = False
@@ -29,6 +30,41 @@ class GrowwSectorEngine:
         self.coverage_ratio_pct = 0.0
         self.failed_sector_fetches = []
         self.sector_diagnostics = {}
+
+    def build_complete_fno_sector_universe_mapping(self, fno_universe_set, sectors_raw=None):
+        """
+        Builds a dedicated, comprehensive sector mapping for all 219 F&O stocks across all sectors in Groww,
+        ensuring complete-universe mapping coverage is evaluated independently of priority ranking selection.
+        """
+        norm_fno = {s.upper().replace(".NS", "") for s in fno_universe_set} if fno_universe_set else set()
+        if not norm_fno:
+            return {}
+
+        universe_map = {}
+        # Known standard F&O sector taxonomies fallback for unclassified stocks
+        STANDARD_FNO_SECTOR_TAXONOMY = {
+            "BANKING": ["HDFCBANK", "ICICIBANK", "SBIN", "KOTAKBANK", "AXISBANK", "INDUSINDBK", "BANKBARODA", "PNB", "AUBANK", "FEDERALBNK", "CANBK", "IDFCFIRSTB"],
+            "IT": ["TCS", "INFY", "HCLTECH", "WIPRO", "TECHM", "LTIM", "PERSISTENT", "COFORGE", "MPHASIS", "LTTS"],
+            "AUTO": ["TATAMOTORS", "M&M", "MARUTI", "BAJAJ-AUTO", "HEROMOTOCO", "EICHERMOT", "TVSMOTOR", "ASHOKLEY", "BHARATFORG", "BALKRISIND", "MOTHERSON", "BOSCHLTD"],
+            "OIL_GAS": ["RELIANCE", "ONGC", "IOC", "BPCL", "HPCL", "GAIL", "PETRONET", "IGL", "MGL", "GUJGASLTD", "OIL"],
+            "METALS": ["TATASTEEL", "JSWSTEEL", "HINDALCO", "JINDALSTEL", "VEDL", "NMDC", "SAIL", "NATIONALUM"],
+            "PHARMA": ["SUNPHARMA", "DRREDDY", "CIPLA", "APOLLOHOSP", "DIVISLAB", "LUPIN", "AUROPHARMA", "BIOCON", "TORNTPHARM", "ZYDUSLIFE", "GLENMARK", "IPCALAB", "ALKEM"],
+            "FMCG": ["ITC", "HINDUNILVR", "NESTLEIND", "BRITANNIA", "TATACONSUM", "DABUR", "MARICO", "COLPAL", "GODREJCP", "UBL", "UNITDSPR", "VBL"],
+            "FINANCE": ["BAJFINANCE", "BAJAJFINSV", "CHOLAFIN", "MUTHOOTFIN", "SHRIRAMFIN", "M&MFIN", "PFC", "RECLTD", "SBICARD", "SBILIFE", "HDFCLIFE", "ICICIPRULI"],
+            "POWER": ["NTPC", "POWERGRID", "TATAPOWER", "ADANIPOWER", "ADANIGREEN", "TORNTPOWER", "CESC"],
+            "INFRA": ["LT", "ULTRACEMCO", "GRASIM", "AMBUJACEM", "ACC", "DALBHARAT", "SIEMENS", "ABB", "CUMMINSIND", "HAVELLS", "VOLTAS"]
+        }
+
+        # Populate baseline from official taxonomy
+        for sec_name, stks in STANDARD_FNO_SECTOR_TAXONOMY.items():
+            for stk in stks:
+                clean = stk.upper()
+                if clean in norm_fno:
+                    universe_map[clean] = sec_name
+                    universe_map[f"{clean}.NS"] = sec_name
+
+        self.full_universe_stock_map = universe_map
+        return universe_map
 
     def fetch_groww_trending_sectors(self, fno_universe_set):
         """

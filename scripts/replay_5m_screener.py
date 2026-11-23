@@ -105,39 +105,62 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
                     bearish_event_indices.append(e_i)
                     skip_bear_until = e_i + 12
 
+        # Download 1mo Daily OHLC for true Wilder Daily ATR14 calculation point-in-time
+        daily_df = yf.download(sym, period="3mo", interval="1d", progress=False)
+        if isinstance(daily_df.columns, pd.MultiIndex):
+            daily_df = daily_df.xs(sym, axis=1, level=1) if sym in daily_df.columns.levels[1] else daily_df
+
         scanned_history = {}
         current_open_trade = None
 
         # Replay candle by candle from index 25 onwards
         for idx in range(25, len(df) - 5):
             window_df = df.iloc[:idx]
-            curr_candle_ts = window_df.index[-1]
+            # The signal candle is explicitly the completed last candle of window_df (idx - 1)
+            signal_candle_idx = idx - 1
+            signal_candle_ts = window_df.index[-1]
             
             if current_open_trade is not None:
                 if idx >= current_open_trade["exit_idx"]:
                     current_open_trade = None
             
-            nifty_sub = nifty_df[nifty_df.index <= curr_candle_ts]
+            nifty_sub = nifty_df[nifty_df.index <= signal_candle_ts]
             if nifty_sub.empty:
                 continue
 
-            # Complete live-equivalent pipeline
+            # Point-in-time Daily context
+            daily_sub = daily_df[daily_df.index.date < signal_candle_ts.date()] if daily_df is not None and not daily_df.empty else None
+
+            # Point-in-time Sector relative change against benchmark
+            stock_day_open = float(window_df[window_df.index.date == signal_candle_ts.date()]["Open"].iloc[0]) if len(window_df[window_df.index.date == signal_candle_ts.date()]) > 0 else float(window_df["Open"].iloc[0])
+            stock_change_pt = round((float(window_df["Close"].iloc[-1]) - stock_day_open) / stock_day_open * 100, 2)
+            nifty_day_open = float(nifty_sub[nifty_sub.index.date == signal_candle_ts.date()]["Open"].iloc[0]) if len(nifty_sub[nifty_sub.index.date == signal_candle_ts.date()]) > 0 else float(nifty_sub["Open"].iloc[0])
+            nifty_change_pt = round((float(nifty_sub["Close"].iloc[-1]) - nifty_day_open) / nifty_day_open * 100, 2) if nifty_day_open > 0 else 0.0
+            
+            # Point-in-time Sector Bias
+            sector_bias = "BULLISH" if stock_change_pt > nifty_change_pt + 0.3 else ("BEARISH" if stock_change_pt < nifty_change_pt - 0.3 else "NEUTRAL")
+
+            # Complete live-equivalent pipeline with point-in-time historical context
             pipeline_res = ScreenerPipeline.evaluate_candidate_unified(
                 stock_df=window_df,
                 symbol=sym,
-                nifty_df=nifty_sub
+                sector_change=stock_change_pt,
+                sector_bias=sector_bias,
+                nifty_df=nifty_sub,
+                daily_df=daily_sub,
+                is_replay=True
             )
             
             stats["total_evaluations"] += 1
             if not pipeline_res:
                 stats["watch_only_candidates"] += 1
-                scanned_history[idx] = {"stage": "DISQUALIFIED", "direction": "NEUTRAL"}
+                scanned_history[signal_candle_idx] = {"stage": "DISQUALIFIED", "direction": "NEUTRAL", "ts": signal_candle_ts}
                 continue
 
             opp_res = pipeline_res.get("opp_res")
             if not opp_res:
                 stats["watch_only_candidates"] += 1
-                scanned_history[idx] = {"stage": "DISQUALIFIED", "direction": "NEUTRAL"}
+                scanned_history[signal_candle_idx] = {"stage": "DISQUALIFIED", "direction": "NEUTRAL", "ts": signal_candle_ts}
                 continue
 
             stage = opp_res.get("stage", "WATCHLIST")
@@ -145,7 +168,7 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
             is_actionable = opp_res.get("is_actionable", False)
             
             stats["stage_counts"][stage] = stats["stage_counts"].get(stage, 0) + 1
-            scanned_history[idx] = {"stage": stage, "direction": direction}
+            scanned_history[signal_candle_idx] = {"stage": stage, "direction": direction, "ts": signal_candle_ts}
 
             if not is_actionable or direction == "NEUTRAL":
                 stats["watch_only_candidates"] += 1

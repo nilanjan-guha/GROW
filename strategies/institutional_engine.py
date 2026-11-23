@@ -144,8 +144,10 @@ class InstitutionalStrategyEngine:
         # STRICT RULE: Only allow FRESH (UNMITIGATED) Order Blocks to trigger trades
         fresh_bull_obs = [ob for ob in bull_obs if not ob.get("mitigated")]
         fresh_bear_obs = [ob for ob in bear_obs if not ob.get("mitigated")]
-        near_demand_ob = fresh_bull_obs[-1] if fresh_bull_obs else None
-        near_supply_ob = fresh_bear_obs[-1] if fresh_bear_obs else None
+        
+        # Select the nearest, most relevant fresh order block to current price (not just arbitrary last one):
+        near_demand_ob = min(fresh_bull_obs, key=lambda ob: abs(curr_c - ob['top'])) if fresh_bull_obs else None
+        near_supply_ob = min(fresh_bear_obs, key=lambda ob: abs(curr_c - ob['bottom'])) if fresh_bear_obs else None
 
         # Fair Value Gaps (FVG)
         fvg_bull = len(df) >= 3 and float(l.iloc[-1]) > float(h.iloc[-3])

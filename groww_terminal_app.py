@@ -1477,7 +1477,7 @@ def log_confirmed_signal_endpoint():
             "score": matching_cand.get("conviction_score", 75),
             "confidence": f"{matching_cand.get('confirmation_score', 75)}%",
             "catalyst": "SMC Order Flow Ignition",
-            "features": {"rvol": matching_cand.get("rvol", 1.0), "rs_nifty": matching_cand.get("rs_nifty", 0.0), "candle_ts": str(active_server_ts)},
+            "features": {"rvol": matching_cand.get("rvol", 1.0), "rs_nifty": matching_cand.get("rs_nifty", 0.0), "candle_ts": str(authoritative_ts)},
             "all_triggered": matching_cand.get("reasons", [])
         })
 

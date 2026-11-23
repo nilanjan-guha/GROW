@@ -164,3 +164,55 @@ class MarketValidator:
             "candle_end_ts": candle_end,
             "missing_candle_gaps": missing_count
         }
+
+    @staticmethod
+    def validate_historical_replay_data(df, candle_duration_seconds=300):
+        """
+        Validates historical data integrity for backtesting/replay (NO current wall-clock checks):
+        - Enforces monotonic datetime index ordering.
+        - Validates candle structure (Open, High, Low, Close, Volume) and non-negative values.
+        - Rejects incomplete / corrupted history.
+        - In historical simulation, all historical candles prior to the slice end are completed by definition.
+        """
+        if df is None or df.empty:
+            return {"is_valid": False, "status": "EMPTY_FEED", "reason": "Historical dataframe is empty"}
+
+        if len(df) < 5:
+            return {"is_valid": False, "status": "INSUFFICIENT_HISTORY", "reason": f"Only {len(df)} candles available (< 5 required)"}
+
+        df_eval = df.copy()
+        if isinstance(df_eval.columns, pd.MultiIndex):
+            df_eval.columns = df_eval.columns.get_level_values(0)
+
+        if not pd.api.types.is_datetime64_any_dtype(df_eval.index):
+            try:
+                df_eval.index = pd.to_datetime(df_eval.index)
+            except Exception as e:
+                return {"is_valid": False, "status": "INVALID_INDEX", "reason": f"Cannot parse datetime index: {e}"}
+
+        # Check monotonic ordering
+        if not df_eval.index.is_monotonic_increasing:
+            return {"is_valid": False, "status": "NON_MONOTONIC_INDEX", "reason": "Historical candles not strictly chronological"}
+
+        # Validate finite OHLCV data
+        req_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+        if not all(col in df_eval.columns for col in req_cols):
+            return {"is_valid": False, "status": "MISSING_COLUMNS", "reason": f"Required OHLCV columns missing: {[c for c in req_cols if c not in df_eval.columns]}"}
+
+        c = df_eval['Close']
+        h = df_eval['High']
+        l = df_eval['Low']
+        o = df_eval['Open']
+        if (c <= 0).any() or (h <= 0).any() or (l <= 0).any() or (o <= 0).any():
+            return {"is_valid": False, "status": "INVALID_PRICES", "reason": "Non-positive price values detected in historical slice"}
+
+        last_dt = df_eval.index[-1]
+        last_ts = last_dt.timestamp() if hasattr(last_dt, 'timestamp') else float(last_dt)
+
+        return {
+            "is_valid": True,
+            "status": "VALID_HISTORICAL",
+            "is_completed_candle": True,
+            "latest_candle_ts": last_ts,
+            "candle_end_ts": last_ts + candle_duration_seconds
+        }

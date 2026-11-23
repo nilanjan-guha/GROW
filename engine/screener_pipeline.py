@@ -28,7 +28,8 @@ class ScreenerPipeline:
         news_cat=None,
         prev_close=None,
         time_slot_rvol=None,
-        rvol_obs=0
+        rvol_obs=0,
+        is_replay=False
     ):
         """
         Executes complete institutional + opportunity ranking analysis on a single stock's 5m history.
@@ -41,10 +42,20 @@ class ScreenerPipeline:
         if isinstance(stock_df.columns, pd.MultiIndex):
             stock_df.columns = stock_df.columns.get_level_values(0)
 
-        # 1. Determine completed candle validation
-        feed_val = MarketValidator.validate_feed_freshness(stock_df, max_delay_seconds=300, candle_duration_seconds=300)
-        is_completed = feed_val.get("is_completed_candle", False)
-        eval_df = stock_df if is_completed else stock_df.iloc[:-1]
+        # 1. Determine completed candle validation (live feed freshness vs historical integrity)
+        if is_replay:
+            feed_val = MarketValidator.validate_historical_replay_data(stock_df, candle_duration_seconds=300)
+            if not feed_val.get("is_valid", False):
+                return None
+            is_completed = True
+            eval_df = stock_df
+        else:
+            feed_val = MarketValidator.validate_feed_freshness(stock_df, max_delay_seconds=300, candle_duration_seconds=300)
+            if not feed_val.get("is_valid", False):
+                return None
+            is_completed = feed_val.get("is_completed_candle", False)
+            eval_df = stock_df if is_completed else stock_df.iloc[:-1]
+        
         if len(eval_df) < 15:
             return None
 
