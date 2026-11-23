@@ -211,12 +211,36 @@
                     </div>
                 </div>
 
-                <!-- Live Stream Terminal Console -->
-                <div class="panel-header" style="background:none; padding: 4px 0 6px 0; border:none; margin-top:4px;">
-                    <span style="font-size:0.72rem; color:var(--neon-cyan);">AI Activity Stream (Continuous Universe Scanner)</span>
-                    <button class="btn-action" onclick="clearLogs()">PURGE LOG</button>
+                <!-- Live Stream Terminal Console & Trades Journal -->
+                <div style="margin-top:8px; border:1px solid rgba(255,255,255,0.08); border-radius:6px; background:rgba(2,6,18,0.7); overflow:hidden;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.03); border-bottom:1px solid rgba(255,255,255,0.06); padding:4px 10px;">
+                        <div style="display:flex; gap:6px;">
+                            <button id="tabBtnStream" class="btn-action active-tab" onclick="switchConsoleTab('stream')" style="padding:4px 10px; font-size:0.68rem; font-weight:bold; border-radius:4px; background:rgba(0,240,255,0.15); border:1px solid var(--neon-cyan); color:var(--neon-cyan);">⚡ AI ACTIVITY STREAM</button>
+                            <button id="tabBtnActive" class="btn-action" onclick="switchConsoleTab('active')" style="padding:4px 10px; font-size:0.68rem; font-weight:bold; border-radius:4px; background:transparent; border:1px solid rgba(255,255,255,0.1); color:#94a3b8;">🟢 ACTIVE TRADES (<span id="tabActiveCount">0</span>)</button>
+                            <button id="tabBtnClosed" class="btn-action" onclick="switchConsoleTab('closed')" style="padding:4px 10px; font-size:0.68rem; font-weight:bold; border-radius:4px; background:transparent; border:1px solid rgba(255,255,255,0.1); color:#94a3b8;">📚 CLOSED TRADES & LEARNING (<span id="tabClosedCount">0</span>)</button>
+                        </div>
+                        <button class="btn-action" onclick="clearLogs()" id="purgeLogBtn" style="padding:3px 8px; font-size:0.62rem;">PURGE LOG</button>
+                    </div>
+
+                    <!-- Tab 1: AI Activity Stream -->
+                    <div id="tabContentStream">
+                        <div class="terminal-feed" id="terminalFeed"></div>
+                    </div>
+
+                    <!-- Tab 2: Active Trades Window -->
+                    <div id="tabContentActive" style="display:none; padding:8px; max-height:160px; overflow-y:auto;">
+                        <div id="activeTradesList" style="display:flex; flex-direction:column; gap:6px;">
+                            <div style="font-size:0.72rem; color:var(--text-muted); text-align:center; padding:15px;">No active trades open.</div>
+                        </div>
+                    </div>
+
+                    <!-- Tab 3: Closed Trades & AI Learning Journal -->
+                    <div id="tabContentClosed" style="display:none; padding:8px; max-height:160px; overflow-y:auto;">
+                        <div id="closedTradesList" style="display:flex; flex-direction:column; gap:6px;">
+                            <div style="font-size:0.72rem; color:var(--text-muted); text-align:center; padding:15px;">Loading closed trades & learning data...</div>
+                        </div>
+                    </div>
                 </div>
-                <div class="terminal-feed" id="terminalFeed"></div>
 
             </div>
         </div>
@@ -350,6 +374,143 @@
             div.innerHTML = `<span style="color:#64748b; margin-right:6px;">[${time}]</span><span style="color:${col}; font-weight:bold; margin-right:6px;">[${type}]</span>${msg}`;
             feed.appendChild(div);
             feed.scrollTop = feed.scrollHeight;
+        }
+
+        function switchConsoleTab(tab) {
+            const btnStream = document.getElementById('tabBtnStream');
+            const btnActive = document.getElementById('tabBtnActive');
+            const btnClosed = document.getElementById('tabBtnClosed');
+            const contentStream = document.getElementById('tabContentStream');
+            const contentActive = document.getElementById('tabContentActive');
+            const contentClosed = document.getElementById('tabContentClosed');
+            const purgeBtn = document.getElementById('purgeLogBtn');
+
+            [btnStream, btnActive, btnClosed].forEach(b => {
+                b.style.background = 'transparent';
+                b.style.borderColor = 'rgba(255,255,255,0.1)';
+                b.style.color = '#94a3b8';
+            });
+            contentStream.style.display = 'none';
+            contentActive.style.display = 'none';
+            contentClosed.style.display = 'none';
+
+            if (tab === 'stream') {
+                btnStream.style.background = 'rgba(0,240,255,0.15)';
+                btnStream.style.borderColor = 'var(--neon-cyan)';
+                btnStream.style.color = 'var(--neon-cyan)';
+                contentStream.style.display = 'block';
+                if (purgeBtn) purgeBtn.style.display = 'block';
+            } else if (tab === 'active') {
+                btnActive.style.background = 'rgba(0,255,170,0.15)';
+                btnActive.style.borderColor = 'var(--neon-green)';
+                btnActive.style.color = 'var(--neon-green)';
+                contentActive.style.display = 'block';
+                if (purgeBtn) purgeBtn.style.display = 'none';
+                renderActiveTradesWindow();
+            } else if (tab === 'closed') {
+                btnClosed.style.background = 'rgba(255,170,0,0.15)';
+                btnClosed.style.borderColor = 'var(--neon-amber)';
+                btnClosed.style.color = 'var(--neon-amber)';
+                contentClosed.style.display = 'block';
+                if (purgeBtn) purgeBtn.style.display = 'none';
+                loadClosedTradesJournal();
+            }
+        }
+
+        function renderActiveTradesWindow() {
+            const listEl = document.getElementById('activeTradesList');
+            const countEl = document.getElementById('tabActiveCount');
+            if (!listEl) return;
+            const trades = Object.values(activeConfirmedTrades);
+            if (countEl) countEl.innerText = trades.length;
+
+            if (trades.length === 0) {
+                listEl.innerHTML = '<div style="font-size:0.72rem; color:var(--text-muted); text-align:center; padding:15px;">No active trades in progress. Scanning universe for high-confluence setups...</div>';
+                return;
+            }
+
+            let html = '';
+            trades.forEach(t => {
+                const s = t.symbol;
+                const smc = t.smc;
+                const isBuy = smc.action && smc.action.includes('BUY');
+                const col = isBuy ? 'var(--neon-green)' : 'var(--neon-red)';
+                const ep = Number(smc.entry_price || smc.current_price || 0).toFixed(1);
+                const lp = Number(smc.live_price || smc.current_price || ep).toFixed(1);
+                const sl = smc.suggested_sl || '--';
+                const tp1 = smc.suggested_tp1 || '--';
+
+                let pnlPct = 0;
+                if (ep > 0) {
+                    pnlPct = isBuy ? ((lp - ep)/ep * 100) : ((ep - lp)/ep * 100);
+                }
+                const pnlSign = pnlPct >= 0 ? '+' : '';
+                const pnlCol = pnlPct >= 0 ? 'var(--neon-green)' : 'var(--neon-red)';
+
+                html += `
+                <div style="background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.06); border-left:3px solid ${col}; border-radius:4px; padding:6px 10px; display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <span style="font-weight:bold; color:#fff; font-size:0.75rem;">${s.replace('.NS', '')}</span>
+                        <span style="font-size:0.65rem; color:${col}; background:rgba(255,255,255,0.06); padding:1px 5px; border-radius:3px; margin-left:6px; font-weight:bold;">${isBuy ? 'BUY / CALL' : 'SELL / PUT'}</span>
+                        <span style="font-size:0.68rem; color:#94a3b8; margin-left:8px;">Entry: ₹${ep} | SL: <b style="color:var(--neon-amber);">₹${sl}</b> | TP: <b style="color:var(--neon-cyan);">₹${tp1}</b></span>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span style="font-size:0.80rem; font-weight:bold; color:#fff;">₹${lp}</span>
+                        <span style="font-size:0.72rem; font-weight:800; color:${pnlCol};">${pnlSign}${pnlPct.toFixed(2)}%</span>
+                        <button onclick="closeTrade('${s}', ${t.signal_id || 'null'}, ${lp})" style="background:rgba(255,51,102,0.15); border:1px solid rgba(255,51,102,0.4); color:var(--neon-red); cursor:pointer; padding:1px 6px; border-radius:3px; font-weight:bold; font-size:0.68rem;" title="Close trade">✕ Close</button>
+                    </div>
+                </div>`;
+            });
+            listEl.innerHTML = html;
+        }
+
+        async function loadClosedTradesJournal() {
+            const listEl = document.getElementById('closedTradesList');
+            const countEl = document.getElementById('tabClosedCount');
+            if (!listEl) return;
+
+            try {
+                const res = await fetch('/api/signals/recent');
+                const data = await res.json();
+                if (data.success && data.signals) {
+                    const closed = data.signals.filter(s => s.outcome && s.outcome !== 'ACTIVE');
+                    if (countEl) countEl.innerText = closed.length;
+
+                    if (closed.length === 0) {
+                        listEl.innerHTML = '<div style="font-size:0.72rem; color:var(--text-muted); text-align:center; padding:15px;">No closed trades logged yet. AI Strategy weights will calibrate after trade outcomes.</div>';
+                        return;
+                    }
+
+                    let html = '';
+                    closed.slice(0, 15).forEach(c => {
+                        const isWin = c.outcome.includes('WIN');
+                        const isLoss = c.outcome === 'LOSS';
+                        const isEod = c.outcome.includes('EOD') || c.outcome.includes('STALE');
+                        
+                        let tagCol = isWin ? 'var(--neon-green)' : (isLoss ? 'var(--neon-red)' : 'var(--neon-amber)');
+                        let tagLabel = isWin ? 'WIN / TARGET HIT' : (isLoss ? 'LOSS / STOP HIT' : 'CLOSED / EOD CHOP');
+                        let learnNote = isWin ? 'Strategy Weight Boosted (+Alpha)' : (isLoss ? 'Stop Loss Analysed: Down-weighted Strategy' : 'Sideways Filter Calibrated');
+
+                        const pnl = Number(c.net_pnl || c.final_pnl || 0).toFixed(1);
+                        const pnlSign = Number(pnl) >= 0 ? '+' : '';
+                        const pnlCol = Number(pnl) >= 0 ? 'var(--neon-green)' : 'var(--neon-red)';
+
+                        html += `
+                        <div style="background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.06); border-radius:4px; padding:6px 10px; display:flex; justify-content:space-between; align-items:center;">
+                            <div>
+                                <span style="font-weight:bold; color:#fff; font-size:0.75rem;">${c.symbol.replace('.NS', '')}</span>
+                                <span style="font-size:0.63rem; color:${tagCol}; border:1px solid ${tagCol}; padding:1px 5px; border-radius:3px; margin-left:6px; font-weight:bold;">${tagLabel}</span>
+                                <span style="font-size:0.65rem; color:#94a3b8; margin-left:8px;">${c.strategy || 'SMC'}</span>
+                                <span style="font-size:0.62rem; color:var(--neon-cyan); margin-left:8px;">[AI Learning: ${learnNote}]</span>
+                            </div>
+                            <div style="font-size:0.75rem; font-weight:800; color:${pnlCol};">
+                                ${pnlSign}₹${pnl}
+                            </div>
+                        </div>`;
+                    });
+                    listEl.innerHTML = html;
+                }
+            } catch(e) {}
         }
 
         function clearLogs() {

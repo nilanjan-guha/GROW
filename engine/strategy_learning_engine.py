@@ -54,11 +54,11 @@ class StrategyLearningEngine:
         conn = get_db_connection()
         c = conn.cursor()
 
-        # Query all closed trades
+        # Query all closed trades (including SL, Target, and Sideways/EOD closes)
         c.execute("""
         SELECT strategy, market_regime, outcome, net_pnl, final_pnl, timestamp
         FROM historical_signals
-        WHERE outcome IN ('WIN', 'WIN_FULL', 'WIN_PARTIAL', 'LOSS')
+        WHERE outcome IN ('WIN', 'WIN_FULL', 'WIN_PARTIAL', 'LOSS', 'CLOSED_EOD_SQUAREOFF', 'CLOSED_MANUAL', 'CLOSED_STALE_SESSION')
         """)
         trades = c.fetchall()
 
@@ -69,18 +69,24 @@ class StrategyLearningEngine:
         # Aggregate by Strategy
         strategy_stats = {}
         for t in trades:
-            strat = t["strategy"]
+            strat = t["strategy"] or "SMC Structure"
             if strat not in strategy_stats:
-                strategy_stats[strat] = {"wins": 0, "losses": 0, "net_profit": 0.0, "net_loss": 0.0}
+                strategy_stats[strat] = {"wins": 0, "losses": 0, "sideways": 0, "net_profit": 0.0, "net_loss": 0.0}
             
-            pnl = float(t["net_pnl"]) if t["net_pnl"] is not None else float(t["final_pnl"])
+            pnl = float(t["net_pnl"]) if t["net_pnl"] is not None else float(t["final_pnl"] or 0.0)
             is_win = t["outcome"] in ("WIN", "WIN_FULL", "WIN_PARTIAL")
+            is_sideways = t["outcome"] in ("CLOSED_EOD_SQUAREOFF", "CLOSED_STALE_SESSION") and abs(pnl) < 1.0
+
             if is_win:
                 strategy_stats[strat]["wins"] += 1
                 strategy_stats[strat]["net_profit"] += max(0.0, pnl)
+            elif is_sideways:
+                strategy_stats[strat]["sideways"] += 1
+                # Sideways chop penalized slightly
+                strategy_stats[strat]["net_loss"] += 0.5
             else:
                 strategy_stats[strat]["losses"] += 1
-                strategy_stats[strat]["net_loss"] += abs(min(0.0, pnl))
+                strategy_stats[strat]["net_loss"] += abs(min(0.0, pnl)) if pnl < 0 else 1.0
 
         calibrations = {}
         now = time.time()
