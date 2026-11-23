@@ -203,13 +203,15 @@ class GrowwSectorEngine:
                     break
 
         self.actual_fno_coverage = len(unique_fno_covered)
-        # Check coverage vs expected: strictly reject incomplete sector results if coverage validation fails!
-        if self.expected_fno_coverage > 0 and (self.actual_fno_coverage / self.expected_fno_coverage) < 0.25:
+        # Expected F&O constituents within the selected priority sectors (3 Bull + 3 Bear + 2 Neutral)
+        # Typically each sector has 5-15 F&O stocks (totaling ~40-80 stocks across 8 sectors).
+        # We require at least 15 valid F&O stocks across these 8 sectors to ensure healthy sector depth.
+        if self.actual_fno_coverage < 15:
             self.is_stale = True
             self.is_usable = False
-            self.last_error = f"LOW_COVERAGE: {self.actual_fno_coverage}/{self.expected_fno_coverage}"
-            print(f"[GROWW SECTORS] Coverage rejected: {self.actual_fno_coverage}/{self.expected_fno_coverage} (<25%)")
-            return {}  # Reject incomplete results; do not return or store as valid!
+            self.last_error = f"LOW_SECTOR_COVERAGE: {self.actual_fno_coverage} F&O stocks (<15)"
+            print(f"[GROWW SECTORS] Coverage rejected: {self.actual_fno_coverage} F&O stocks across selected sectors (<15)")
+            return {}  # Reject incomplete results
         else:
             self.is_stale = False
             self.is_usable = True

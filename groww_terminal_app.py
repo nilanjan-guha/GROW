@@ -557,7 +557,9 @@ def background_screener_worker():
                 norm_fno_set = {s.upper().replace(".NS", "") for s in valid_fno_set}
 
                 candidates_for_ranking = []
-                nifty_cached_df = screener_state.get("raw_market_cache", {}).get("^NSEI", {}).get("df")
+                raw_cache = screener_state.get("raw_market_cache") or {}
+                nifty_cached_entry = raw_cache.get("^NSEI") if isinstance(raw_cache, dict) else {}
+                nifty_cached_df = nifty_cached_entry.get("df") if isinstance(nifty_cached_entry, dict) else None
 
                 for sym in all_stk_symbols:
                     clean_sym = sym.replace(".NS", "").upper()
@@ -618,6 +620,7 @@ def background_screener_worker():
 
             time.sleep(1)
         except Exception as e:
+            traceback.print_exc()
             print("Screener worker exception:", e)
             time.sleep(5)
 
