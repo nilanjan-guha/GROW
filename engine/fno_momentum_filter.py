@@ -38,9 +38,9 @@ class FNOMomentumFilter:
             first_o = float(o.iloc[0])
             change_pct = round(((curr_c - first_o) / first_o) * 100, 2) if first_o > 0 else 0.0
 
-            # 1. Volume & Turnover Filter (Reject dead F&O contracts)
+            # 1. Volume & Turnover Filter (Reject dead contracts, but don't over-filter)
             recent_v = v.iloc[-10:].mean()
-            if recent_v < 10000 or (recent_v * curr_c) < 3000000:  # < 30 Lakhs turnover per 5-min
+            if recent_v < 5000 or (recent_v * curr_c) < 1500000:  # < 15 Lakhs turnover per 5-min
                 return None
 
             # 2. Relative Volume (RVOL)
@@ -54,8 +54,8 @@ class FNOMomentumFilter:
             atr = float(tr.iloc[-14:].mean()) if len(tr) >= 14 else float(tr.mean())
             atr_pct = (atr / curr_c) * 100 if curr_c > 0 else 0.0
 
-            # Sideways check: If ATR% < 0.25% and intraday change between -0.2% and +0.2%, stock is dead flat/sideways
-            if atr_pct < 0.25 and abs(change_pct) < 0.25:
+            # Sideways check: If ATR% < 0.18% and intraday change flat within +/-0.15%, discard (dead sideways)
+            if atr_pct < 0.18 and abs(change_pct) < 0.15:
                 return None
 
             # 4. VWAP
@@ -69,9 +69,11 @@ class FNOMomentumFilter:
             ema9 = c.ewm(span=9, adjust=False).mean().iloc[-1]
             ema21 = c.ewm(span=21, adjust=False).mean().iloc[-1]
 
-            # 6. Momentum Score (Combines RVOL, % change, and trend clarity)
-            is_bull = (curr_c > curr_vwap) and (ema9 >= ema21) and (change_pct > 0.3)
-            is_bear = (curr_c < curr_vwap) and (ema9 <= ema21) and (change_pct < -0.3)
+            # 6. Balanced Momentum Criteria:
+            # Bullish: Holding above VWAP with positive bias (change > +0.20%) or volume ignition (RVOL >= 1.25)
+            is_bull = (curr_c >= curr_vwap) and (ema9 >= ema21 * 0.998) and (change_pct >= 0.20 or (rvol >= 1.25 and curr_c > curr_o))
+            # Bearish: Trapped below VWAP with negative bias (change < -0.20%) or volume breakdown (RVOL >= 1.25)
+            is_bear = (curr_c <= curr_vwap) and (ema9 <= ema21 * 1.002) and (change_pct <= -0.20 or (rvol >= 1.25 and curr_c < curr_o))
 
             # High momentum velocity
             velocity = abs(change_pct) * max(1.0, rvol)
