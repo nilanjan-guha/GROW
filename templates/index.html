@@ -235,18 +235,18 @@
 
                     <!-- Tab 1: AI Activity Stream -->
                     <div id="tabContentStream">
-                        <div class="terminal-feed" id="terminalFeed"></div>
+                        <div class="terminal-feed" id="terminalFeed" style="max-height:220px; overflow-y:auto;"></div>
                     </div>
 
                     <!-- Tab 2: Active Trades Window -->
-                    <div id="tabContentActive" style="display:none; padding:8px; max-height:160px; overflow-y:auto;">
+                    <div id="tabContentActive" style="display:none; padding:10px; max-height:240px; min-height:160px; overflow-y:auto;">
                         <div id="activeTradesList" style="display:flex; flex-direction:column; gap:6px;">
                             <div style="font-size:0.72rem; color:var(--text-muted); text-align:center; padding:15px;">No active trades open.</div>
                         </div>
                     </div>
 
                     <!-- Tab 3: Closed Trades & AI Learning Journal -->
-                    <div id="tabContentClosed" style="display:none; padding:8px; max-height:160px; overflow-y:auto;">
+                    <div id="tabContentClosed" style="display:none; padding:10px; max-height:240px; min-height:160px; overflow-y:auto;">
                         <div id="closedTradesList" style="display:flex; flex-direction:column; gap:6px;">
                             <div style="font-size:0.72rem; color:var(--text-muted); text-align:center; padding:15px;">Loading closed trades & learning data...</div>
                         </div>
@@ -507,14 +507,14 @@
                         const pnlCol = Number(pnl) >= 0 ? 'var(--neon-green)' : 'var(--neon-red)';
 
                         html += `
-                        <div style="background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.06); border-radius:4px; padding:6px 10px; display:flex; justify-content:space-between; align-items:center;">
-                            <div>
-                                <span style="font-weight:bold; color:#fff; font-size:0.75rem;">${c.symbol.replace('.NS', '')}</span>
-                                <span style="font-size:0.63rem; color:${tagCol}; border:1px solid ${tagCol}; padding:1px 5px; border-radius:3px; margin-left:6px; font-weight:bold;">${tagLabel}</span>
-                                <span style="font-size:0.65rem; color:#94a3b8; margin-left:8px;">${c.strategy || 'SMC'}</span>
-                                <span style="font-size:0.62rem; color:var(--neon-cyan); margin-left:8px;">[AI Learning: ${learnNote}]</span>
+                        <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:6px; padding:8px 12px; display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                                <span style="font-weight:800; color:#fff; font-size:0.78rem; letter-spacing:0.5px;">${c.symbol.replace('.NS', '')}</span>
+                                <span style="font-size:0.63rem; color:${tagCol}; border:1px solid ${tagCol}; background:rgba(255,255,255,0.02); padding:2px 6px; border-radius:4px; font-weight:700;">${tagLabel}</span>
+                                <span style="font-size:0.65rem; color:#94a3b8; font-weight:600;">${c.strategy || 'SMC'}</span>
+                                <span style="font-size:0.64rem; color:var(--neon-cyan); background:rgba(0,240,255,0.08); padding:1px 6px; border-radius:3px;">AI: ${learnNote}</span>
                             </div>
-                            <div style="font-size:0.75rem; font-weight:800; color:${pnlCol};">
+                            <div style="font-size:0.80rem; font-weight:800; color:${pnlCol}; white-space:nowrap;">
                                 ${pnlSign}₹${pnl}
                             </div>
                         </div>`;
