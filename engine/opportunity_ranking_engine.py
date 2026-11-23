@@ -497,26 +497,18 @@ class OpportunityRankingEngine:
         )
 
         # Low-priority Early Observation Stage (Watch-only: strictly requires true accumulation evidence):
-        # Must meet at least 2 independent criteria:
-        # 1. 3-bar consecutively rising volume (v[-1] > v[-2] > v[-3]) with constructive candle (not heavy dump candle)
-        # 2. Positive / improving directional RS acceleration (rs_accel_3 > 0 for bull, < 0 for bear)
-        # 3. Volatility squeeze (NR4/NR7/BB squeeze) or proximity (< 0.5%) to key structural level (ORH/ORL/PDH/PDL)
-        # 4. Aligned with VWAP
-        bull_accum_signals = 0
-        if vol_consecutive_rise and curr_c >= curr_o: bull_accum_signals += 1
-        if rs_accel_3 > 0.15: bull_accum_signals += 1
-        if is_range_squeezed or is_coiling_near_orh or is_coiling_near_pdh: bull_accum_signals += 1
-        if above_vwap: bull_accum_signals += 1
-
-        bear_accum_signals = 0
-        if vol_consecutive_rise and curr_c <= curr_o: bear_accum_signals += 1
-        if rs_accel_3 < -0.15: bear_accum_signals += 1
-        if is_range_squeezed or is_coiling_near_orl or is_coiling_near_pdl: bear_accum_signals += 1
-        if below_vwap: bear_accum_signals += 1
+        # Must have at least ONE participation signal (rising volume or improving RS) AND structural evidence:
+        # Participation signals:
+        has_bull_participation = (vol_consecutive_rise and curr_c >= curr_o) or (rs_accel_3 > 0.15)
+        has_bear_participation = (vol_consecutive_rise and curr_c <= curr_o) or (rs_accel_3 < -0.15)
+        
+        # Structural evidence:
+        has_bull_structure_setup = is_range_squeezed or is_coiling_near_orh or is_coiling_near_pdh or has_swing_higher_lows
+        has_bear_structure_setup = is_range_squeezed or is_coiling_near_orl or is_coiling_near_pdl or has_swing_lower_highs
 
         is_early_observing = (
-            (direction == "BULLISH" and bull_accum_signals >= 2 and early_bull_score >= 30) or
-            (direction == "BEARISH" and bear_accum_signals >= 2 and early_bear_score >= 30)
+            (direction == "BULLISH" and has_bull_participation and has_bull_structure_setup and above_vwap and early_bull_score >= 30) or
+            (direction == "BEARISH" and has_bear_participation and has_bear_structure_setup and below_vwap and early_bear_score >= 30)
         )
 
         if is_strictly_confirmed:

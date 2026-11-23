@@ -449,9 +449,16 @@ def background_screener_worker():
     while True:
         try:
             now = time.time()
-            # 1. 5-minute Universal 219 F&O Momentum Refresh (Filtering out sideways/dead stocks)
+            # 1. 5-minute Universal 219 F&O Momentum Refresh & Dynamic Sector Recalibration
             if now - screener_state["last_screener_update"] > 300 or not screener_state.get("bullish_momentum_watchlist"):
-                print("[FNO SCANNER] Scanning all 219 F&O stocks: filtering sideways, selecting active momentum movers...")
+                print("[FNO SCANNER] Scanning all 219 F&O stocks & refreshing Groww trending sectors...")
+                
+                # Periodically refresh sectors and atomic mappings every 5 minutes
+                try:
+                    screener_state["sectors"] = calculate_dynamic_sectors()
+                except Exception as se:
+                    print("[SECTOR REFRESH ERROR]:", se)
+
                 fno_list = screener_state.get("fno_universe", [])
                 if not fno_list:
                     # Fallback to sector discovery if universe empty
@@ -947,7 +954,7 @@ def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
     if not current_candle_ts:
         # If NIFTY data is unavailable, market-wide synchronization cannot be established
         return {
-            "top_bullish": [], "top_bearish": [], "entry_ready": [], "ignition": [], "preparing": []
+            "top_bullish": [], "top_bearish": [], "entry_ready": [], "ignition": [], "preparing": [], "observing": []
         }, None
 
     candidates = []
@@ -1049,6 +1056,18 @@ def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
             time_slot_rvol = fno_data.get("rvol")
             rvol_obs = fno_data.get("rvol_obs", 0)
 
+        # Independent Traded-Value Liquidity Gate on Completed 5-Minute Candles (P1):
+        c_series = eval_df_sym['Close']
+        h_series = eval_df_sym['High']
+        l_series = eval_df_sym['Low']
+        v_series = eval_df_sym['Volume']
+        tp_series = (h_series + l_series + c_series) / 3.0
+        candle_turnover = tp_series * v_series
+        avg_turnover_10 = float(candle_turnover.iloc[-10:].mean()) if len(candle_turnover) >= 10 else float(candle_turnover.mean())
+        recent_vol_10 = float(v_series.iloc[-10:].mean()) if len(v_series) >= 10 else float(v_series.mean())
+        if recent_vol_10 < 5000 or avg_turnover_10 < 1500000:
+            continue
+
         eval_res = OpportunityRankingEngine.evaluate_stock_opportunity(
             stock_df=eval_df_sym,
             symbol=sym,
@@ -1066,7 +1085,7 @@ def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
 
     if not candidates:
         ranked = {
-            "top_bullish": [], "top_bearish": [], "entry_ready": [], "ignition": [], "preparing": []
+            "top_bullish": [], "top_bearish": [], "entry_ready": [], "ignition": [], "preparing": [], "observing": []
         }
     else:
         ranked = OpportunityRankingEngine.rank_top_opportunities(candidates, top_n=3)

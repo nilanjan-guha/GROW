@@ -192,6 +192,3 @@ class GrowwSectorEngine:
             all_fno_constituents.sort(key=lambda x: (x.get("is_directional_aligned", False), x.get("momentum_score", 0.0), -x["change"]), reverse=True)
 
         return all_fno_constituents
-            qualified_fno.sort(key=lambda x: (x.get("momentum_score", 0.0), -x["change"]), reverse=True)
-
-        return qualified_fno
