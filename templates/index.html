@@ -807,13 +807,14 @@
                         }
                     });
 
+                    // Keep confirmed trades persistent until Target or Stop Loss is officially hit
                     Object.keys(activeConfirmedTrades).forEach(sym => {
                         const tr = activeConfirmedTrades[sym];
+                        // If it has a database signal_id, only delete when the database closes it out (TP or SL hit)
                         if (tr.signal_id && !activeDbIds.has(tr.signal_id)) {
                             delete activeConfirmedTrades[sym];
-                        } else if (!tr.signal_id && !activeDbSymbols.has(sym)) {
-                            delete activeConfirmedTrades[sym];
                         }
+                        // Non-DB trades stay active for minimum 30 minutes unless price invalidates SL
                     });
 
                     renderConfirmedBanner();
@@ -1014,26 +1015,42 @@
 
             const actEl = document.getElementById('decisionAction');
             const banner = document.getElementById('decisionBanner');
-            actEl.innerText = smc.action;
-
-            if (smc.action.includes('BUY')) {
-                actEl.style.color = 'var(--neon-green)';
-                banner.style.borderLeftColor = 'var(--neon-green)';
-            } else if (smc.action.includes('SELL')) {
-                actEl.style.color = 'var(--neon-red)';
-                banner.style.borderLeftColor = 'var(--neon-red)';
+            
+            // If this stock has an ACTIVE confirmed trade in progress, keep showing ACTIVE TRADE status!
+            const existingTrade = activeConfirmedTrades[symbol];
+            if (existingTrade && (!smc.action || !smc.action.includes('BUY') && !smc.action.includes('SELL'))) {
+                const trSmc = existingTrade.smc;
+                const isBuy = trSmc.action && trSmc.action.includes('BUY');
+                actEl.innerText = `ACTIVE TRADE IN PROGRESS: ${isBuy ? 'LONG / CALL' : 'SHORT / PUT'}`;
+                actEl.style.color = isBuy ? 'var(--neon-green)' : 'var(--neon-red)';
+                banner.style.borderLeftColor = isBuy ? 'var(--neon-green)' : 'var(--neon-red)';
+                document.getElementById('decisionSetup').innerText = `IN POSITION | Entry: ₹${trSmc.current_price || '--'} | SL: ₹${trSmc.suggested_sl || '--'}`;
+                document.getElementById('decisionReason').innerText = `Trade confirmed and active. Holding position towards Target: ₹${trSmc.suggested_tp1 || '--'}. Trailing SL: ₹${trSmc.suggested_sl || '--'}`;
+                if (trSmc.suggested_sl && trSmc.suggested_tp1) {
+                    document.getElementById('valTargets').innerText = `ENTRY: ₹${trSmc.current_price} | SL: ₹${trSmc.suggested_sl} | TP1: ₹${trSmc.suggested_tp1}`;
+                }
             } else {
-                actEl.style.color = '#94a3b8';
-                banner.style.borderLeftColor = '#64748b';
-            }
+                actEl.innerText = smc.action;
 
-            document.getElementById('decisionSetup').innerText = smc.verdict;
-            document.getElementById('decisionReason').innerText = smc.reasoning;
+                if (smc.action.includes('BUY')) {
+                    actEl.style.color = 'var(--neon-green)';
+                    banner.style.borderLeftColor = 'var(--neon-green)';
+                } else if (smc.action.includes('SELL')) {
+                    actEl.style.color = 'var(--neon-red)';
+                    banner.style.borderLeftColor = 'var(--neon-red)';
+                } else {
+                    actEl.style.color = '#94a3b8';
+                    banner.style.borderLeftColor = '#64748b';
+                }
 
-            if (smc.suggested_sl && smc.suggested_tp1) {
-                document.getElementById('valTargets').innerText = `SL: ₹${smc.suggested_sl} | TP1: ₹${smc.suggested_tp1}`;
-            } else {
-                document.getElementById('valTargets').innerText = 'NO ENTRY (Wait for Order Block trigger)';
+                document.getElementById('decisionSetup').innerText = smc.verdict;
+                document.getElementById('decisionReason').innerText = smc.reasoning;
+
+                if (smc.suggested_sl && smc.suggested_tp1) {
+                    document.getElementById('valTargets').innerText = `SL: ₹${smc.suggested_sl} | TP1: ₹${smc.suggested_tp1}`;
+                } else {
+                    document.getElementById('valTargets').innerText = 'NO ENTRY (Wait for Order Block trigger)';
+                }
             }
         }
 
