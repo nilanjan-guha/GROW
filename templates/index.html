@@ -1322,6 +1322,31 @@
                     </div>`;
                 });
 
+                // Display OBSERVING watch-only candidates (Distinct from true coils)
+                const observing = ranked.observing || [];
+                observing.forEach((c, i) => {
+                    const sym = c.symbol;
+                    const isBull = c.direction === 'BULLISH';
+                    const dirCol = isBull ? 'var(--neon-green)' : 'var(--neon-red)';
+                    const sign = isBull ? '+' : '';
+
+                    prepHtml += `
+                    <div style="background:rgba(255,255,255,0.01); border:1px dashed rgba(255,255,255,0.15); border-left:3px solid #64748b; border-radius:4px; padding:5px 8px; cursor:pointer; margin-top:4px;" onclick="selectStock('${sym}')" title="Early Accumulation Observation (Watch-only)">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <span style="font-size:0.73rem; color:#cbd5e1;">
+                                👀 ${sym.replace('.NS', '')} 
+                                <span style="font-size:0.58rem; color:#94a3b8; background:rgba(255,255,255,0.06); padding:1px 4px; border-radius:3px; margin-left:4px;">
+                                    EARLY OBSERVATION (WATCH-ONLY)
+                                </span>
+                            </span>
+                            <span style="font-size:0.70rem; color:#94a3b8;">${sign}${c.change_pct}%</span>
+                        </div>
+                        <div style="font-size:0.60rem; color:#64748b; margin-top:2px;">
+                            ${c.entry_trigger}
+                        </div>
+                    </div>`;
+                });
+
                 prepContainer.innerHTML = prepHtml;
             }
 

@@ -154,24 +154,24 @@ class FNOMomentumFilter:
 
             has_higher_lows = False
             has_lower_highs = False
-            structure_status = "INSUFFICIENT_STRUCTURE"
+            bullish_structure_status = "INSUFFICIENT_STRUCTURE"
+            bearish_structure_status = "INSUFFICIENT_STRUCTURE"
 
             if len(confirmed_swing_lows) >= 2:
                 # confirmed_swing_lows[0] is the most recent confirmed pivot low, [1] is the prior
-                has_higher_lows = confirmed_swing_lows[0] > confirmed_swing_lows[1]
-                structure_status = "CONFIRMED_HIGHER_LOWS" if has_higher_lows else "LOWER_LOWS"
+                has_higher_lows = bool(confirmed_swing_lows[0] > confirmed_swing_lows[1])
+                bullish_structure_status = "CONFIRMED_HIGHER_LOWS" if has_higher_lows else "LOWER_LOWS"
 
             if len(confirmed_swing_highs) >= 2:
                 # confirmed_swing_highs[0] is most recent confirmed pivot high, [1] is prior
-                has_lower_highs = confirmed_swing_highs[0] < confirmed_swing_highs[1]
-                if has_lower_highs:
-                    structure_status = "CONFIRMED_LOWER_HIGHS"
+                has_lower_highs = bool(confirmed_swing_highs[0] < confirmed_swing_highs[1])
+                bearish_structure_status = "CONFIRMED_LOWER_HIGHS" if has_lower_highs else "HIGHER_HIGHS"
 
             # 6. Directional Pre-Breakout / Compression Discovery:
             # Three distinct discovery paths:
             # Path A: Structural Coil (Requires confirmed swing structure + compression + above/below VWAP)
             # Path B: Early Activity (Improving RVOL >= 1.25x + compression near VWAP, tagged as EARLY_ACTIVITY)
-            # Path C: Early Observation (Quiet accumulation with rising volume trend and compression, RVOL < 1.25x, tagged as OBSERVING)
+            # Path C: Early Observation (Quiet accumulation with TRUE 3-candle rising volume trend and compression, RVOL < 1.25x, tagged as OBSERVING)
             is_structural_coil_bull = (
                 (curr_c > curr_vwap) and 
                 (ema9 >= ema21) and 
@@ -198,8 +198,8 @@ class FNOMomentumFilter:
                 not is_structural_coil_bear
             )
 
-            # Path C: Early Observation Path (Rising volume trend over last 3 candles + compression + near VWAP)
-            vol_rising_trend = bool(len(v) >= 3 and (v.iloc[-1] > v.iloc[-2]))
+            # Path C: Early Observation Path (Strict 3-candle consecutively rising volume trend: v[-1] > v[-2] > v[-3] + compression + near VWAP)
+            vol_rising_trend = bool(len(v) >= 3 and (v.iloc[-1] > v.iloc[-2] > v.iloc[-3]))
             is_observing_bull = (
                 (curr_c >= curr_vwap * 0.998) and
                 (is_nr4 or is_nr7 or is_bb_squeeze) and
@@ -258,7 +258,8 @@ class FNOMomentumFilter:
                 "is_bear": is_bear,
                 "is_pre_coil": is_structural_coil_bull or is_structural_coil_bear,
                 "discovery_type": discovery_type,
-                "structure_status": structure_status,
+                "bullish_structure_status": bullish_structure_status,
+                "bearish_structure_status": bearish_structure_status,
                 "confirmed_pivots": {
                     "swing_lows": confirmed_swing_lows[:2],
                     "swing_highs": confirmed_swing_highs[:2],

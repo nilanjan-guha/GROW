@@ -66,6 +66,7 @@ class OpportunityRankingEngine:
         nifty_change_pct = 0.0
         rs_accel_3 = 0.0
         rs_accel_6 = 0.0
+        is_aligned = False
 
         if nifty_df is not None and not nifty_df.empty:
             n_df = nifty_df.copy()
@@ -90,35 +91,36 @@ class OpportunityRankingEngine:
                     # Verify exact timestamp match of latest completed candle
                     latest_stock_ts = today_stock.index[-1]
                     latest_nifty_ts = today_nifty.index[-1]
-                    is_aligned = (latest_stock_ts == latest_nifty_ts)
+                    is_aligned = bool(latest_stock_ts == latest_nifty_ts)
 
-                    s_open = float(today_stock['Open'].iloc[0])
-                    s_sync_c = float(joined['stock_c'].iloc[-1])
-                    stock_change_pct = float(((s_sync_c - s_open) / s_open) * 100) if s_open > 0 else 0.0
+                    if is_aligned:
+                        s_open = float(today_stock['Open'].iloc[0])
+                        s_sync_c = float(joined['stock_c'].iloc[-1])
+                        stock_change_pct = float(((s_sync_c - s_open) / s_open) * 100) if s_open > 0 else 0.0
 
-                    n_open = float(today_nifty['Open'].iloc[0])
-                    n_sync_c = float(joined['nifty_c'].iloc[-1])
-                    nifty_change_pct = float(((n_sync_c - n_open) / n_open) * 100) if n_open > 0 else 0.0
+                        n_open = float(today_nifty['Open'].iloc[0])
+                        n_sync_c = float(joined['nifty_c'].iloc[-1])
+                        nifty_change_pct = float(((n_sync_c - n_open) / n_open) * 100) if n_open > 0 else 0.0
 
-                if len(joined) >= 4:
-                    s_last = float(joined['stock_c'].iloc[-1])
-                    s_prev3 = float(joined['stock_c'].iloc[-3])
-                    n_last = float(joined['nifty_c'].iloc[-1])
-                    n_prev3 = float(joined['nifty_c'].iloc[-3])
+                        if len(joined) >= 4:
+                            s_last = float(joined['stock_c'].iloc[-1])
+                            s_prev3 = float(joined['stock_c'].iloc[-3])
+                            n_last = float(joined['nifty_c'].iloc[-1])
+                            n_prev3 = float(joined['nifty_c'].iloc[-3])
 
-                    s_ret3 = ((s_last - s_prev3) / s_prev3) * 100 if s_prev3 > 0 else 0.0
-                    n_ret3 = ((n_last - n_prev3) / n_prev3) * 100 if n_prev3 > 0 else 0.0
-                    rs_accel_3 = round(s_ret3 - n_ret3, 2)
+                            s_ret3 = ((s_last - s_prev3) / s_prev3) * 100 if s_prev3 > 0 else 0.0
+                            n_ret3 = ((n_last - n_prev3) / n_prev3) * 100 if n_prev3 > 0 else 0.0
+                            rs_accel_3 = round(s_ret3 - n_ret3, 2)
 
-                if len(joined) >= 7:
-                    s_last = float(joined['stock_c'].iloc[-1])
-                    s_prev6 = float(joined['stock_c'].iloc[-6])
-                    n_last = float(joined['nifty_c'].iloc[-1])
-                    n_prev6 = float(joined['nifty_c'].iloc[-6])
+                        if len(joined) >= 7:
+                            s_last = float(joined['stock_c'].iloc[-1])
+                            s_prev6 = float(joined['stock_c'].iloc[-6])
+                            n_last = float(joined['nifty_c'].iloc[-1])
+                            n_prev6 = float(joined['nifty_c'].iloc[-6])
 
-                    s_ret6 = ((s_last - s_prev6) / s_prev6) * 100 if s_prev6 > 0 else 0.0
-                    n_ret6 = ((n_last - n_prev6) / n_prev6) * 100 if n_prev6 > 0 else 0.0
-                    rs_accel_6 = round(s_ret6 - n_ret6, 2)
+                            s_ret6 = ((s_last - s_prev6) / s_prev6) * 100 if s_prev6 > 0 else 0.0
+                            n_ret6 = ((n_last - n_prev6) / n_prev6) * 100 if n_prev6 > 0 else 0.0
+                            rs_accel_6 = round(s_ret6 - n_ret6, 2)
         else:
             if len(sc) >= 4:
                 c_3 = float(sc.iloc[-3])
@@ -494,6 +496,12 @@ class OpportunityRankingEngine:
             below_vwap
         )
 
+        # Low-priority Early Observation Stage (Watch-only: coiling near VWAP or volume rising, but without confirmed swing structure)
+        is_early_observing = (
+            (direction == "BULLISH" and (is_coiling_near_orh or is_range_squeezed or above_vwap) and early_bull_score >= 25) or
+            (direction == "BEARISH" and (is_coiling_near_orl or is_range_squeezed or below_vwap) and early_bear_score >= 25)
+        )
+
         if is_strictly_confirmed:
             stage = "CONFIRMED"
             stage_desc = f"Verified Completed Trade: RR 1:{computed_rr:.2f}, +{potential_pct:.1f}% Room"
@@ -506,6 +514,10 @@ class OpportunityRankingEngine:
             stage = "PREPARING"
             stage_desc = "⚡ Pre-Breakout/Breakdown Coil: Institutional accumulation before the move"
             entry_trigger = f"Pre-Breakout: Enter above ₹{min(orh, pdh if pdh else orh):.1f}" if direction == "BULLISH" else f"Pre-Breakdown: Enter below ₹{max(orl, pdl if pdl else orl):.1f}"
+        elif is_early_observing:
+            stage = "OBSERVING"
+            stage_desc = "👀 Early Observation: Quiet accumulation watch-only (No confirmed entry)"
+            entry_trigger = "Watch only: Waiting for confirmed pivot structure & volume expansion"
         else:
             stage = "MONITORING"
             stage_desc = "Normal intraday action"
@@ -631,7 +643,13 @@ class OpportunityRankingEngine:
             if c.get("stage") == "PREPARING" and c not in entry_ready_list
         ][:5]
 
-        # 4. WATCHLIST / MONITORING ONLY: Explicitly marked as non-actionable watchlists
+        # 4. OBSERVING (Max 5): Early quiet accumulation watch-only (Distinct from preparing!)
+        observing_list = [
+            c for c in all_candidates 
+            if c.get("stage") == "OBSERVING" and c not in entry_ready_list and c not in preparing_list
+        ][:5]
+
+        # 5. WATCHLIST / MONITORING ONLY: Explicitly marked as non-actionable watchlists
         # Never allow MONITORING to look like an entry signal in directional lists!
         watchlist_bullish = [
             c for c in bullish[:top_n]
@@ -645,5 +663,6 @@ class OpportunityRankingEngine:
             "top_bearish": watchlist_bearish,
             "entry_ready": entry_ready_list,
             "ignition": ignition_list,
-            "preparing": preparing_list
+            "preparing": preparing_list,
+            "observing": observing_list
         }

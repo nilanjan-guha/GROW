@@ -974,10 +974,10 @@ def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
     
     priority_sectors = set([s[0] for s in sorted_bull_sectors] + [s[0] for s in sorted_bear_sectors])
 
-    # Gather constituent symbols from top sectors and validate against F&O universe
+    # Gather all F&O constituent symbols from top sectors (not just top 5)
     sector_constituents = set()
     for s_name in priority_sectors:
-        stks = sectors[s_name].get("top_5") or sectors[s_name].get("top_5_stocks") or []
+        stks = sectors[s_name].get("all_constituents") or sectors[s_name].get("top_5") or sectors[s_name].get("top_5_stocks") or []
         for stk in stks:
             sym_clean = stk["symbol"] if isinstance(stk, dict) else str(stk)
             clean_bare = sym_clean.replace(".NS", "").upper()
@@ -1110,7 +1110,8 @@ def get_ranked_opportunities_endpoint():
                     "top_bearish": cached_ranked.get("top_bearish", []),
                     "entry_ready": cached_ranked.get("entry_ready", [])[:2],
                     "ignition": cached_ranked.get("ignition", [])[:3],
-                    "preparing": cached_ranked.get("preparing", [])[:5]
+                    "preparing": cached_ranked.get("preparing", [])[:5],
+                    "observing": cached_ranked.get("observing", [])[:5]
                 }
             })
 
@@ -1120,7 +1121,7 @@ def get_ranked_opportunities_endpoint():
                 "success": True,
                 "status": "NO_TRADE",
                 "ranked": {
-                    "top_bullish": [], "top_bearish": [], "entry_ready": [], "ignition": [], "preparing": []
+                    "top_bullish": [], "top_bearish": [], "entry_ready": [], "ignition": [], "preparing": [], "observing": []
                 }
             })
 

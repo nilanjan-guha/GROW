@@ -84,7 +84,8 @@ class GrowwSectorEngine:
                     "is_bullish": True,
                     "gainers": s.get('positiveStocks', len(constituents)),
                     "losers": s.get('negativeStocks', 0),
-                    "top_5": constituents[:5]
+                    "top_5": constituents[:5],
+                    "all_constituents": constituents
                 }
                 for stk in constituents:
                     new_stock_to_sector_map[stk["symbol"]] = {
@@ -114,7 +115,8 @@ class GrowwSectorEngine:
                     "is_bullish": False,
                     "gainers": s.get('positiveStocks', 0),
                     "losers": s.get('negativeStocks', len(constituents)),
-                    "top_5": constituents[:5]
+                    "top_5": constituents[:5],
+                    "all_constituents": constituents
                 }
                 for stk in constituents:
                     new_stock_to_sector_map[stk["symbol"]] = {
