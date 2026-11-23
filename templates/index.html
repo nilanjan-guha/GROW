@@ -194,6 +194,10 @@
         let watchlistIndex = 0;
         let sectorCountdown = 300;
         let activeConfirmedTrades = {};
+        try {
+            const saved = localStorage.getItem('activeConfirmedTrades');
+            if (saved) activeConfirmedTrades = JSON.parse(saved);
+        } catch(e) {}
 
         // 3D Three.js Background HUD Grid & Starfield
         function initThreeCanvas() {
@@ -383,6 +387,7 @@
         }
 
         async function init() {
+            renderConfirmedBanner();
             initThreeCanvas();
             initOrderFlowVisualizer();
             setup3DTilt();
@@ -427,6 +432,10 @@
 
             // Sync active banner status with SQLite outcome database every 15 seconds
             setInterval(syncActiveTradeBanner, 15000);
+
+            // Fetch and render active confirmed trades from database immediately so refresh never loses them
+            await syncActiveTradeBanner();
+            setInterval(syncActiveTradeBanner, 10000);
 
             // Fetch and render Top 3 Bullish & Bearish Ranked Opportunities every 15 seconds
             await loadRankedOpportunities();
@@ -766,6 +775,10 @@
                 showTradePopToast(symbol, smc);
             }
 
+            try {
+                localStorage.setItem('activeConfirmedTrades', JSON.stringify(activeConfirmedTrades));
+            } catch(e) {}
+
             renderConfirmedBanner();
         }
 
@@ -805,8 +818,11 @@
                         if (tr.signal_id && !activeDbIds.has(tr.signal_id)) {
                             delete activeConfirmedTrades[sym];
                         }
-                        // Non-DB trades stay active for minimum 30 minutes unless price invalidates SL
                     });
+
+                    try {
+                        localStorage.setItem('activeConfirmedTrades', JSON.stringify(activeConfirmedTrades));
+                    } catch(e) {}
 
                     renderConfirmedBanner();
                 }
