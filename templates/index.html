@@ -54,11 +54,6 @@
             <div class="panel-header">
                 <div style="display:flex; align-items:center; gap:12px;">
                     <span>INTRADAY RADAR: <span id="radarStockTitle" style="color: var(--neon-cyan);">--</span></span>
-                    <!-- Dual Mode Toggle Tabs: Stocks vs Index Option Sniper -->
-                    <div style="display:flex; gap:4px; background:rgba(0,0,0,0.4); padding:2px; border-radius:4px; border:1px solid var(--border-glow);">
-                        <button id="tabStocksMode" class="btn-action active" onclick="switchRadarMode('STOCKS')">F&O STOCKS</button>
-                        <button id="tabIndexMode" class="btn-action" onclick="switchRadarMode('INDEX')">NIFTY 15M/1M OPTION</button>
-                    </div>
                 </div>
                 <span id="selectedSectorTitle" style="color: var(--neon-amber); font-size:0.75rem;">--</span>
             </div>
@@ -586,26 +581,7 @@
         }
 
         function switchRadarMode(mode) {
-            const btnStocks = document.getElementById('tabStocksMode');
-            const btnIndex = document.getElementById('tabIndexMode');
-            if (mode === 'INDEX') {
-                btnIndex.classList.add('active');
-                btnStocks.classList.remove('active');
-                document.getElementById('radarStockTitle').innerText = 'NIFTY 50 [15M/1M MTF]';
-                document.getElementById('selectedSectorTitle').innerText = 'INDEX OPTION SNIPER';
-                log('SWITCHED TO NIFTY MTF ORDER BLOCK ENGINE (15M Trend + 1M Entry Retest)', 'ENTRY');
-                scanStock('^NSEI');
-            } else {
-                btnStocks.classList.add('active');
-                btnIndex.classList.remove('active');
-                if (currentSectorName && sectorsDict[currentSectorName]) {
-                    const sec = sectorsDict[currentSectorName];
-                    const stks = sec.top_5 || sec.top_5_stocks || [];
-                    if (stks.length > 0) {
-                        selectStock(stks[0].symbol);
-                    }
-                }
-            }
+            // Mode tabs removed - pure 5-min sector F&O stocks radar only
         }
 
         function renderConfirmedBanner() {
