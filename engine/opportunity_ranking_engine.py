@@ -436,10 +436,23 @@ class OpportunityRankingEngine:
         bullish.sort(key=lambda x: score_candidate(x, is_bull=True), reverse=True)
         bearish.sort(key=lambda x: score_candidate(x, is_bull=False), reverse=True)
 
-        # Separate into PREPARING (Max 5) and ENTRY-READY / CONFIRMED (Max 2)
+        # Direction-Neutral Fair Sorting for ENTRY-READY and PREPARING
+        # Do NOT simply take bullish first; rank strictly by objective quality/conviction score!
+        def neutral_quality_score(cand):
+            is_bull = cand.get("direction") == "BULLISH"
+            return score_candidate(cand, is_bull=is_bull)
+
         all_candidates = bullish + bearish
+        all_candidates.sort(key=neutral_quality_score, reverse=True)
+
+        # 1. ENTRY READY (Max 2): Strictly CONFIRMED 5-minute setups with valid structure & RR >= 1.30
         entry_ready_list = [c for c in all_candidates if c.get("stage") == "CONFIRMED"][:2]
-        preparing_list = [c for c in all_candidates if c.get("stage") in ("PREPARING", "IGNITION") and c not in entry_ready_list][:5]
+
+        # 2. PREPARING (Max 5): Developing coils/pre-breakout/pre-breakdown setups before the move
+        preparing_list = [
+            c for c in all_candidates 
+            if c.get("stage") in ("PREPARING", "IGNITION") and c not in entry_ready_list
+        ][:5]
 
         return {
             "top_bullish": bullish[:top_n],

@@ -968,8 +968,18 @@ def get_ranked_opportunities_endpoint():
         if cached_ranked:
             filtered_bull = [c for c in cached_ranked.get("top_bullish", []) if not allowed_sector_symbols or c.get("symbol") in allowed_sector_symbols]
             filtered_bear = [c for c in cached_ranked.get("top_bearish", []) if not allowed_sector_symbols or c.get("symbol") in allowed_sector_symbols]
-            if filtered_bull or filtered_bear:
-                return jsonify({"success": True, "ranked": {"top_bullish": filtered_bull, "top_bearish": filtered_bear}})
+            filtered_ready = [c for c in cached_ranked.get("entry_ready", []) if not allowed_sector_symbols or c.get("symbol") in allowed_sector_symbols]
+            filtered_prep = [c for c in cached_ranked.get("preparing", []) if not allowed_sector_symbols or c.get("symbol") in allowed_sector_symbols]
+            if filtered_bull or filtered_bear or filtered_ready or filtered_prep:
+                return jsonify({
+                    "success": True, 
+                    "ranked": {
+                        "top_bullish": filtered_bull, 
+                        "top_bearish": filtered_bear,
+                        "entry_ready": filtered_ready[:2],
+                        "preparing": filtered_prep[:5]
+                    }
+                })
 
         candidates = []
         nifty_cached = screener_state.get("raw_market_cache", {}).get("^NSEI", {})
