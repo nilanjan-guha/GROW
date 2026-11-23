@@ -21,7 +21,8 @@
             <span class="pulse-circle"></span>
             <span>AI COMMAND // DYNAMIC F&O SNIPER RADAR</span>
             <span class="badge" id="mktBadge" style="color:var(--neon-amber); border-color:var(--neon-amber);">SCANNING FEED...</span>
-            <span class="badge" id="uccBadge">GROWW UCC: ACTIVE</span>
+            <span class="badge" id="uccBadge">GROWW: ACTIVE</span>
+            <span class="badge" id="dhanBadge" style="color:var(--neon-green); border-color:var(--neon-green);">DHAN HQ: CONNECTED (1100857857)</span>
             <span class="badge" id="fnoBadge">FNO UNIVERSE: 219 ACTIVE</span>
             <span class="badge" id="cycleStatus" style="color:var(--neon-cyan);">CYCLE: NEURAL SWEEP</span>
         </div>
@@ -235,6 +236,20 @@
 
             const particles = new THREE.Points(geometry, material);
             scene.add(particles);
+
+            // Cyber Network Neural Data Flow Wires
+            const wireGeo = new THREE.BufferGeometry();
+            const wirePos = [];
+            for (let i = 0; i < 40; i++) {
+                const idx1 = Math.floor(Math.random() * particleCount) * 3;
+                const idx2 = Math.floor(Math.random() * particleCount) * 3;
+                wirePos.push(positions[idx1], positions[idx1+1], positions[idx1+2]);
+                wirePos.push(positions[idx2], positions[idx2+1], positions[idx2+2]);
+            }
+            wireGeo.setAttribute('position', new THREE.Float32BufferAttribute(wirePos, 3));
+            const wireMat = new THREE.LineBasicMaterial({ color: 0x00f0ff, transparent: true, opacity: 0.16, linewidth: 1 });
+            const wires = new THREE.LineSegments(wireGeo, wireMat);
+            scene.add(wires);
 
             // Rotating Holographic Radar Ring in background
             const ringGeo = new THREE.RingGeometry(45, 46, 64);

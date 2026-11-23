@@ -23,6 +23,10 @@ from engine.market_regime_engine import MarketRegimeEngine
 from engine.momentum_ignition_engine import MomentumIgnitionEngine
 from engine.missed_move_detector import MissedMoveDetector
 from engine.strategy_learning_engine import StrategyLearningEngine
+from engine.dhan_engine import DhanLiveEngine
+
+# Initialize Dhan HQ Integration Engine
+dhan_client = DhanLiveEngine()
 
 def is_market_open():
     """Returns True if the Indian market (NSE/BSE) is open right now, strictly respecting weekends and holidays"""
