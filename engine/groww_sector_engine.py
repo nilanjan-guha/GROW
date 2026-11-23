@@ -35,7 +35,7 @@ class GrowwSectorEngine:
         Tracks explicit stale status and actual F&O coverage count.
         """
         now = time.time()
-        # Stale check: if cache exists but is older than cache_ttl (300s), mark stale
+        # Stale check: if cache exists but is older than cache_ttl (300s), mark stale and reject cache!
         if self.cached_sectors:
             if now - self.last_fetch_time > self.cache_ttl:
                 self.is_stale = True
@@ -51,7 +51,8 @@ class GrowwSectorEngine:
                 print(f"[GROWW SECTORS] Error HTTP {r.status_code}")
                 self.is_stale = True
                 self.last_error = f"HTTP_{r.status_code}"
-                return self.cached_sectors
+                # Reject stale cache on failure; return empty dict so ranking knows sector data is unavailable/stale
+                return {}
             
             soup = BeautifulSoup(r.text, 'html.parser')
             script = soup.find('script', id='__NEXT_DATA__')
@@ -59,19 +60,19 @@ class GrowwSectorEngine:
                 print("[GROWW SECTORS] __NEXT_DATA__ script tag not found")
                 self.is_stale = True
                 self.last_error = "MISSING_NEXT_DATA"
-                return self.cached_sectors
+                return {}
                 
             data = json.loads(script.string)
             sectors_raw = data.get('props', {}).get('pageProps', {}).get('sectors', [])
             if not sectors_raw:
                 self.is_stale = True
                 self.last_error = "EMPTY_SECTOR_DATA"
-                return self.cached_sectors
+                return {}
         except Exception as e:
             print("[GROWW SECTORS] Network exception:", e)
             self.is_stale = True
             self.last_error = str(e)
-            return self.cached_sectors
+            return {}
 
         # Normalize F&O set symbols
         norm_fno = {s.upper().replace(".NS", "") for s in fno_universe_set}
