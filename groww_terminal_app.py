@@ -574,11 +574,17 @@ def background_screener_worker():
                             existing_entry = screener_state.get("raw_market_cache", {}).get(sym, {})
                             curr_stock_candle_ts = str(cdf.index[-1])
                             
-                            # CRITICAL: Invalidate stale fno_filter_data if it belongs to an older completed candle!
+                            # CRITICAL: Determine completed candle timestamp vs raw forming candle
+                            feed_meta = MarketValidator.validate_feed_freshness(cdf, max_delay_seconds=300, candle_duration_seconds=300)
+                            is_cdf_completed = feed_meta.get("is_completed_candle", False)
+                            completed_candle_ts = curr_stock_candle_ts if is_cdf_completed else str(cdf.index[-2])
+                            
+                            # Invalidate stale fno_filter_data if it does NOT match the completed candle timestamp!
+                            # Do NOT compare against forming candle ts!
                             existing_fno = existing_entry.get("fno_filter_data")
                             if existing_fno:
                                 fno_eval_ts = existing_fno.get("evaluated_completed_candle_ts")
-                                if fno_eval_ts and fno_eval_ts != curr_stock_candle_ts:
+                                if fno_eval_ts and fno_eval_ts != completed_candle_ts:
                                     existing_fno = None  # Stale setup expired; clear to prevent false standalone bypass
 
                             res = evaluate_explosive_momentum(cdf, sym)
@@ -586,7 +592,7 @@ def background_screener_worker():
                             screener_state.setdefault("raw_market_cache", {})[sym] = {
                                 "timestamp": time.time(),
                                 "raw_latest_candle_ts": curr_stock_candle_ts,
-                                "evaluated_completed_candle_ts": curr_stock_candle_ts,
+                                "evaluated_completed_candle_ts": completed_candle_ts,
                                 "rvol_candle_ts": existing_fno.get("rvol_candle_ts") if existing_fno else None,
                                 "data": res if res else existing_entry.get("data"),
                                 "df": cdf,
@@ -913,29 +919,32 @@ def smc_scan():
             
             matching_cand = next((c for c in all_ranked_cands if c.get("symbol") == symbol or c.get("symbol") == clean_sym), None)
             
-            # If the candidate was evaluated in ranked engine as non-actionable (e.g. PREPARING, OBSERVING, or SECTOR_WATCHLIST_ONLY),
-            # reject trade generation and enforce WAIT FOR ENTRY
-            is_candidate_actionable = True
+            # FAIL-CLOSED ACTIONABILITY ENFORCEMENT (P1):
+            # If candidate is missing from ranked cache or not explicitly actionable, reject trade generation!
+            is_candidate_actionable = False
+            cand_stage = "UNRANKED"
             if matching_cand is not None:
                 is_candidate_actionable = matching_cand.get("is_actionable", False)
                 cand_stage = matching_cand.get("stage", "WATCHLIST")
-                if not is_candidate_actionable:
-                    res["action"] = f"MONITORING ({cand_stage}) - WAIT FOR TRIGGER"
-                    res["verdict"] = f"STAGE: {cand_stage} | SCORE {inst_res['composite_score']}/100"
-                    res["suggested_sl"] = None
-                    res["suggested_tp1"] = None
-                    res["suggested_tp2"] = None
-                    res["reasoning"] = f"Candidate is in stage {cand_stage} (watch-only). Strictly awaiting confirmed breakout/breakdown trigger."
-                    res["signal_id"] = None
-                    res["signal_status"] = "WATCH_ONLY"
-                    res["is_actionable"] = False
-                    
-                    screener_state["enriched_signals_cache"][symbol] = {
-                        "timestamp": now,
-                        "last_candle_ts": latest_candle_ts,
-                        "data": res
-                    }
-                    return jsonify({"success": True, "smc": res})
+            
+            # Fail closed: must be explicitly actionable (ENTRY READY / IGNITION) AND strictly completed 5m candle
+            if not is_candidate_actionable or not is_completed_candle:
+                res["action"] = f"MONITORING ({cand_stage}) - WAIT FOR TRIGGER"
+                res["verdict"] = f"STAGE: {cand_stage} | SCORE {inst_res['composite_score']}/100"
+                res["suggested_sl"] = None
+                res["suggested_tp1"] = None
+                res["suggested_tp2"] = None
+                res["reasoning"] = f"Candidate is in stage {cand_stage} (watch-only). Strictly awaiting confirmed completed 5m breakout trigger."
+                res["signal_id"] = None
+                res["signal_status"] = "WATCH_ONLY"
+                res["is_actionable"] = False
+                
+                screener_state["enriched_signals_cache"][symbol] = {
+                    "timestamp": now,
+                    "last_candle_ts": latest_candle_ts,
+                    "data": res
+                }
+                return jsonify({"success": True, "smc": res})
 
             res["is_actionable"] = True
             res["action"] = f"{inst_res['direction']} / {'CALL (CE)' if inst_res['direction'] == 'BUY' else 'PUT (PE)'} [{inst_res['primary_strategy'].upper()}]"
@@ -1296,9 +1305,26 @@ def log_confirmed_signal_endpoint():
         if not sym:
             return jsonify({"success": False, "error": "No symbol provided"}), 400
 
-        # Reject logging if candidate is explicitly non-actionable or watch-only
-        if data.get("is_actionable") is False:
-            return jsonify({"success": False, "error": "Candidate is watch-only / non-actionable. Trade creation blocked."}), 400
+        clean_s = sym.replace(".NS", "")
+        # SERVER-SIDE INDEPENDENT SIGNAL VALIDATION (P1):
+        # Never trust client-provided actionability as authorization to log a trade!
+        # Revalidate server-side against current ranked opportunities and completed candle status
+        ranked_cache = screener_state.get("ranked_opportunities") or {}
+        all_ranked_cands = (ranked_cache.get("top_bullish", []) + 
+                            ranked_cache.get("top_bearish", []) + 
+                            ranked_cache.get("entry_ready", []) + 
+                            ranked_cache.get("ignition", []) + 
+                            ranked_cache.get("preparing", []) + 
+                            ranked_cache.get("observing", []))
+        
+        matching_cand = next((c for c in all_ranked_cands if c.get("symbol") == sym or c.get("symbol") == clean_s), None)
+        if matching_cand is None or not matching_cand.get("is_actionable", False):
+            return jsonify({"success": False, "error": "Server rejection: Candidate is not an active, actionable trade setup."}), 403
+
+        # Reject logging if candidate stage is watch-only or non-actionable
+        cand_stage = matching_cand.get("stage", "")
+        if cand_stage not in ("CONFIRMED", "IGNITION", "ENTRY READY"):
+            return jsonify({"success": False, "error": f"Server rejection: Stage {cand_stage} is strictly watch-only."}), 403
 
         action = data.get("action", "")
         direction = "BUY" if "BUY" in action else ("SELL" if "SELL" in action else "NEUTRAL")

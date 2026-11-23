@@ -22,6 +22,7 @@ class GrowwSectorEngine:
         self.last_fetch_time = 0
         self.cache_ttl = 300  # 5 minutes TTL
         self.is_stale = False
+        self.is_usable = False
         self.last_error = None
         self.expected_fno_coverage = 219
         self.actual_fno_coverage = 0
@@ -202,11 +203,16 @@ class GrowwSectorEngine:
                     break
 
         self.actual_fno_coverage = len(unique_fno_covered)
-        # Check coverage vs expected (warn if coverage is abnormally low)
+        # Check coverage vs expected: strictly reject incomplete sector results if coverage validation fails!
         if self.expected_fno_coverage > 0 and (self.actual_fno_coverage / self.expected_fno_coverage) < 0.25:
             self.is_stale = True
+            self.is_usable = False
+            self.last_error = f"LOW_COVERAGE: {self.actual_fno_coverage}/{self.expected_fno_coverage}"
+            print(f"[GROWW SECTORS] Coverage rejected: {self.actual_fno_coverage}/{self.expected_fno_coverage} (<25%)")
+            return {}  # Reject incomplete results; do not return or store as valid!
         else:
             self.is_stale = False
+            self.is_usable = True
 
         # Atomic replacement: assign once rebuild is completely finished
         self.stock_to_sector_map = new_stock_to_sector_map
