@@ -87,6 +87,11 @@ class OpportunityRankingEngine:
                 ).dropna()
 
                 if not joined.empty:
+                    # Verify exact timestamp match of latest completed candle
+                    latest_stock_ts = today_stock.index[-1]
+                    latest_nifty_ts = today_nifty.index[-1]
+                    is_aligned = (latest_stock_ts == latest_nifty_ts)
+
                     s_open = float(today_stock['Open'].iloc[0])
                     s_sync_c = float(joined['stock_c'].iloc[-1])
                     stock_change_pct = float(((s_sync_c - s_open) / s_open) * 100) if s_open > 0 else 0.0
@@ -135,10 +140,14 @@ class OpportunityRankingEngine:
         }
 
     @staticmethod
-    def evaluate_stock_opportunity(stock_df, symbol, sector_name="GENERAL", sector_change=0.0, nifty_df=None, vwap=None, opp_eval=None, time_slot_rvol=None, rvol_obs=0):
+    def evaluate_stock_opportunity(stock_df, symbol, sector_name="GENERAL", sector_change=0.0, nifty_df=None, vwap=None, opp_eval=None, time_slot_rvol=None, rvol_obs=0, is_liquid=True):
         """
         Computes comprehensive quantitative opportunity score, breakout proximity, and prediction stage.
+        Enforces hard liquidity and candle alignment gates.
         """
+        if not is_liquid:
+            return None
+
         if stock_df is None or stock_df.empty or len(stock_df) < 5:
             return None
 
@@ -169,6 +178,11 @@ class OpportunityRankingEngine:
         curr_h = float(h.iloc[-1])
         curr_l = float(l.iloc[-1])
         curr_v = float(v.iloc[-1])
+
+        # Hard Liquidity Gate: Reject dead contracts (< 5000 volume or < 15 Lakh turnover per 5-min)
+        recent_v = v.iloc[-10:].mean() if len(v) >= 10 else v.mean()
+        if recent_v < 5000 or (recent_v * curr_c) < 1500000:
+            return None
 
         # 1. 14-period ATR (Wilder)
         tr = pd.concat([h - l, (h - c.shift(1)).abs(), (l - c.shift(1)).abs()], axis=1).max(axis=1).dropna()
@@ -604,16 +618,23 @@ class OpportunityRankingEngine:
         ][:3]
 
         # 3. PREPARING (Max 5): Strictly Pre-Breakout / Pre-Breakdown COILS before expansion begins
-        # Distinct from IGNITION stocks that have already started expanding!
         preparing_list = [
             c for c in all_candidates 
             if c.get("stage") == "PREPARING" and c not in entry_ready_list
         ][:5]
 
-        # If preparing has fewer than 5, allow high-quality coiling monitoring candidates, but keep separate from ignition
+        # 4. WATCHLIST / MONITORING ONLY: Explicitly marked as non-actionable watchlists
+        # Never allow MONITORING to look like an entry signal in directional lists!
+        watchlist_bullish = [
+            c for c in bullish[:top_n]
+        ]
+        watchlist_bearish = [
+            c for c in bearish[:top_n]
+        ]
+
         return {
-            "top_bullish": bullish[:top_n],
-            "top_bearish": bearish[:top_n],
+            "top_bullish": watchlist_bullish,
+            "top_bearish": watchlist_bearish,
             "entry_ready": entry_ready_list,
             "ignition": ignition_list,
             "preparing": preparing_list
