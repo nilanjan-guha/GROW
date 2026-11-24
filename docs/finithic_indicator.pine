@@ -904,9 +904,25 @@ idxLow3     = not na(idxLowRaw3) ? idxLowRaw3 : request.security("NSE:NIFTY", ti
 idxBullBreak = not na(idxHigh3) and idxClose > idxHigh3
 idxBearBreak = not na(idxLow3) and idxClose < idxLow3
 
+// 4. DIRECT INDEX MASTER ENTRY SIGNALS (Relayed to Options):
+// When the parent index fires a Buy/Sell signal, this is transmitted directly to options!
+idxBuySignalRaw  = (idxClose > idxOpen) and ((idxClose > idxHigh3) or (idxBullDisplacement) or (idxClose > idxEma50 and idxLow <= idxEma50))
+idxSellSignalRaw = (idxClose < idxOpen) and ((idxClose < idxLow3) or (idxBearDisplacement) or (idxClose < idxEma50 and idxHigh >= idxEma50))
+
+var int lastIdxBuyBar = -999
+var int lastIdxSellBar = -999
+if idxBuySignalRaw
+    lastIdxBuyBar := bar_index
+if idxSellSignalRaw
+    lastIdxSellBar := bar_index
+
+// Active window: When Index fired a signal within the last 3 bars, the option MUST search for an immediate sniper entry
+recentIdxBuySignal  = (bar_index - lastIdxBuyBar <= 3)
+recentIdxSellSignal = (bar_index - lastIdxSellBar <= 3)
+
 // Absolute True Directional Bias of Parent Index:
-indexIsBullish = (idxBullTrend or idxBullDisplacement or idxBullBreak) and idxClose >= idxEma50
-indexIsBearish = (idxBearTrend or idxBearDisplacement or idxBearBreak) and idxClose <= idxEma50
+indexIsBullish = (idxBullTrend or idxBullDisplacement or idxBullBreak or recentIdxBuySignal) and idxClose >= idxEma50 * 0.999
+indexIsBearish = (idxBearTrend or idxBearDisplacement or idxBearBreak or recentIdxSellSignal) and idxClose <= idxEma50 * 1.001
 
 // Parent Index Permission Rules for Options:
 // If on CALL option chart: Parent Index MUST be Bullish. ABSOLUTELY FORBIDDEN if Index is Bearish!
@@ -1145,23 +1161,37 @@ sweepUpthrustBear = sweepHigh and close < open and (bearishAbsorption or barDelt
 // ═══════════════════════════════════════════════════════════════════════
 optionIndexFilter = isCallOption ? parentBullConfirmed : (isPutOption ? parentBearConfirmed : true)
 
+// ═══════════════════════════════════════════════════════════════════════
+// DIRECT OPTION SYNCHRONIZED ENTRY TRIGGER:
+// If Parent Index fired BUY, CALL options find the instant entry on a green candle/absorption!
+// If Parent Index fired SELL, PUT options find the instant entry on a green candle/absorption!
+// ═══════════════════════════════════════════════════════════════════════
+callRelayEntry = isCallOption and recentIdxBuySignal and (close > open or lowerWickLen >= candleSpread * 0.3) and not isOverextendedLong
+putRelayEntry  = isPutOption  and recentIdxSellSignal and (close > open or lowerWickLen >= candleSpread * 0.3) and not isOverextendedLong
+
+// Master Option Sync Trigger
+optionDirectSyncTrigger = (callRelayEntry or putRelayEntry) and hasPremiumExpansion and isInKillzone
+
 // Institutional Buy Trigger: ALL of the below must align
 sniperBuyTrigger =
-     isHighQualityBull and          // Must meet institutional score & NOT exhausted/overextended
-     optionIndexFilter and          // Parent Index must be aligned with option direction
-     orderFlowBullConfirmed and     // Order Flow / Volume Delta / Absorption confirmed
-     isInKillzone and               // Active in institutional killzone (avoid chop)
+     optionDirectSyncTrigger or     // 1. Direct High-Accuracy Index-To-Option Synchronized Relay!
      (
-         isEarlyBullShift or        // Early MSS / CHoCH at the turn
-         sweepSpringBull or         // Early SSL Sweep + Spring / Absorption (Pre-move entry!)
-         bullOteHit or              // OTE Golden Pocket 62%-79% retracement
-         bullIFVGRetest or          // Inverted FVG demand zone
-         bprBullRetest or           // Balanced Price Range demand zone
-         judasSwingBull or          // Judas Swing manipulation reversal
-         po3DistBull or             // Power of 3: Distribution phase confirmed
-         bullSMTDiv or              // SMT Divergence (Nifty vs BankNifty)
-         (bullTrend and (bullBreakoutRetest or (sweepLow and close > open) or obDemandTouch or fvgDemandRetest)) or
-         htfMajorBuy                // 15M HTF Sweep + Discount Zone confirmation
+         isHighQualityBull and      // 2. High Quality SMC / Institutional Setup
+         optionIndexFilter and      // Parent Index must be aligned with option direction
+         orderFlowBullConfirmed and // Order Flow / Volume Delta / Absorption confirmed
+         isInKillzone and           // Active in institutional killzone (avoid chop)
+         (
+             isEarlyBullShift or    // Early MSS / CHoCH at the turn
+             sweepSpringBull or     // Early SSL Sweep + Spring / Absorption (Pre-move entry!)
+             bullOteHit or          // OTE Golden Pocket 62%-79% retracement
+             bullIFVGRetest or      // Inverted FVG demand zone
+             bprBullRetest or       // Balanced Price Range demand zone
+             judasSwingBull or      // Judas Swing manipulation reversal
+             po3DistBull or         // Power of 3: Distribution phase confirmed
+             bullSMTDiv or          // SMT Divergence (Nifty vs BankNifty)
+             (bullTrend and (bullBreakoutRetest or (sweepLow and close > open) or obDemandTouch or fvgDemandRetest)) or
+             htfMajorBuy            // 15M HTF Sweep + Discount Zone confirmation
+         )
      )
 
 // Institutional Sell Trigger: Only on Index/Spot charts, never direct sell on option premium charts

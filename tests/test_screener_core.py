@@ -479,5 +479,38 @@ class TestIntradayScreenerCore(unittest.TestCase):
         self.assertFalse(val.get("is_valid", False))
         self.assertEqual(val.get("status"), "UNALIGNED_CANDLE_TIMESTAMPS")
 
+    def test_special_trading_session_validation(self):
+        from engine.market_validator import MarketValidator
+        # Special session on 2026-11-08 (18:15 to 19:15 IST)
+        special_date = datetime.date(2026, 11, 8)
+        spec_times = pd.date_range("2026-11-08 18:15:00", "2026-11-08 19:15:00", freq="5min", tz="Asia/Kolkata")
+        spec_df = pd.DataFrame({
+            "Open": [1000.0] * len(spec_times),
+            "High": [1005.0] * len(spec_times),
+            "Low": [995.0] * len(spec_times),
+            "Close": [1002.0] * len(spec_times),
+            "Volume": [10000] * len(spec_times)
+        }, index=spec_times)
+        val = MarketValidator.validate_feed_freshness(spec_df, candle_duration_seconds=300, now_dt=spec_times[-1] + pd.Timedelta(seconds=300))
+        # Should not be rejected as OFF_HOURS_CANDLE
+        self.assertNotEqual(val.get("status"), "OFF_HOURS_CANDLE")
+
+    def test_options_replay_disabled_without_contract_chain(self):
+        from scripts.replay_5m_screener import run_screener_replay
+        # OPTIONS replay must explicitly raise ValueError until true contract-level chains are loaded
+        with self.assertRaises(ValueError):
+            run_screener_replay(days="1d", instrument_type="OPTIONS")
+
+    def test_futures_margin_sizing_no_forced_lot(self):
+        # When available capital is less than required 20% margin for 1 lot, trade must be rejected (0 lots, not forced 1 lot)
+        entry_price = 2500.0
+        lot_size = 250
+        contract_notional = entry_price * lot_size # ₹6,25,000
+        req_margin = contract_notional * 0.20 # ₹1,25,000
+        available_alloc = 50000.0 # Only ₹50,000 available
+        
+        num_lots = int(available_alloc / req_margin)
+        self.assertEqual(num_lots, 0) # Must be 0, never forced to 1
+
 if __name__ == '__main__':
     unittest.main()

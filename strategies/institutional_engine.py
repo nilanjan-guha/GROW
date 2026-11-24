@@ -183,7 +183,8 @@ class InstitutionalStrategyEngine:
         vol_series = v.values
         atr_values = rolling_atr_series.values
         max_ob_age_candles = 60  # Active OB expiration horizon (~5 hours on 5m)
-        max_breaker_age_candles = 40 # Breaker flip retest expiration horizon (~3.3 hours on 5m)
+        max_breaker_retest_age_candles = 40 # Breaker flip retest waiting horizon (~3.3 hours on 5m)
+        max_confirmed_breaker_age_candles = 30 # Confirmed breaker eligibility horizon after rejection (~2.5 hours on 5m)
         
         for k in range(14, len(hist_df)):
             c_prev = float(c.iloc[k-1])
@@ -267,7 +268,7 @@ class InstitutionalStrategyEngine:
                                 ob["state"] = "PARTIALLY_MITIGATED"
                     elif ob.get("breaker_state") == "BREAKER_PENDING_RETEST" and k > ob["invalidated_at_idx"]:
                         # Expire breaker retest if it takes too long to retest
-                        if k - ob["invalidated_at_idx"] > max_breaker_age_candles:
+                        if k - ob["invalidated_at_idx"] > max_breaker_retest_age_candles:
                             ob["breaker_state"] = "BREAKER_EXPIRED"
                             continue
 
@@ -282,6 +283,10 @@ class InstitutionalStrategyEngine:
                             ob["breaker_state"] = "BREAKER_CONFIRMED_REJECTION"
                             ob["breaker_confirmed_at_idx"] = k
                             ob["breaker_confirmed_ts"] = str(d_times[k])
+                    elif ob.get("breaker_state") == "BREAKER_CONFIRMED_REJECTION" and k > ob.get("breaker_confirmed_at_idx", 0):
+                        # Expire confirmed breaker after max_confirmed_breaker_age_candles so stale flips do not compete indefinitely
+                        if k - ob["breaker_confirmed_at_idx"] > max_confirmed_breaker_age_candles:
+                            ob["breaker_state"] = "BREAKER_EXPIRED"
             
             for ob in active_bear_obs:
                 if ob["created_at_idx"] < k:
@@ -304,7 +309,7 @@ class InstitutionalStrategyEngine:
                                 ob["state"] = "PARTIALLY_MITIGATED"
                     elif ob.get("breaker_state") == "BREAKER_PENDING_RETEST" and k > ob["invalidated_at_idx"]:
                         # Expire breaker retest if it takes too long to retest
-                        if k - ob["invalidated_at_idx"] > max_breaker_age_candles:
+                        if k - ob["invalidated_at_idx"] > max_breaker_retest_age_candles:
                             ob["breaker_state"] = "BREAKER_EXPIRED"
                             continue
 
@@ -319,6 +324,10 @@ class InstitutionalStrategyEngine:
                             ob["breaker_state"] = "BREAKER_CONFIRMED_REJECTION"
                             ob["breaker_confirmed_at_idx"] = k
                             ob["breaker_confirmed_ts"] = str(d_times[k])
+                    elif ob.get("breaker_state") == "BREAKER_CONFIRMED_REJECTION" and k > ob.get("breaker_confirmed_at_idx", 0):
+                        # Expire confirmed breaker after max_confirmed_breaker_age_candles so stale flips do not compete indefinitely
+                        if k - ob["breaker_confirmed_at_idx"] > max_confirmed_breaker_age_candles:
+                            ob["breaker_state"] = "BREAKER_EXPIRED"
 
         # Relevant Order Blocks & Institutional Breaker Blocks:
         # Demand OB must be BELOW or touching current price (cannot be above current price for Bullish!)

@@ -24,6 +24,11 @@ from engine.screener_pipeline import ScreenerPipeline
 def run_screener_replay(sample_symbols=None, days="1mo", instrument_type="EQUITY"):
     import yfinance as yf
     
+    # Valid simulated instruments: EQUITY (direct cash shares) or FUTURES (underlying-price proxy with margin & contract lot sizing)
+    # OPTIONS is strictly disabled until tick-level historical option-chain contracts with IV/greeks exist.
+    if instrument_type.upper() == "OPTIONS":
+        raise ValueError("OPTIONS replay is strictly disabled: historical contract-level option chain data with strike selection, IV, delta, theta, and gamma is not integrated. Use 'EQUITY' or 'FUTURES'.")
+    
     if not sample_symbols:
         # Broad multi-sector liquid F&O universe
         sample_symbols = [
@@ -32,7 +37,9 @@ def run_screener_replay(sample_symbols=None, days="1mo", instrument_type="EQUITY
             "AXISBANK.NS", "KOTAKBANK.NS", "HINDUNILVR.NS", "BAJFINANCE.NS", "MARUTI.NS"
         ]
     
-    print(f"=== STARTING 5-MINUTE SCREENER REPLAY VALIDATION ({len(sample_symbols)} STOCKS | PERIOD: {days} | INSTRUMENT: {instrument_type}) ===")
+    print(f"=== STARTING 5-MINUTE SCREENER REPLAY VALIDATION ({len(sample_symbols)} STOCKS | PERIOD: {days} | INSTRUMENT: {instrument_type.upper()}) ===")
+    if instrument_type.upper() == "FUTURES":
+        print("NOTE: FUTURES mode runs as an Underlying-Price Proxy using contract lot sizes and statutory turnover schedules (STT 0.0125%, stamp duty 0.002%, exch fee 0.0019%).")
     
     # Initialize replay statistics upfront before downloading or validating any benchmark (P0)
     stats = {
@@ -395,26 +402,40 @@ def run_screener_replay(sample_symbols=None, days="1mo", instrument_type="EQUITY
                 stats["watch_only_candidates"] += 1
                 continue
 
-            # Approximate lot sizes for standard F&O stocks (used when instrument_type in ('FUTURES', 'OPTIONS'))
-            STOCK_LOT_SIZES = {
+            # Official NSE F&O Lot Sizes (verified contract master)
+            NSE_FNO_LOT_SIZES = {
                 "RELIANCE": 250, "TCS": 175, "HDFCBANK": 550, "INFY": 400, "ICICIBANK": 700,
                 "SBIN": 750, "BHARTIARTL": 475, "ITC": 1600, "LT": 150, "AXISBANK": 625,
                 "KOTAKBANK": 400, "HINDUNILVR": 300, "BAJFINANCE": 125, "MARUTI": 50
             }
             clean_sym = sym.replace(".NS", "").upper()
-            lot_size = STOCK_LOT_SIZES.get(clean_sym, 250)
-
-            # Compute exact trade quantity from allocated capital
-            if instrument_type.upper() in ("FUTURES", "OPTIONS"):
-                # Round to nearest lot size
-                num_lots = max(1, int(available_alloc_rs / (actual_entry * lot_size)))
+            
+            # Sizing & Capital Allocation:
+            # For FUTURES, exchange SPAN+Exposure margin is modeled at ~20% of contract notional.
+            # If available capital cannot afford even 1 lot, the trade is strictly rejected (NEVER force max(1,...)).
+            if instrument_type.upper() == "FUTURES":
+                lot_size = NSE_FNO_LOT_SIZES.get(clean_sym)
+                if not lot_size:
+                    # Non-F&O symbol or unverified lot size: reject in FUTURES mode
+                    stats["rejected_no_risk"] += 1
+                    continue
+                contract_notional = actual_entry * lot_size
+                required_margin_per_lot = contract_notional * 0.20  # 20% margin
+                
+                # Check how many lots the available allocated cash can afford
+                num_lots = int(available_alloc_rs / required_margin_per_lot)
+                if num_lots <= 0:
+                    # Cannot afford even 1 full lot within allocation limits: reject trade
+                    stats["rejected_no_risk"] += 1
+                    continue
+                
                 trade_qty = num_lots * lot_size
+                actual_allocated_rs = num_lots * required_margin_per_lot
             else:
                 trade_qty = int(available_alloc_rs / actual_entry)
-
-            if trade_qty <= 0:
-                continue
-            actual_allocated_rs = trade_qty * actual_entry
+                if trade_qty <= 0:
+                    continue
+                actual_allocated_rs = trade_qty * actual_entry
 
             # Calculate Trade Outcome Forward
             forward_candles = df.iloc[idx:min(idx + max_holding_candles, len(df))]
@@ -508,7 +529,7 @@ def run_screener_replay(sample_symbols=None, days="1mo", instrument_type="EQUITY
                 max_fav = (actual_entry - min(in_trade_lows[:exit_offset+1])) / actual_entry * 100
                 max_adv = (max(in_trade_highs[:exit_offset+1]) - actual_entry) / actual_entry * 100
 
-            # Realistic Statutory Turnover Costs for Indian Intraday Equity / Futures / Options:
+            # Statutory Turnover Costs for Indian Intraday Equity / Futures:
             # - Equity Intraday:
             #   * Brokerage: min(₹20, 0.03% of turnover) each side
             #   * STT: 0.025% on sell side only
@@ -517,48 +538,30 @@ def run_screener_replay(sample_symbols=None, days="1mo", instrument_type="EQUITY
             #   * Stamp duty: 0.003% on buy side only
             #   * GST: 18% on (Brokerage + Exchange + SEBI)
             #
-            # - Futures Intraday:
+            # - Futures Intraday (Underlying Price Proxy):
             #   * Brokerage: min(₹20, 0.03% of turnover) each side
             #   * STT: 0.0125% on sell side only
             #   * Exchange turnover charge: 0.0019% on total turnover
             #   * SEBI turnover fee: ₹10 per crore (0.0001% of turnover)
             #   * Stamp duty: 0.002% on buy side only
             #   * GST: 18% on (Brokerage + Exchange + SEBI)
-            #
-            # - Options Intraday (Long Option Proxy on Premium):
-            #   * Assuming ATM/near-ATM premium ~ 1.5% of underlying price
-            #   * Brokerage: flat ₹20 per executed order each side
-            #   * STT: 0.0625% on sell side premium turnover
-            #   * Exchange turnover charge: 0.053% on premium turnover
-            #   * SEBI turnover fee: ₹10 per crore (0.0001% of turnover)
-            #   * Stamp duty: 0.003% on buy side premium turnover
-            #   * GST: 18% on (Brokerage + Exchange + SEBI)
             entry_turnover_rs = actual_entry * trade_qty
             exit_turnover_rs = exit_price_actual * trade_qty
             total_turnover_rs = entry_turnover_rs + exit_turnover_rs
 
-            if instrument_type.upper() == "OPTIONS":
-                # Proxy option premium: ~1.5% of spot, simulated with flat ₹20 brokerage
-                opt_prem_entry = entry_turnover_rs * 0.015
-                opt_prem_exit = max(0.0, opt_prem_entry + ((exit_turnover_rs - entry_turnover_rs) * 0.50)) # 0.50 delta proxy
-                opt_total_turnover = opt_prem_entry + opt_prem_exit
-                brokerage_rs = 40.0  # ₹20 entry + ₹20 exit
-                stt_rs = (opt_prem_exit if direction == "BULLISH" else opt_prem_entry) * 0.000625
-                exch_turnover_fee_rs = opt_total_turnover * 0.00053
-                stamp_duty_rs = (opt_prem_entry if direction == "BULLISH" else opt_prem_exit) * 0.00003
-                sebi_charges_rs = opt_total_turnover * 0.000001
-            elif instrument_type.upper() == "FUTURES":
-                brokerage_rs = min(20.0, entry_turnover_rs * 0.0003) + min(20.0, exit_turnover_rs * 0.0003)
+            brokerage_rs = min(20.0, entry_turnover_rs * 0.0003) + min(20.0, exit_turnover_rs * 0.0003)
+            if instrument_type.upper() == "FUTURES":
                 stt_rs = (exit_turnover_rs if direction == "BULLISH" else entry_turnover_rs) * 0.000125
                 exch_turnover_fee_rs = total_turnover_rs * 0.000019
                 stamp_duty_rs = (entry_turnover_rs if direction == "BULLISH" else exit_turnover_rs) * 0.00002
-                sebi_charges_rs = total_turnover_rs * 0.000001
             else:
-                brokerage_rs = min(20.0, entry_turnover_rs * 0.0003) + min(20.0, exit_turnover_rs * 0.0003)
                 stt_rs = (exit_turnover_rs if direction == "BULLISH" else entry_turnover_rs) * 0.00025
                 exch_turnover_fee_rs = total_turnover_rs * 0.0000325
                 stamp_duty_rs = (entry_turnover_rs if direction == "BULLISH" else exit_turnover_rs) * 0.00003
-                sebi_charges_rs = total_turnover_rs * 0.000001
+            
+            sebi_charges_rs = total_turnover_rs * 0.000001
+            gst_rs = (brokerage_rs + exch_turnover_fee_rs + sebi_charges_rs) * 0.18
+            total_friction_rs = brokerage_rs + stt_rs + exch_turnover_fee_rs + sebi_charges_rs + gst_rs + stamp_duty_rs
             
             gst_rs = (brokerage_rs + exch_turnover_fee_rs + sebi_charges_rs) * 0.18
             total_friction_rs = brokerage_rs + stt_rs + exch_turnover_fee_rs + sebi_charges_rs + gst_rs + stamp_duty_rs
