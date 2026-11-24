@@ -190,6 +190,9 @@ class ContractMaster:
                         # Reject update_date in the future (data corruption / clock skew)
                         if update_dt > today_date:
                             continue
+                        # Freshness policy: Reject stale broker contract records older than 7 calendar days
+                        if (today_date - update_dt).days > 7:
+                            continue
                     else:
                         update_dt = today_date
 

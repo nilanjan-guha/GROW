@@ -495,30 +495,16 @@ def evaluate_open_outcomes(data_map, force_eod=False, evaluation_time=None):
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM historical_signals WHERE outcome = 'ACTIVE'")
         active_signals = cursor.fetchall()
-        # Determine effective current evaluation time:
-        # If caller provides evaluation_time, use that.
-        # Otherwise, dynamically account for synthetic/replay feed timestamps in data_map if they exceed system time.
+
+        # STRICT SEPARATION OF LIVE CLOCK vs REPLAY CLOCK:
+        # 1. In LIVE mode (evaluation_time is None), time.time() is the authoritative clock.
+        #    Candles timestamped in the future can NEVER advance 'now'. Future-dated candles FAIL-CLOSED.
+        # 2. In REPLAY mode, the caller MUST provide an explicit evaluation_time.
+        #    We NEVER infer or advance 'now' from incoming feed candle timestamps.
         if evaluation_time is not None:
             now = float(evaluation_time)
         else:
             now = time.time()
-            # If simulated/replay feed contains timestamps ahead of time.time(), establish authoritative replay time
-            max_feed_ts = 0.0
-            for d in data_map.values():
-                if isinstance(d, dict) and d.get("timestamp"):
-                    try:
-                        max_feed_ts = max(max_feed_ts, float(d["timestamp"]))
-                    except Exception:
-                        pass
-                elif isinstance(d, pd.DataFrame) and not d.empty:
-                    try:
-                        last_idx = d.index[-1]
-                        last_ts = last_idx.timestamp() if hasattr(last_idx, 'timestamp') else float(last_idx)
-                        max_feed_ts = max(max_feed_ts, last_ts)
-                    except Exception:
-                        pass
-            if max_feed_ts > now:
-                now = max_feed_ts + 300.0
 
         # Auto-Squareoff at Market Close: if market is closed (past 15:30 IST or non-trading day),
         # any intraday trade from a previous session or after 15:30 IST is automatically squared off at the latest closing price!
@@ -704,8 +690,8 @@ def evaluate_open_outcomes(data_map, force_eod=False, evaluation_time=None):
                         continue
 
                     # STRICT COMPLETION CHECK FOR EVERY CANDLE:
-                    # In live market evaluation (now_ts), no future candle can be processed.
-                    # Every candle must have completed: c_ts + 300 <= now_ts (or now).
+                    # In live market evaluation (now), no future candle can be processed.
+                    # Every candle must have completed: c_ts + 300 <= now.
                     candle_close_ts = c_ts + 300
                     if candle_close_ts > now:
                         continue
@@ -777,19 +763,32 @@ def evaluate_open_outcomes(data_map, force_eod=False, evaluation_time=None):
                     continue
 
                 # STRICT CANDLE COMPLETION & 5-MINUTE BOUNDARY ENFORCEMENT:
-                # 1. Physical clock check: candle cannot be in the future.
+                # 1. 5-Minute Grid check:
+                # Candles must be aligned to the 300-second grid. If explicitly flagged with enforce_grid=True,
+                # or when timestamp has non-zero remainder not near multiple of 300, reject unaligned feeds.
+                if data.get("enforce_grid", False):
+                    if (round(c_ts) % 300) > 1 and (round(c_ts) % 300) < 299:
+                        continue
+
+                # 2. Physical clock check: candle cannot be in the future.
                 #    A candle is strictly closed only after c_ts + 300 <= now.
                 #    Setting is_completed=True can NEVER bypass the physical clock (c_ts + 300 <= now).
                 if c_ts + 300 > now:
                     continue
 
-                # 2. In replay or simulated feeds where is_completed is explicitly passed:
-                #    Reject if is_completed is False.
-                is_completed = data.get("is_completed")
-                if is_completed is False:
-                    continue
+                # 3. Completion flag handling:
+                #    - If raw_is_comp is omitted (None), candle is considered complete because clock passed (c_ts + 300 <= now).
+                #    - If explicitly provided, reject string falsy values (e.g. "false", "0", False)
+                raw_is_comp = data.get("is_completed")
+                if raw_is_comp is not None:
+                    if isinstance(raw_is_comp, str) and raw_is_comp.lower().strip() in ("false", "0", "no"):
+                        continue
+                    if raw_is_comp is False or raw_is_comp == 0:
+                        continue
+                    if type(raw_is_comp) is not bool and not isinstance(raw_is_comp, (int, float)):
+                        continue
 
-                if is_completed and c_ts > last_candle_time and c_ts >= eval_min_time:
+                if c_ts > last_candle_time and c_ts >= eval_min_time:
                     raw_open = data.get("open")
                     raw_high = data.get("high")
                     raw_low = data.get("low")

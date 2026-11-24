@@ -116,7 +116,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
 
         # Candle 1 reaches TP1 (High 512, Low 502) -> TP1 hit, stop moved to breakeven (500)
         c1 = {"open": 505.0, "high": 512.0, "low": 502.0, "timestamp": now_ts + 300, "is_completed": True}
-        storage.evaluate_open_outcomes({sym: c1})
+        storage.evaluate_open_outcomes({sym: c1}, evaluation_time=now_ts + 600)
 
         c.execute("SELECT outcome, tp1_hit, tp2_hit, current_stop_loss FROM historical_signals WHERE id = ?", (sig_id,))
         row = c.fetchone()
@@ -127,7 +127,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
 
         # Candle 2 reaches TP2 (High 525, Low 508) -> WIN_FULL
         c2 = {"open": 510.0, "high": 525.0, "low": 508.0, "timestamp": now_ts + 600, "is_completed": True}
-        storage.evaluate_open_outcomes({sym: c2})
+        storage.evaluate_open_outcomes({sym: c2}, evaluation_time=now_ts + 900)
 
         c.execute("SELECT outcome, tp1_hit, tp2_hit, final_pnl, net_pnl FROM historical_signals WHERE id = ?", (sig_id,))
         row2 = c.fetchone()
@@ -154,7 +154,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
 
         # Candle 1 reaches TP1 for SELL (High 498, Low 488) -> TP1 hit, stop moved to breakeven (500)
         c1 = {"open": 495.0, "high": 498.0, "low": 488.0, "timestamp": now_ts + 300, "is_completed": True}
-        storage.evaluate_open_outcomes({sym: c1})
+        storage.evaluate_open_outcomes({sym: c1}, evaluation_time=now_ts + 600)
 
         c.execute("SELECT outcome, tp1_hit, current_stop_loss FROM historical_signals WHERE id = ?", (sig_id,))
         row = c.fetchone()
@@ -163,7 +163,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
 
         # Candle 2 reaches TP2 for SELL (High 492, Low 475) -> WIN_FULL
         c2 = {"open": 485.0, "high": 492.0, "low": 475.0, "timestamp": now_ts + 600, "is_completed": True}
-        storage.evaluate_open_outcomes({sym: c2})
+        storage.evaluate_open_outcomes({sym: c2}, evaluation_time=now_ts + 900)
 
         c.execute("SELECT outcome, tp2_hit, final_pnl, net_pnl FROM historical_signals WHERE id = ?", (sig_id,))
         row2 = c.fetchone()
@@ -190,7 +190,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
 
         # Candle touches BOTH TP1 (High 518 >= 515) and original SL (Low 488 <= 490) in the same bar
         c_ambiguous = {"open": 500.0, "high": 518.0, "low": 488.0, "timestamp": now_ts + 300, "is_completed": True}
-        storage.evaluate_open_outcomes({sym: c_ambiguous})
+        storage.evaluate_open_outcomes({sym: c_ambiguous}, evaluation_time=now_ts + 600)
 
         c.execute("SELECT outcome, tp1_hit, final_pnl, net_pnl FROM historical_signals WHERE id = ?", (sig_id,))
         row = c.fetchone()
@@ -218,11 +218,11 @@ class TestIntradayScreenerCore(unittest.TestCase):
 
         # Candle 1 hits TP1
         c1 = {"open": 502.0, "high": 512.0, "low": 502.0, "timestamp": now_ts + 300, "is_completed": True}
-        storage.evaluate_open_outcomes({sym: c1})
+        storage.evaluate_open_outcomes({sym: c1}, evaluation_time=now_ts + 600)
 
         # Candle 2 reverses back to entry price (breakeven stop triggered)
         c2 = {"open": 505.0, "high": 508.0, "low": 499.0, "timestamp": now_ts + 600, "is_completed": True}
-        storage.evaluate_open_outcomes({sym: c2})
+        storage.evaluate_open_outcomes({sym: c2}, evaluation_time=now_ts + 900)
 
         c.execute("SELECT outcome, tp1_hit, tp2_hit, final_pnl FROM historical_signals WHERE id = ?", (sig_id,))
         row = c.fetchone()
@@ -248,9 +248,9 @@ class TestIntradayScreenerCore(unittest.TestCase):
         now_ts = float(c.fetchone()["timestamp"])
 
         c1 = {"open": 500.0, "high": 505.0, "low": 498.0, "timestamp": now_ts + 300, "is_completed": True}
-        storage.evaluate_open_outcomes({sym: c1})
+        storage.evaluate_open_outcomes({sym: c1}, evaluation_time=now_ts + 600)
         # Feed the exact same candle again
-        storage.evaluate_open_outcomes({sym: c1})
+        storage.evaluate_open_outcomes({sym: c1}, evaluation_time=now_ts + 600)
 
         c.execute("SELECT outcome, last_candle_time FROM historical_signals WHERE id = ?", (sig_id,))
         row = c.fetchone()
@@ -1403,7 +1403,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
         }
 
         # Must execute cleanly without unhandled exception aborting sym2
-        storage.evaluate_open_outcomes(data_map)
+        storage.evaluate_open_outcomes(data_map, evaluation_time=ts1 + 600)
 
         c.execute("SELECT outcome, tp1_hit FROM historical_signals WHERE id = ?", (sig1,))
         row1 = c.fetchone()
@@ -1779,6 +1779,124 @@ class TestIntradayScreenerCore(unittest.TestCase):
         self.assertEqual(row["contract_expiry"], str(exp_date))
         self.assertEqual(row["contract_source"], "BROKER_LIVE")
         self.assertEqual(row["quantity"], 250)
+
+    def test_live_mode_rejects_future_candle_without_evaluation_time(self):
+        # When evaluation_time is OMITTED (Live mode), future candles cannot advance now or trigger target
+        sym = "LIVE_FUTURE_REJECT_TEST.NS"
+        now_ts = time.time()
+        # Round down to nearest 5m grid boundary (multiple of 300)
+        base_grid = (int(now_ts) // 300) * 300
+        sig_id = storage.log_signal({
+            "symbol": sym, "direction": "BUY", "strategy": "Momentum",
+            "entry_price": 100.0, "stop_loss": 90.0, "target_1": 110.0,
+            "signal_candle_start": base_grid - 600,
+            "signal_candle_close_time": base_grid - 300
+        })
+
+        # Supply future-dated candle starting at base_grid + 600
+        future_start = base_grid + 600
+        future_candle = {
+            "open": 100.0, "high": 120.0, "low": 98.0, "close": 115.0,
+            "timestamp": future_start,
+            "is_completed": True
+        }
+
+        # evaluation_time is omitted! Live clock must be used, rejecting the future candle
+        storage.evaluate_open_outcomes({sym: future_candle})
+
+        conn = storage.get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT outcome, tp1_hit, mfe FROM historical_signals WHERE id = ?", (sig_id,))
+        row = c.fetchone()
+        conn.close()
+
+        self.assertEqual(row["outcome"], "ACTIVE")
+        self.assertEqual(row["tp1_hit"], 0)
+        self.assertEqual(row["mfe"], 0.0)
+
+    def test_completed_dict_candle_without_flag_and_string_false_flag(self):
+        sym = "DICT_COMPLETION_TEST.NS"
+        now_ts = time.time()
+        base_grid = (int(now_ts) // 300) * 300
+        sig_id = storage.log_signal({
+            "symbol": sym, "direction": "BUY", "strategy": "BOS",
+            "entry_price": 100.0, "stop_loss": 90.0, "target_1": 110.0, "target_2": 120.0,
+            "signal_candle_start": base_grid - 1200,
+            "signal_candle_close_time": base_grid - 900
+        })
+
+        # 1. Valid completed candle on 5m grid where is_completed is OMITTED (None)
+        # Low is 101.0 > 100.0 so breakeven is NOT triggered
+        completed_candle = {
+            "open": 102.0, "high": 112.0, "low": 101.0, "close": 110.0,
+            "timestamp": base_grid - 600
+            # is_completed is omitted
+        }
+        storage.evaluate_open_outcomes({sym: completed_candle}, evaluation_time=base_grid)
+
+        conn = storage.get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT tp1_hit, outcome FROM historical_signals WHERE id = ?", (sig_id,))
+        first_row = c.fetchone()
+        self.assertEqual(first_row["tp1_hit"], 1)
+        self.assertEqual(first_row["outcome"], "ACTIVE")
+
+        # 2. String "false" flag must be rejected
+        c_string_false = {
+            "open": 110.0, "high": 125.0, "low": 108.0, "close": 122.0,
+            "timestamp": base_grid - 300,
+            "is_completed": "false"  # String false
+        }
+        storage.evaluate_open_outcomes({sym: c_string_false}, evaluation_time=base_grid)
+        c.execute("SELECT outcome, tp2_hit FROM historical_signals WHERE id = ?", (sig_id,))
+        row_check = c.fetchone()
+        # Target 2 was not reached because string "false" was rejected
+        self.assertEqual(row_check["outcome"], "ACTIVE")
+        self.assertEqual(row_check["tp2_hit"], 0)
+        conn.close()
+
+    def test_unaligned_5m_timestamp_grid_rejected(self):
+        sym = "GRID_REJECT_TEST.NS"
+        now_ts = time.time()
+        base_grid = (int(now_ts) // 300) * 300
+        sig_id = storage.log_signal({
+            "symbol": sym, "direction": "BUY", "strategy": "BOS",
+            "entry_price": 100.0, "stop_loss": 90.0, "target_1": 110.0, "target_2": 120.0,
+            "signal_candle_start": base_grid - 1200,
+            "signal_candle_close_time": base_grid - 900
+        })
+
+        # Candle timestamp is NOT aligned on 300s grid (e.g. 137s offset)
+        unaligned_candle = {
+            "open": 100.0, "high": 120.0, "low": 99.0, "close": 115.0,
+            "timestamp": base_grid - 600 + 137,
+            "is_completed": True,
+            "enforce_grid": True
+        }
+        storage.evaluate_open_outcomes({sym: unaligned_candle}, evaluation_time=base_grid)
+
+        conn = storage.get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT outcome, tp1_hit FROM historical_signals WHERE id = ?", (sig_id,))
+        row = c.fetchone()
+        conn.close()
+
+        self.assertEqual(row["outcome"], "ACTIVE")
+        self.assertEqual(row["tp1_hit"], 0)
+
+    def test_stale_contract_record_rejected_by_freshness_policy(self):
+        today = datetime.date.today()
+        stale_date = today - datetime.timedelta(days=15)  # 15 days old (> 7 days)
+        ContractMaster.register_dynamic_contracts({
+            "STALE_BROKER_SYM": {
+                "lot_size": 300,
+                "expiry": str(today + datetime.timedelta(days=14)),
+                "update_date": str(stale_date),
+                "instrument_id": "FUT-STALE-1"
+            }
+        })
+        # Freshness policy must reject stale broker records
+        self.assertNotIn(("STALE_BROKER_SYM", today + datetime.timedelta(days=14)), ContractMaster._DYNAMIC_CONTRACTS)
 
 if __name__ == '__main__':
     unittest.main()

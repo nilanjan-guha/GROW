@@ -1586,24 +1586,39 @@ def log_confirmed_signal_endpoint():
         # Determine intended quantity and instrument type from contract master or client request
         from core.contract_master import ContractMaster
         clean_cand_sym = sym.replace(".NS", "").upper()
-        contract_spec = ContractMaster.get_contract_spec(clean_cand_sym)
-        
         req_inst = (data.get("instrument_type") or "").upper()
+        req_expiry = data.get("expiry") or data.get("contract_expiry")
+
         if req_inst == "OPTIONS":
             # Reject OPTIONS until dedicated option chain contracts (strike, expiry, type) are integrated
             return jsonify({"success": False, "error": "Server rejection: OPTIONS trading mode requires live contract-level option chain and strikes (currently disabled until option chain feed is active)."}), 400
-        elif req_inst in ("FUTURES", "EQUITY_INTRADAY"):
-            intended_inst = req_inst
-        else:
-            intended_inst = "FUTURES" if contract_spec else "EQUITY_INTRADAY"
 
-        req_qty = data.get("quantity")
-        if req_qty and int(req_qty) > 0:
-            intended_qty = int(req_qty)
-        elif contract_spec:
-            intended_qty = contract_spec["lot_size"]
+        # Query contract specification (with explicit expiry if requested)
+        contract_spec = ContractMaster.get_contract_spec(clean_cand_sym, expiry=req_expiry)
+
+        # STRICT FUTURES IDENTITY ENFORCEMENT (P0):
+        # A request for FUTURES mode MUST have an authoritative broker contract spec with exact instrument_id, expiry, and lot_size.
+        # It must NEVER fall back to quantity 100 or proceed with missing contract identity!
+        if req_inst == "FUTURES":
+            if not contract_spec or not contract_spec.get("instrument_id") or not contract_spec.get("expiry") or not contract_spec.get("lot_size"):
+                return jsonify({
+                    "success": False,
+                    "error": f"Server rejection: FUTURES trading mode requires a valid registered broker contract with exact instrument_id, expiry, and lot_size for {clean_cand_sym}."
+                }), 400
+            intended_inst = "FUTURES"
+            intended_qty = int(contract_spec["lot_size"])
+        elif req_inst == "EQUITY_INTRADAY":
+            intended_inst = "EQUITY_INTRADAY"
+            req_qty = data.get("quantity")
+            intended_qty = int(req_qty) if (req_qty and int(req_qty) > 0) else 100
         else:
-            intended_qty = 100
+            # Default determination: if contract_spec exists, default to FUTURES; otherwise EQUITY_INTRADAY
+            if contract_spec:
+                intended_inst = "FUTURES"
+                intended_qty = int(contract_spec["lot_size"])
+            else:
+                intended_inst = "EQUITY_INTRADAY"
+                intended_qty = 100
 
         sig_id = log_signal({
             "symbol": sym,
