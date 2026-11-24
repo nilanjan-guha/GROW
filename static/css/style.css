@@ -406,14 +406,16 @@ header {
 
 .sector-card .scanning-badge {
     display: none;
-    font-size: 0.58rem;
+    font-size: 0.54rem;
     font-weight: 800;
     color: #00f0ff;
-    background: rgba(0, 240, 255, 0.25);
+    background: rgba(0, 240, 255, 0.22);
     border: 1px solid #00f0ff;
-    padding: 1px 5px;
+    padding: 1px 4px;
     border-radius: 3px;
-    margin-left: 4px;
+    margin-left: 3px;
+    white-space: nowrap;
+    line-height: 1.1;
     animation: scanningTextPulse 1s infinite alternate;
 }
 
@@ -428,54 +430,62 @@ header {
 }
 
 .sector-card.scanning .scanning-badge {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
 }
 
 .sector-card .news-catalyst-badge {
     display: none;
-    font-size: 0.58rem;
+    font-size: 0.54rem;
     font-weight: 800;
     color: #ffb703;
     background: rgba(255, 183, 3, 0.2);
     border: 1px solid #ffb703;
-    padding: 1px 5px;
+    padding: 1px 4px;
     border-radius: 3px;
-    margin-left: 4px;
+    margin-left: 3px;
+    white-space: nowrap;
+    line-height: 1.1;
 }
 
-.sector-card.has-news-catalyst .news-catalyst-badge {
-    display: inline-block;
+.sector-card.has-news-catalyst:not(.has-breaking-news) .news-catalyst-badge {
+    display: inline-flex;
+    align-items: center;
 }
 
 .sector-card .breaking-news-badge {
     display: none;
-    font-size: 0.58rem;
+    font-size: 0.54rem;
     font-weight: 800;
     color: #ff007f;
     background: rgba(255, 0, 127, 0.25);
     border: 1px solid #ff007f;
-    padding: 1px 5px;
+    padding: 1px 4px;
     border-radius: 3px;
-    margin-left: 4px;
+    margin-left: 3px;
+    white-space: nowrap;
+    line-height: 1.1;
     animation: scanningTextPulse 0.8s infinite alternate;
 }
 
 .sector-card.has-breaking-news .breaking-news-badge {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
 }
 
 .sector-card .active-radar-badge {
     display: none;
-    font-size: 0.58rem;
+    font-size: 0.54rem;
     font-weight: 800;
     color: #00f0ff;
     letter-spacing: 0.4px;
     background: rgba(0, 240, 255, 0.2);
-    border: 1px solid rgba(0, 240, 255, 0.6);
-    padding: 1px 5px;
+    border: 1px solid rgba(0, 240, 255, 0.7);
+    padding: 1px 4px;
     border-radius: 3px;
-    margin-left: 2px;
+    margin-left: 3px;
     white-space: nowrap;
+    line-height: 1.1;
     text-shadow: 0 0 6px rgba(0, 240, 255, 0.5);
     animation: radarPulse 2s infinite ease-in-out;
 }
@@ -496,7 +506,13 @@ header {
 }
 
 .sector-card.selected .active-radar-badge {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+}
+
+/* When a card is actively scanning, hide the redundant active badge so badges never overlap */
+.sector-card.selected.scanning .active-radar-badge {
+    display: none !important;
 }
 
 .sec-header-row {

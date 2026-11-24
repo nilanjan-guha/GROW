@@ -842,9 +842,9 @@
                     card.style.padding = '9px 12px';
                     card.onclick = () => selectStock(sym);
                     card.innerHTML = `
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:5px; gap:8px;">
-                            <div style="display:flex; align-items:center; gap:5px; min-width:0; flex-shrink:1; overflow:hidden;">
-                                <span style="font-size:0.86rem; font-weight:800; color:#ffffff; letter-spacing:0.4px; text-shadow:0 1px 3px rgba(0,0,0,0.8); white-space:nowrap;">#${idx + 1} ${sym.replace('.NS', '')}</span>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:5px; gap:6px;">
+                            <div style="display:flex; align-items:center; gap:4px; min-width:0; flex:1; overflow:hidden;">
+                                <span style="font-size:0.84rem; font-weight:800; color:#ffffff; letter-spacing:0.3px; text-shadow:0 1px 3px rgba(0,0,0,0.8); white-space:nowrap; flex-shrink:0;">#${idx + 1} ${sym.replace('.NS', '')}</span>
                                 <span class="active-radar-badge">▶ ACTIVE</span>
                                 <span class="scanning-badge">● SCANNING</span>
                                 <span class="breaking-news-badge">🔥 BREAKING</span>
@@ -883,9 +883,9 @@
                     card.style.padding = '9px 12px';
                     card.onclick = () => selectStock(sym);
                     card.innerHTML = `
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:5px; gap:8px;">
-                            <div style="display:flex; align-items:center; gap:5px; min-width:0; flex-shrink:1; overflow:hidden;">
-                                <span style="font-size:0.86rem; font-weight:800; color:#ffffff; letter-spacing:0.4px; text-shadow:0 1px 3px rgba(0,0,0,0.8); white-space:nowrap;">#${idx + 1} ${sym.replace('.NS', '')}</span>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:5px; gap:6px;">
+                            <div style="display:flex; align-items:center; gap:4px; min-width:0; flex:1; overflow:hidden;">
+                                <span style="font-size:0.84rem; font-weight:800; color:#ffffff; letter-spacing:0.3px; text-shadow:0 1px 3px rgba(0,0,0,0.8); white-space:nowrap; flex-shrink:0;">#${idx + 1} ${sym.replace('.NS', '')}</span>
                                 <span class="active-radar-badge">▶ ACTIVE</span>
                                 <span class="scanning-badge">● SCANNING</span>
                                 <span class="breaking-news-badge">🔥 BREAKING</span>
@@ -1118,6 +1118,7 @@
             if (isManual && isUserManualSelection && currentStockSymbol === stk) {
                 isUserManualSelection = false;
                 userSelectedStock = null;
+                document.querySelectorAll('.sector-card').forEach(c => c.classList.remove('selected'));
                 log(`[AUTONOMOUS SCAN RESUMED] Manual lock released on ${stk.replace('.NS', '')}. Auto cycle active.`, 'INFO');
                 return;
             }
@@ -1664,7 +1665,7 @@
             // Pre-fetch news for the scanned stock in background so catalyst badges and breaking glow appear automatically
             fetchStockNews(cleanSym);
 
-            // If the user hasn't locked onto a manual stock, let radar follow the autonomous scan
+            // If user has not locked onto a manual stock, let radar and catalyst news seamlessly follow the autonomous scan
             if (!isUserManualSelection) {
                 selectStock(target.symbol, false);
             }
