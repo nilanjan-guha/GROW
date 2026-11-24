@@ -40,6 +40,14 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
     if isinstance(nifty_df.columns, pd.MultiIndex):
         nifty_df = nifty_df.xs("^NSEI", axis=1, level=1) if "^NSEI" in nifty_df.columns.levels[1] else nifty_df
     
+    # Validate downloaded historical NIFTY benchmark with strict session grid validator (Item A)
+    from engine.market_validator import MarketValidator
+    val_nifty = MarketValidator.validate_historical_replay_data(nifty_df, candle_duration_seconds=300, allow_partial_final_session=True)
+    if not val_nifty.get("is_valid", False):
+        print(f"[REJECTED] Benchmark NIFTY 50 feed failed historical session-grid validation: {val_nifty.get('reason')}")
+        return stats
+    print(f"[VALIDATED] Benchmark NIFTY 50 feed passed validation ({val_nifty.get('total_sessions')} sessions).")
+
     stats = {
         "total_evaluations": 0,
         "watch_only_candidates": 0,
@@ -100,6 +108,12 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
         else:
             df.index = df.index.tz_convert("Asia/Kolkata")
 
+        # Validate stock historical feed with strict session grid validator (Item A)
+        val_stock = MarketValidator.validate_historical_replay_data(df, candle_duration_seconds=300, allow_partial_final_session=True)
+        if not val_stock.get("is_valid", False):
+            print(f"[REJECTED] {sym} failed historical session-grid validation: {val_stock.get('reason')}")
+            continue
+
         # 1. Identify distinct, non-overlapping Bullish and Bearish movement events
         bullish_event_indices = []
         bearish_event_indices = []
@@ -144,6 +158,9 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
                     sector_df.index = sector_df.index.tz_localize("Asia/Kolkata")
                 else:
                     sector_df.index = sector_df.index.tz_convert("Asia/Kolkata")
+                val_sec = MarketValidator.validate_historical_replay_data(sector_df, candle_duration_seconds=300, allow_partial_final_session=True)
+                if not val_sec.get("is_valid", False):
+                    sector_df = None
         except Exception:
             sector_df = None
 
@@ -178,49 +195,49 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
     global_oos_cutoff_ts = all_timestamps[oos_split_idx] if oos_split_idx < len(all_timestamps) else all_timestamps[-1]
     print(f"Global In-Sample (60%) up to {global_oos_cutoff_ts} | Out-of-Sample (40%) beyond.")
 
-    # Shared Portfolio State:
-    # Starting portfolio equity: 100.0 (normalized base)
-    # Total capital available, reserved capital, and continuous mark-to-market tracking
+    # Shared Portfolio State (Item B):
+    # Starting portfolio equity: ₹10,00,000 (realistic Indian retail capital base)
+    # Available cash ledger & reserved capital per position
     # Max concurrent positions: 4
-    # Max allocation per trade: 25% of current equity reserved AT ENTRY
-    portfolio_equity = 100.0
-    active_portfolio_positions = [] # List of active trades with reserved capital and live mark-to-market
+    # Max allocation per trade: 25% of available cash at entry
+    initial_capital_rs = 1000000.0
+    cash_balance_rs = initial_capital_rs
+    active_portfolio_positions = [] # List of active trades with exact rupee allocations, quantities, and MTM
 
     for current_ts in all_timestamps:
         # 1. Release active positions whose exit_ts has arrived or passed at or before current_ts
         still_active = []
         for pos in active_portfolio_positions:
             if current_ts >= pos["exit_ts"]:
-                # Realize position into shared portfolio equity using entry-reserved capital
-                pnl_mult = (pos["net_pnl"] / 100.0) * pos["alloc"]
-                portfolio_equity = portfolio_equity * (1.0 + pnl_mult)
+                # Release reserved capital + net realized rupee profit/loss to cash balance
+                cash_balance_rs += (pos["allocated_capital_rs"] + pos["net_realized_rs"])
                 stats["trades_executed"] += 1
-                stats["trade_net_pnls"].append(pos["net_pnl"])
-                stats["trade_gross_pnls"].append(pos["gross_pnl"])
-                stats["total_pnl_pct"] += pos["net_pnl"]
-                stats["gross_pnl_pct"] += pos["gross_pnl"]
+                stats["trade_net_pnls"].append(pos["net_pnl_pct"])
+                stats["trade_gross_pnls"].append(pos["gross_pnl_pct"])
+                stats["total_pnl_pct"] += pos["net_pnl_pct"]
+                stats["gross_pnl_pct"] += pos["gross_pnl_pct"]
                 stats["trade_r_multiples"].append(pos["r_mult"])
                 stats["mfes"].append(pos["mfe"])
                 stats["maes"].append(pos["mae"])
-                if pos["net_pnl"] > 0:
+                if pos["net_realized_rs"] > 0:
                     stats["wins"] += 1
                 else:
                     stats["losses"] += 1
                 if pos["is_oos"]:
                     stats["out_of_sample_trades"] += 1
-                    if pos["net_pnl"] > 0:
+                    if pos["net_realized_rs"] > 0:
                         stats["out_of_sample_wins"] += 1
                 else:
                     stats["in_sample_trades"] += 1
-                    if pos["net_pnl"] > 0:
+                    if pos["net_realized_rs"] > 0:
                         stats["in_sample_wins"] += 1
             else:
                 still_active.append(pos)
         active_portfolio_positions = still_active
 
-        # Compute continuous mark-to-market portfolio equity for this timestamp:
-        # Portfolio Equity = Realized Equity + Sum of current unrealized PnL across active positions
-        unrealized_total_mult = 0.0
+        # Compute position-by-position continuous mark-to-market portfolio equity for this timestamp:
+        # Portfolio Equity = Cash Balance + Sum(Reserved Capital + Unrealized PnL of open positions)
+        total_open_value_rs = 0.0
         for pos in active_portfolio_positions:
             pos_sym = pos["symbol"]
             pos_df = symbol_data[pos_sym]["df"]
@@ -228,11 +245,15 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
                 curr_bar_c = float(pos_df.loc[current_ts, "Close"])
                 pos_dir = pos["direction"]
                 entry_p = pos["entry_price"]
-                unrealized_pct = ((curr_bar_c - entry_p) / entry_p * 100) if pos_dir == "BULLISH" else ((entry_p - curr_bar_c) / entry_p * 100)
-                unrealized_total_mult += (unrealized_pct / 100.0) * pos["alloc"]
-        
-        current_mtm_equity = portfolio_equity * (1.0 + unrealized_total_mult)
-        stats["equity_curve"].append(current_mtm_equity)
+                qty = pos["quantity"]
+                gross_unrealized_rs = (curr_bar_c - entry_p) * qty if pos_dir == "BULLISH" else (entry_p - curr_bar_c) * qty
+                total_open_value_rs += (pos["allocated_capital_rs"] + gross_unrealized_rs)
+            else:
+                total_open_value_rs += pos["allocated_capital_rs"]
+
+        current_mtm_equity_rs = cash_balance_rs + total_open_value_rs
+        # Equity curve as percentage of initial capital (100.0 baseline)
+        stats["equity_curve"].append(round((current_mtm_equity_rs / initial_capital_rs) * 100.0, 2))
 
         # 2. Check each candidate symbol for this exact completed candle timestamp
         for sym, s_data in symbol_data.items():
@@ -327,8 +348,13 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
             if any(p["symbol"] == sym for p in active_portfolio_positions):
                 continue
 
-            # Shared Portfolio Concurrency Gate: Max 4 simultaneous positions
+            # Shared Portfolio Concurrency Gate: Max 4 simultaneous positions & available cash check
             if len(active_portfolio_positions) >= max_concurrent_portfolio_trades:
+                continue
+
+            # Calculate trade capital allocation from AVAILABLE cash at entry (Item B)
+            available_alloc_rs = cash_balance_rs / (max_concurrent_portfolio_trades - len(active_portfolio_positions))
+            if available_alloc_rs < 10000.0:  # Minimum viable trade ticket ₹10,000
                 continue
 
             # Validate risk levels
@@ -362,6 +388,12 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
                 stats["rejected_no_risk"] += 1
                 stats["watch_only_candidates"] += 1
                 continue
+
+            # Compute exact trade quantity from allocated capital
+            trade_qty = int(available_alloc_rs / actual_entry)
+            if trade_qty <= 0:
+                continue
+            actual_allocated_rs = trade_qty * actual_entry
 
             # Calculate Trade Outcome Forward
             forward_candles = df.iloc[idx:min(idx + max_holding_candles, len(df))]
@@ -455,64 +487,103 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
                 max_fav = (actual_entry - min(in_trade_lows[:exit_offset+1])) / actual_entry * 100
                 max_adv = (max(in_trade_highs[:exit_offset+1]) - actual_entry) / actual_entry * 100
 
-            trade_friction_pct = base_statutory_friction_pct + (0.015 if direction == "BEARISH" else 0.010)
+            # Realistic Statutory Turnover Costs (Item F):
+            # Brokerage: min(₹20, 0.03% of turnover) each side
+            # STT: 0.025% on sell side (equity intraday)
+            # Exchange charge: 0.00325% on both sides
+            # GST: 18% on (Brokerage + Exchange)
+            # Stamp duty: 0.003% on buy side
+            entry_turnover_rs = actual_entry * trade_qty
+            exit_turnover_rs = exit_price_actual * trade_qty
+            total_turnover_rs = entry_turnover_rs + exit_turnover_rs
 
-            if hit_tp:
-                gross_diff = (exit_price_actual - actual_entry) / actual_entry * 100 if direction == "BULLISH" else (actual_entry - exit_price_actual) / actual_entry * 100
-            elif hit_sl:
-                gross_diff = -(abs(actual_entry - exit_price_actual) / actual_entry * 100)
-            else:
-                gross_diff = ((exit_price_actual - actual_entry) / actual_entry * 100) if direction == "BULLISH" else ((actual_entry - exit_price_actual) / actual_entry * 100)
+            brokerage_rs = min(20.0, entry_turnover_rs * 0.0003) + min(20.0, exit_turnover_rs * 0.0003)
+            stt_rs = (exit_turnover_rs if direction == "BULLISH" else entry_turnover_rs) * 0.00025
+            exch_turnover_fee_rs = total_turnover_rs * 0.0000325
+            gst_rs = (brokerage_rs + exch_turnover_fee_rs) * 0.18
+            stamp_duty_rs = (entry_turnover_rs if direction == "BULLISH" else exit_turnover_rs) * 0.00003
+            total_friction_rs = brokerage_rs + stt_rs + exch_turnover_fee_rs + gst_rs + stamp_duty_rs
 
-            net_pnl = gross_diff - trade_friction_pct
+            gross_realized_rs = (exit_price_actual - actual_entry) * trade_qty if direction == "BULLISH" else (actual_entry - exit_price_actual) * trade_qty
+            net_realized_rs = gross_realized_rs - total_friction_rs
+
+            gross_diff = (gross_realized_rs / actual_allocated_rs) * 100.0
+            net_pnl = (net_realized_rs / actual_allocated_rs) * 100.0
             risk_pct = (risk / actual_entry) * 100
             r_mult = net_pnl / risk_pct if risk_pct > 0 else (1.0 if net_pnl > 0 else -1.0)
             
-            # Correct exit timestamp alignment (Item 3):
-            # idx is candle 0 in forward_candles, exit_offset is 0-indexed (e.g. 0 to 5)
-            # The candle at idx + exit_offset is the EXACT completed candle where exit occurs!
             exit_idx = idx + exit_offset
             exit_ts = df.index[min(exit_idx, len(df) - 1)]
 
-            # Register into shared active portfolio positions
-            active_portfolio_positions.append({
-                "symbol": sym,
-                "direction": direction,
-                "entry_price": actual_entry,
-                "entry_ts": current_ts,
-                "exit_ts": exit_ts,
-                "net_pnl": net_pnl,
-                "gross_pnl": gross_diff,
-                "alloc": 0.25, # Max 25% allocation per concurrent trade
-                "r_mult": r_mult,
-                "mfe": max_fav,
-                "mae": max_adv,
-                "is_oos": (current_ts >= global_oos_cutoff_ts)
-            })
+            # Strict Signal Timestamp Out-of-Sample Classification (Item E):
+            # Classifies using signal_candle_ts >= global_oos_cutoff_ts
+            is_trade_oos = (signal_candle_ts >= global_oos_cutoff_ts)
+
+            # Handle same-timestamp exit immediately (Item D):
+            # If exit happened on the exact same candle (exit_offset == 0), realize immediately without locking slot!
+            if exit_offset == 0 or exit_ts <= current_ts:
+                cash_balance_rs += net_realized_rs
+                stats["trades_executed"] += 1
+                stats["trade_net_pnls"].append(net_pnl)
+                stats["trade_gross_pnls"].append(gross_diff)
+                stats["total_pnl_pct"] += net_pnl
+                stats["gross_pnl_pct"] += gross_diff
+                stats["trade_r_multiples"].append(r_mult)
+                stats["mfes"].append(max_fav)
+                stats["maes"].append(max_adv)
+                if net_realized_rs > 0:
+                    stats["wins"] += 1
+                else:
+                    stats["losses"] += 1
+                if is_trade_oos:
+                    stats["out_of_sample_trades"] += 1
+                    if net_realized_rs > 0: stats["out_of_sample_wins"] += 1
+                else:
+                    stats["in_sample_trades"] += 1
+                    if net_realized_rs > 0: stats["in_sample_wins"] += 1
+            else:
+                # Reserve capital from available cash ledger
+                cash_balance_rs -= actual_allocated_rs
+                active_portfolio_positions.append({
+                    "symbol": sym,
+                    "direction": direction,
+                    "quantity": trade_qty,
+                    "allocated_capital_rs": actual_allocated_rs,
+                    "entry_price": actual_entry,
+                    "entry_ts": current_ts,
+                    "exit_ts": exit_ts,
+                    "net_realized_rs": net_realized_rs,
+                    "net_pnl_pct": net_pnl,
+                    "gross_pnl_pct": gross_diff,
+                    "r_mult": r_mult,
+                    "mfe": max_fav,
+                    "mae": max_adv,
+                    "is_oos": is_trade_oos
+                })
 
     # Flush any remaining positions that completed at the end of the timeline
     for pos in active_portfolio_positions:
-        pnl_mult = (pos["net_pnl"] / 100.0) * pos["alloc"]
-        prev_eq = stats["equity_curve"][-1]
-        new_eq = prev_eq * (1.0 + pnl_mult)
-        stats["equity_curve"].append(new_eq)
+        cash_balance_rs += (pos["allocated_capital_rs"] + pos["net_realized_rs"])
         stats["trades_executed"] += 1
-        stats["trade_net_pnls"].append(pos["net_pnl"])
-        stats["trade_gross_pnls"].append(pos["gross_pnl"])
-        stats["total_pnl_pct"] += pos["net_pnl"]
-        stats["gross_pnl_pct"] += pos["gross_pnl"]
+        stats["trade_net_pnls"].append(pos["net_pnl_pct"])
+        stats["trade_gross_pnls"].append(pos["gross_pnl_pct"])
+        stats["total_pnl_pct"] += pos["net_pnl_pct"]
+        stats["gross_pnl_pct"] += pos["gross_pnl_pct"]
         stats["trade_r_multiples"].append(pos["r_mult"])
         stats["mfes"].append(pos["mfe"])
         stats["maes"].append(pos["mae"])
-        if pos["net_pnl"] > 0:
+        if pos["net_realized_rs"] > 0:
             stats["wins"] += 1
         else:
             stats["losses"] += 1
         if pos["is_oos"]:
             stats["out_of_sample_trades"] += 1
-            if pos["net_pnl"] > 0:
+            if pos["net_realized_rs"] > 0:
                 stats["out_of_sample_wins"] += 1
         else:
+            stats["in_sample_trades"] += 1
+            if pos["net_realized_rs"] > 0:
+                stats["in_sample_wins"] += 1
             stats["in_sample_trades"] += 1
             if pos["net_pnl"] > 0:
                 stats["in_sample_wins"] += 1

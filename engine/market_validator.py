@@ -313,7 +313,12 @@ class MarketValidator:
                     corrupt_session_reason = f"Session {s_date} incomplete: expected {expected_count} bars, found {n_bars} (missing {expected_count - n_bars})"
                     break
             else:
-                # For partial final session, verify consecutive 300s spacing from 09:15
+                # For partial final session, verify it strictly starts at 09:15 (start_m) and has consecutive 300s spacing (Item C)
+                first_candle_min = s_slice.index[0].hour * 60 + s_slice.index[0].minute
+                if first_candle_min != start_m:
+                    has_intraday_data_corruption = True
+                    corrupt_session_reason = f"Partial final session {s_date} missing market open (starts at {s_slice.index[0].strftime('%H:%M')} instead of {start_m//60:02d}:{start_m%60:02d})"
+                    break
                 if n_bars >= 2:
                     sec_diffs = (s_slice.index[1:] - s_slice.index[:-1]).total_seconds()
                     if any(d != 300 for d in sec_diffs):
