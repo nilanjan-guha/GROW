@@ -262,9 +262,8 @@ class StrategyLearningEngine:
                     except Exception:
                         as_of_num = float(as_of_ts)
 
-                # STRICT POINT-IN-TIME LEARNING:
-                # Only include trades where outcome completion time (closed_at) is known and <= as_of_num.
-                # Never fall back to entry timestamp!
+                # STRICT POINT-IN-TIME LEARNING ACROSS ALL 3 DIMENSIONS:
+                # 1. Strategy Dimension
                 c.execute("""
                     SELECT strategy, outcome 
                     FROM historical_signals 
@@ -274,15 +273,62 @@ class StrategyLearningEngine:
                       AND closed_at <= ?
                       AND strategy = ?
                 """, (as_of_num, strategy))
-                hist_rows = c.fetchall()
+                hist_strat = c.fetchall()
+
+                strat_mult = 1.0
+                if len(hist_strat) >= StrategyLearningEngine.MIN_OBSERVATIONS:
+                    wins = sum(1 for r in hist_strat if 'WIN' in str(r['outcome']))
+                    wr = wins / len(hist_strat)
+                    strat_mult = max(0.50, min(1.50, 1.0 + (wr - 0.50) * 1.25))
+
+                # 2. Market Regime Dimension (PIT)
+                regime_mult = 1.0
+                if market_regime:
+                    c.execute("""
+                        SELECT market_regime, outcome
+                        FROM historical_signals
+                        WHERE outcome IS NOT NULL
+                          AND outcome != 'ACTIVE'
+                          AND closed_at IS NOT NULL
+                          AND closed_at <= ?
+                          AND market_regime = ?
+                    """, (as_of_num, market_regime))
+                    hist_reg = c.fetchall()
+                    if len(hist_reg) >= StrategyLearningEngine.MIN_OBSERVATIONS:
+                        reg_wins = sum(1 for r in hist_reg if 'WIN' in str(r['outcome']))
+                        reg_wr = reg_wins / len(hist_reg)
+                        regime_mult = max(0.70, min(1.30, 1.0 + (reg_wr - 0.50) * 0.8))
+
+                # 3. Time of Day Dimension (PIT)
+                time_mult = 1.0
+                if time_bucket:
+                    # In historical_signals, timestamp is trade entry time
+                    c.execute("""
+                        SELECT timestamp, outcome
+                        FROM historical_signals
+                        WHERE outcome IS NOT NULL
+                          AND outcome != 'ACTIVE'
+                          AND closed_at IS NOT NULL
+                          AND closed_at <= ?
+                    """, (as_of_num,))
+                    all_pit = c.fetchall()
+                    matching_tb = []
+                    import datetime, pytz
+                    ist = pytz.timezone('Asia/Kolkata')
+                    for r in all_pit:
+                        sig_ts = float(r['timestamp'] or 0.0)
+                        if sig_ts > 0:
+                            sig_dt = datetime.datetime.fromtimestamp(sig_ts, tz=ist)
+                            if StrategyLearningEngine.get_time_bucket(sig_dt.hour, sig_dt.minute) == time_bucket:
+                                matching_tb.append(r)
+                    if len(matching_tb) >= StrategyLearningEngine.MIN_OBSERVATIONS:
+                        tb_wins = sum(1 for r in matching_tb if 'WIN' in str(r['outcome']))
+                        tb_wr = tb_wins / len(matching_tb)
+                        time_mult = max(0.70, min(1.30, 1.0 + (tb_wr - 0.50) * 0.8))
+
                 conn.close()
-                if len(hist_rows) < StrategyLearningEngine.MIN_OBSERVATIONS:
-                    return 1.0
-                wins = sum(1 for r in hist_rows if 'WIN' in str(r['outcome']))
-                wr = wins / len(hist_rows)
-                # Calibrate multiplier: 50% baseline -> 1.0, 70% -> 1.25, 30% -> 0.75
-                strat_mult = max(0.50, min(1.50, 1.0 + (wr - 0.50) * 1.25))
-                return round(strat_mult, 2)
+                combined = strat_mult * (1.0 + (regime_mult - 1.0) * 0.5) * (1.0 + (time_mult - 1.0) * 0.5)
+                return round(min(1.60, max(0.40, combined)), 2)
 
             keys = [strategy]
             if market_regime:

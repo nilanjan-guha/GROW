@@ -47,7 +47,8 @@ GAPS_GROUP                      = 'SMC: Fair Value Gaps (FVG)'
 LEVELS_GROUP                    = 'SMC: Multi-Timeframe Highs & Lows'
 ZONES_GROUP                     = 'SMC: Premium & Discount Zones'
 SNIPER_GROUP                    = '1M Sniper Scalper Engine'
-ORDERFLOW_GROUP                 = 'Order Flow / CVD & Absorption Engine'
+ORDERFLOW_GROUP                 = 'Price-Action Volume Delta & Absorption (Estimated Proxy)'
+INDEX_SYNC_GROUP                = 'Index & Option Chart Synchronization'
 
 // SMC Inputs
 modeInput                       = input.string( HISTORICAL, 'Structure History Mode', group = SMART_GROUP, options = [HISTORICAL, PRESENT])
@@ -720,10 +721,12 @@ colPendingShort = color.new(#e91e63, 85)
 barHourMinute = hour * 100 + minute
 isInKillzone  = not useKillzones or ((barHourMinute >= 915 and barHourMinute <= 1145) or (barHourMinute >= 1315 and barHourMinute <= 1515))
 
-// Order Flow & Cumulative Volume Delta (CVD) Engine Inputs
-useOrderFlowFilter = input.bool(true, 'Require Order Flow / Delta Confirmation', group = ORDERFLOW_GROUP)
-requireCvdDivergence = input.bool(true, 'Detect Delta & CVD Absorption (Fakeout Filter)', group = ORDERFLOW_GROUP)
-showDeltaStatsOnHud  = input.bool(true, 'Show Delta & CVD State on Scoreboard', group = ORDERFLOW_GROUP)
+// Estimated Price-Action Volume Delta & Cumulative Delta (Proxy)
+// NOTE: Uses bar price location and close-to-open displacement as an estimated volume delta proxy.
+// Genuine tick-level trade tape delta requires exchange trade-level feed.
+useOrderFlowFilter = input.bool(true, 'Require Estimated Volume Delta Confirmation', group = ORDERFLOW_GROUP)
+requireCvdDivergence = input.bool(true, 'Detect Estimated Delta & CVD Absorption', group = ORDERFLOW_GROUP)
+showDeltaStatsOnHud  = input.bool(true, 'Show Estimated Delta State on Scoreboard', group = ORDERFLOW_GROUP)
 
 // High-Fidelity Synthetic Intra-Bar Order Flow Delta Estimation
 // Uses tick price location and close-to-open displacement to estimate aggressive Buyer vs Seller volume
@@ -834,6 +837,43 @@ isCallOption = isOption and (str.endswith(tickerUpper, "CE") or str.contains(tic
 isPutOption  = isOption and (str.endswith(tickerUpper, "PE") or str.contains(tickerUpper, "PUT"))
 isIndex      = str.contains(tickerUpper, "NIFTY") or str.contains(tickerUpper, "BANKNIFTY") or str.contains(tickerUpper, "SENSEX") or str.contains(tickerUpper, "FINNIFTY") or str.contains(tickerUpper, "MIDCPNIFTY") or syminfo.type == "index"
 
+// Multi-Chart Parent Index & Option Synchronization Engine
+useIndexSync         = input.bool(true, 'Enable Index & Option Chart Synchronization', group = INDEX_SYNC_GROUP)
+autoIndexSymbol      = input.bool(true, 'Auto-Detect Parent Index (NIFTY / BANKNIFTY / SENSEX / FINNIFTY)', group = INDEX_SYNC_GROUP)
+manualIndexSymbol    = input.symbol('NSE:NIFTY', 'Manual Parent Index Ticker (If not auto-detected)', group = INDEX_SYNC_GROUP)
+strictIndexAlignment = input.bool(true, 'Require Parent Index Bias to Buy Option (CE=Bull, PE=Bear)', group = INDEX_SYNC_GROUP)
+
+// Resolve the parent index symbol
+detectedIndexTicker = str.contains(tickerUpper, "BANKNIFTY") ? "NSE:BANKNIFTY" : str.contains(tickerUpper, "FINNIFTY") ? "NSE:FINNIFTY" : str.contains(tickerUpper, "MIDCPNIFTY") ? "NSE:MIDCPNIFTY" : str.contains(tickerUpper, "SENSEX") ? "BSE:SENSEX" : "NSE:NIFTY"
+parentIndexTicker   = (not autoIndexSymbol and manualIndexSymbol != "") ? manualIndexSymbol : detectedIndexTicker
+
+// Fetch Parent Index Price Action & Market Structure (Only active when viewing an Option Chart)
+[idxOpen, idxHigh, idxLow, idxClose, idxEma50, idxEma200] = request.security(parentIndexTicker, timeframe.period, [open, high, low, close, ta.ema(close, 50), ta.ema(close, 200)], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+
+// Parent Index Trend & Structural Shift Metrics:
+// 1. Index Trend Alignment
+idxBullTrend = idxClose > idxEma200 and idxEma50 >= idxEma200
+idxBearTrend = idxClose < idxEma200 and idxEma50 <= idxEma200
+
+// 2. Index Displacement / Momentum Shift
+idxCandleBody = math.abs(idxClose - idxOpen)
+idxCandleRange = math.max(idxHigh - idxLow, syminfo.mintick)
+idxBullDisplacement = idxClose > idxOpen and (idxCandleBody / idxCandleRange) >= 0.40
+idxBearDisplacement = idxClose < idxOpen and (idxCandleBody / idxCandleRange) >= 0.40
+
+// 3. Index Structure Shift (Immediate break of recent highs/lows)
+idxHigh3 = request.security(parentIndexTicker, timeframe.period, ta.highest(high, 3)[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+idxLow3  = request.security(parentIndexTicker, timeframe.period, ta.lowest(low, 3)[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+idxBullBreak = idxClose > idxHigh3
+idxBearBreak = idxClose < idxLow3
+
+// Parent Index Confirmation Rules for Options:
+// If on CALL option chart: Parent Index must be Bullish (or breaking out upward)
+parentBullConfirmed = not (isCallOption and useIndexSync and strictIndexAlignment) or (idxBullTrend or idxBullDisplacement or idxBullBreak)
+
+// If on PUT option chart: Parent Index must be Bearish (or breaking down downward)
+parentBearConfirmed = not (isPutOption and useIndexSync and strictIndexAlignment) or (idxBearTrend or idxBearDisplacement or idxBearBreak)
+
 // Recent BOS / Structure Breakout Level Memory
 var float lastBullBreakoutLevel = na
 var int   lastBullBreakoutBar   = -999
@@ -857,8 +897,9 @@ bearBreakoutRetest = not na(lastBearBreakoutLevel) and (bar_index - lastBearBrea
 isBullChochOrBos = triggeredBullShift and close > open
 isBearChochOrBos = triggeredBearShift and close < open
 
-// Complete Trigger: Immediate CHoCH/BOS Shift OR Retest OR Sweep OR OB/FVG touch OR HTF confluence + Order Flow
-sniperBuyTrigger  = orderFlowBullConfirmed and (isBullChochOrBos or (bullTrend and (bullBreakoutRetest or (sweepLow and close > open) or obDemandTouch or fvgDemandRetest)) or htfMajorBuy)
+// Complete Trigger: Immediate CHoCH/BOS Shift OR Retest OR Sweep OR OB/FVG touch OR HTF confluence + Order Flow + Parent Index Sync
+optionIndexFilter = isCallOption ? parentBullConfirmed : (isPutOption ? parentBearConfirmed : true)
+sniperBuyTrigger  = orderFlowBullConfirmed and optionIndexFilter and (isBullChochOrBos or (bullTrend and (bullBreakoutRetest or (sweepLow and close > open) or obDemandTouch or fvgDemandRetest)) or htfMajorBuy)
 sniperSellTrigger = not isOption and orderFlowBearConfirmed and (isBearChochOrBos or (bearTrend and (bearBreakoutRetest or (sweepHigh and close < open) or obSupplyTouch or fvgSupplyRetest)) or htfMajorSell)
 
 // Direct Execution & Retest Management
@@ -975,7 +1016,7 @@ if inTrade
                 label.new(bar_index, high, "SL HIT", style=label.style_label_down, color=color(na), textcolor=color.red, size=size.small)
 
 // Top-Right Scoreboard Table
-var table dash = table.new(position.top_right, 2, 7, bgcolor=color.new(#131722, 10), border_color=color.new(#2a2e39, 40), border_width=1)
+var table dash = table.new(position.top_right, 2, 8, bgcolor=color.new(#131722, 10), border_color=color.new(#2a2e39, 40), border_width=1)
 
 if showSniperScoreboard and barstate.islast
     totalTrades = totalWins + totalLosses
@@ -1006,6 +1047,16 @@ if showSniperScoreboard and barstate.islast
     color ofColor   = (bullishAbsorption or barDelta > 0) ? color.teal : color.maroon
     table.cell(dash, 0, 6, "Order Flow / CVD", text_color=color.silver, text_size=size.small)
     table.cell(dash, 1, 6, ofStatus, bgcolor=color.new(ofColor, 50), text_color=color.white, text_size=size.small)
+
+    // Parent Index Sync HUD Row (for Options Charts)
+    if isOption and useIndexSync
+        string idxBiasText = parentBullConfirmed ? "BULLISH (" + parentIndexTicker + ")" : (parentBearConfirmed ? "BEARISH (" + parentIndexTicker + ")" : "NEUTRAL/WAIT")
+        color idxBiasCol   = parentBullConfirmed ? color.teal : (parentBearConfirmed ? color.maroon : color.yellow)
+        table.cell(dash, 0, 7, "Index Sync Status", text_color=color.silver, text_size=size.small)
+        table.cell(dash, 1, 7, idxBiasText, bgcolor=color.new(idxBiasCol, 50), text_color=color.white, text_size=size.small)
+    else
+        table.cell(dash, 0, 7, "Chart Mode", text_color=color.silver, text_size=size.small)
+        table.cell(dash, 1, 7, isIndex ? "SPOT INDEX" : "EQUITY / CASH", bgcolor=color.new(color.blue, 50), text_color=color.white, text_size=size.small)
 
 //---------------------------------------------------------------------------------------------------------------------}
 // ALERTS

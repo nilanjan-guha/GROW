@@ -268,9 +268,9 @@ class MarketValidator:
         if np.any(l > o) or np.any(l > c):
             return {"is_valid": False, "status": "CORRUPT_OHLC_LOW", "reason": "Low price violated boundary (Low > Open or Low > Close)"}
 
-        # Session-aware Intraday Continuity & Missing Candle Validation (Item 6):
-        # Distinguish normal overnight/weekend session gaps from missing intraday candles.
-        # Normal 5-minute session has 75 candles (09:15 to 15:30 IST).
+        # Complete Expected Session Grid Comparison (Item 2):
+        # Generates exact expected NSE 5-minute session timestamps (09:15 to 15:25 start = 75 bars)
+        # Rejects missing internal candles; handles special sessions explicitly.
         df_eval['Date'] = df_eval.index.date
         session_dates = df_eval['Date'].unique()
         session_stats = []
@@ -280,32 +280,36 @@ class MarketValidator:
         for s_date in session_dates:
             s_slice = df_eval[df_eval['Date'] == s_date]
             n_bars = len(s_slice)
-            
-            # Check timestamps alignment to exact 5-minute boundaries:
-            # - seconds == 0 and microseconds == 0
-            # - minute % 5 == 0
-            # - time between 09:15 and 15:30 IST
+
+            # Check special session or standard session expected grid
+            if s_date in SPECIAL_TRADING_SESSIONS:
+                spec = SPECIAL_TRADING_SESSIONS[s_date]
+                start_m = spec.get("start_minute", 1095)
+                end_m = spec.get("end_minute", 1155)
+            else:
+                start_m = 555   # 09:15 IST
+                end_m = 925     # 15:25 IST (75 bars: 09:15, 09:20, ..., 15:25)
+
+            # Check timestamps alignment to exact 5-minute boundaries
             unaligned_bars = 0
             for t in s_slice.index:
+                t_mins = t.hour * 60 + t.minute
                 if t.second != 0 or t.microsecond != 0 or (t.minute % 5 != 0):
                     unaligned_bars += 1
-                elif (t.hour < 9 or (t.hour == 9 and t.minute < 15)) or (t.hour > 15 or (t.hour == 15 and t.minute > 30)):
+                elif t_mins < start_m or t_mins > (end_m + 5):
                     unaligned_bars += 1
             if unaligned_bars > 0:
                 has_intraday_data_corruption = True
                 corrupt_session_reason = f"Session {s_date} contains {unaligned_bars} non-5-minute aligned or off-market candle timestamps"
                 break
 
-            # Evaluate intraday intervals between consecutive candles within the SAME session
+            # Check for any missing internal candles: interval between consecutive session bars must strictly be 300 seconds
             if n_bars >= 2:
                 sec_diffs = (s_slice.index[1:] - s_slice.index[:-1]).total_seconds()
-                # Missing candles inside trading session (interval > 360 seconds / 6 minutes)
-                intraday_gaps = [d for d in sec_diffs if d > 360]
-                # Reject sessions with missing intraday gaps (> 1 gap or total missing duration > 15 mins)
-                total_missing_gap_secs = sum(d - 300 for d in intraday_gaps)
-                if len(intraday_gaps) > 1 or total_missing_gap_secs > 900:
+                missing_internal = [d for d in sec_diffs if d > 300]
+                if len(missing_internal) > 0:
                     has_intraday_data_corruption = True
-                    corrupt_session_reason = f"Session {s_date} has {len(intraday_gaps)} missing intraday candle gaps ({int(total_missing_gap_secs/60)}m missing)"
+                    corrupt_session_reason = f"Session {s_date} has {len(missing_internal)} missing internal candles (strictly 0 allowed in completed session)"
                     break
 
             session_stats.append({

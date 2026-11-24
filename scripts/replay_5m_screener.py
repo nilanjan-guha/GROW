@@ -165,8 +165,18 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
         nifty_df.index = nifty_df.index.tz_convert("Asia/Kolkata")
 
     # Build Master Chronological Timeline of 5-minute timestamps across all symbols
-    all_timestamps = sorted(list(set.union(*[set(data["df"].index[25:-5]) for data in symbol_data.values()])))
+    symbol_index_sets = [set(data["df"].index[25:-5]) for data in symbol_data.values() if data.get("df") is not None and len(data["df"]) >= 30]
+    if not symbol_index_sets:
+        print("[ERROR] No usable historical symbol data available for timeline replay.")
+        return stats
+    all_timestamps = sorted(list(set.union(*symbol_index_sets)))
     print(f"Master chronological timeline built: {len(all_timestamps)} unique 5m candles across {len(symbol_data)} stocks.")
+
+    # Global Chronological In-Sample / Out-of-Sample Split (Item 6):
+    # Defined globally across the master timeline rather than on per-stock lengths
+    oos_split_idx = int(len(all_timestamps) * 0.60)
+    global_oos_cutoff_ts = all_timestamps[oos_split_idx] if oos_split_idx < len(all_timestamps) else all_timestamps[-1]
+    print(f"Global In-Sample (60%) up to {global_oos_cutoff_ts} | Out-of-Sample (40%) beyond.")
 
     # Shared Portfolio State:
     # Starting portfolio equity: 100.0 (normalized base)
@@ -236,17 +246,23 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
             nifty_day_open = float(nifty_sub[nifty_sub.index.date == signal_candle_ts.date()]["Open"].iloc[0]) if len(nifty_sub[nifty_sub.index.date == signal_candle_ts.date()]) > 0 else float(nifty_sub["Open"].iloc[0])
             nifty_change_pt = round((float(nifty_sub["Close"].iloc[-1]) - nifty_day_open) / nifty_day_open * 100, 2) if nifty_day_open > 0 else 0.0
 
+            # Strict 3-Way Completed Candle Timestamp Alignment for Sector Bias (Item 1):
+            # If sector completed candle timestamp does not match signal candle timestamp, sector bias MUST be NEUTRAL
             sector_change_pt = 0.0
+            sector_is_fresh = False
             if sector_sub is not None and not sector_sub.empty:
-                sec_day_sub = sector_sub[sector_sub.index.date == signal_candle_ts.date()]
-                if not sec_day_sub.empty:
-                    sec_open = float(sec_day_sub["Open"].iloc[0])
-                    sec_last = float(sec_day_sub["Close"].iloc[-1])
-                    sector_change_pt = round((sec_last - sec_open) / sec_open * 100, 2) if sec_open > 0 else 0.0
+                sec_candle_ts = sector_sub.index[-1]
+                if sec_candle_ts == signal_candle_ts:
+                    sec_day_sub = sector_sub[sector_sub.index.date == signal_candle_ts.date()]
+                    if not sec_day_sub.empty:
+                        sec_open = float(sec_day_sub["Open"].iloc[0])
+                        sec_last = float(sec_day_sub["Close"].iloc[-1])
+                        sector_change_pt = round((sec_last - sec_open) / sec_open * 100, 2) if sec_open > 0 else 0.0
+                        sector_is_fresh = True
 
-            if (stock_change_pt > sector_change_pt) and (sector_change_pt >= nifty_change_pt - 0.2):
+            if sector_is_fresh and (stock_change_pt > sector_change_pt) and (sector_change_pt >= nifty_change_pt - 0.2):
                 sector_bias = "BULLISH"
-            elif (stock_change_pt < sector_change_pt) and (sector_change_pt <= nifty_change_pt + 0.2):
+            elif sector_is_fresh and (stock_change_pt < sector_change_pt) and (sector_change_pt <= nifty_change_pt + 0.2):
                 sector_bias = "BEARISH"
             else:
                 sector_bias = "NEUTRAL"
@@ -337,7 +353,7 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
 
             hit_tp = False
             hit_sl = False
-            exit_offset = len(forward_candles)
+            exit_offset = len(forward_candles) - 1  # 0-indexed offset within forward_candles (0 to 5)
             exit_price_actual = float(closes_sub[-1])
             in_trade_highs = []
             in_trade_lows = []
@@ -351,65 +367,71 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
                     touched_tp = (h >= tp1) or (c_open >= tp1)
                     if touched_sl and touched_tp:
                         hit_sl = True
-                        exit_price_actual = c_open if c_open <= sl else (sl - sl * 0.0003)
-                        exit_offset = c_i + 1
+                        base_exit = c_open if c_open <= sl else sl
+                        exit_price_actual = base_exit * (1.0 - exit_slippage_pct/100)
+                        exit_offset = c_i
                         break
                     elif c_open <= sl:
                         hit_sl = True
-                        exit_price_actual = c_open
-                        exit_offset = c_i + 1
+                        exit_price_actual = c_open * (1.0 - exit_slippage_pct/100)
+                        exit_offset = c_i
                         break
                     elif l <= sl:
                         hit_sl = True
-                        exit_price_actual = sl - (sl * 0.0003)
-                        exit_offset = c_i + 1
+                        exit_price_actual = sl * (1.0 - exit_slippage_pct/100)
+                        exit_offset = c_i
                         break
                     elif c_open >= tp1:
                         hit_tp = True
-                        exit_price_actual = c_open
-                        exit_offset = c_i + 1
+                        exit_price_actual = c_open * (1.0 - exit_slippage_pct/100)
+                        exit_offset = c_i
                         break
                     elif h >= tp1:
                         hit_tp = True
-                        exit_price_actual = tp1
-                        exit_offset = c_i + 1
+                        exit_price_actual = tp1 * (1.0 - exit_slippage_pct/100)
+                        exit_offset = c_i
                         break
                 else:
                     touched_sl = (h >= sl) or (c_open >= sl)
                     touched_tp = (l <= tp1) or (c_open <= tp1)
                     if touched_sl and touched_tp:
                         hit_sl = True
-                        exit_price_actual = c_open if c_open >= sl else (sl + sl * 0.0003)
-                        exit_offset = c_i + 1
+                        base_exit = c_open if c_open >= sl else sl
+                        exit_price_actual = base_exit * (1.0 + exit_slippage_pct/100)
+                        exit_offset = c_i
                         break
                     elif c_open >= sl:
                         hit_sl = True
-                        exit_price_actual = c_open
-                        exit_offset = c_i + 1
+                        exit_price_actual = c_open * (1.0 + exit_slippage_pct/100)
+                        exit_offset = c_i
                         break
                     elif h >= sl:
                         hit_sl = True
-                        exit_price_actual = sl + (sl * 0.0003)
-                        exit_offset = c_i + 1
+                        exit_price_actual = sl * (1.0 + exit_slippage_pct/100)
+                        exit_offset = c_i
                         break
                     elif c_open <= tp1:
                         hit_tp = True
-                        exit_price_actual = c_open
-                        exit_offset = c_i + 1
+                        exit_price_actual = c_open * (1.0 + exit_slippage_pct/100)
+                        exit_offset = c_i
                         break
                     elif l <= tp1:
                         hit_tp = True
-                        exit_price_actual = tp1
-                        exit_offset = c_i + 1
+                        exit_price_actual = tp1 * (1.0 + exit_slippage_pct/100)
+                        exit_offset = c_i
                         break
+
+            # If no target or stop hit, position closes at end-of-horizon bar close with exit slippage (Item 4)
+            if not hit_tp and not hit_sl:
+                exit_price_actual = exit_price_actual * (1.0 - exit_slippage_pct/100) if direction == "BULLISH" else exit_price_actual * (1.0 + exit_slippage_pct/100)
 
             # In-trade MFE & MAE strictly up to exit
             if direction == "BULLISH":
-                max_fav = (max(in_trade_highs) - actual_entry) / actual_entry * 100
-                max_adv = (actual_entry - min(in_trade_lows)) / actual_entry * 100
+                max_fav = (max(in_trade_highs[:exit_offset+1]) - actual_entry) / actual_entry * 100
+                max_adv = (actual_entry - min(in_trade_lows[:exit_offset+1])) / actual_entry * 100
             else:
-                max_fav = (actual_entry - min(in_trade_lows)) / actual_entry * 100
-                max_adv = (max(in_trade_highs) - actual_entry) / actual_entry * 100
+                max_fav = (actual_entry - min(in_trade_lows[:exit_offset+1])) / actual_entry * 100
+                max_adv = (max(in_trade_highs[:exit_offset+1]) - actual_entry) / actual_entry * 100
 
             trade_friction_pct = base_statutory_friction_pct + (0.015 if direction == "BEARISH" else 0.010)
 
@@ -423,6 +445,10 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
             net_pnl = gross_diff - trade_friction_pct
             risk_pct = (risk / actual_entry) * 100
             r_mult = net_pnl / risk_pct if risk_pct > 0 else (1.0 if net_pnl > 0 else -1.0)
+            
+            # Correct exit timestamp alignment (Item 3):
+            # idx is candle 0 in forward_candles, exit_offset is 0-indexed (e.g. 0 to 5)
+            # The candle at idx + exit_offset is the EXACT completed candle where exit occurs!
             exit_idx = idx + exit_offset
             exit_ts = df.index[min(exit_idx, len(df) - 1)]
 
@@ -438,7 +464,7 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
                 "r_mult": r_mult,
                 "mfe": max_fav,
                 "mae": max_adv,
-                "is_oos": (idx >= int(len(df) * 0.60))
+                "is_oos": (current_ts >= global_oos_cutoff_ts)
             })
 
     # Flush any remaining positions that completed at the end of the timeline
