@@ -25,9 +25,16 @@ class IndianMarketCosts:
 
     @staticmethod
     def calculate_equity_costs(entry_price: float, exit_price: float, quantity: int = 100, include_slippage: bool = True) -> dict:
+        import math
         entry = float(entry_price)
         exit_p = float(exit_price)
-        qty = max(1, int(quantity))
+        if not math.isfinite(entry) or entry <= 0:
+            raise ValueError(f"Entry price must be finite and strictly positive, got {entry_price}")
+        if not math.isfinite(exit_p) or exit_p <= 0:
+            raise ValueError(f"Exit price must be finite and strictly positive, got {exit_price}")
+        qty = int(quantity)
+        if qty <= 0:
+            raise ValueError(f"Quantity must be strictly positive, got {quantity}")
 
         buy_turnover = entry * qty
         sell_turnover = exit_p * qty
@@ -78,9 +85,16 @@ class IndianMarketCosts:
 
     @staticmethod
     def calculate_futures_costs(entry_price: float, exit_price: float, lot_size: int = 500, include_slippage: bool = True) -> dict:
+        import math
         entry = float(entry_price)
         exit_p = float(exit_price)
-        qty = max(1, int(lot_size))
+        if not math.isfinite(entry) or entry <= 0:
+            raise ValueError(f"Futures entry price must be finite and strictly positive, got {entry_price}")
+        if not math.isfinite(exit_p) or exit_p <= 0:
+            raise ValueError(f"Futures exit price must be finite and strictly positive, got {exit_price}")
+        qty = int(lot_size)
+        if qty <= 0:
+            raise ValueError(f"Futures lot size must be strictly positive, got {lot_size}")
 
         buy_turnover = entry * qty
         sell_turnover = exit_p * qty
@@ -129,9 +143,16 @@ class IndianMarketCosts:
 
     @staticmethod
     def calculate_options_costs(entry_premium: float, exit_premium: float, lot_size: int = 500, include_slippage: bool = True) -> dict:
+        import math
         entry = float(entry_premium)
         exit_p = float(exit_premium)
-        qty = max(1, int(lot_size))
+        if not math.isfinite(entry) or entry <= 0:
+            raise ValueError(f"Options entry premium must be finite and strictly positive, got {entry_premium}")
+        if not math.isfinite(exit_p) or exit_p <= 0:
+            raise ValueError(f"Options exit premium must be finite and strictly positive, got {exit_premium}")
+        qty = int(lot_size)
+        if qty <= 0:
+            raise ValueError(f"Options lot size must be strictly positive, got {lot_size}")
 
         buy_turnover = entry * qty
         sell_turnover = exit_p * qty
@@ -191,8 +212,13 @@ class IndianMarketCosts:
         
         exits is a list of tuples/dicts: [(exit_price, quantity), ...] or [{'price': p, 'quantity': q}, ...]
         """
+        import math
         entry = float(entry_price)
-        tot_qty = max(1, int(total_quantity))
+        if not math.isfinite(entry) or entry <= 0:
+            raise ValueError(f"Multi-exit entry price must be finite and strictly positive, got {entry_price}")
+        tot_qty = int(total_quantity)
+        if tot_qty <= 0:
+            raise ValueError(f"Total quantity must be strictly positive, got {total_quantity}")
         inst = instrument_type.upper()
 
         clean_exits = []
