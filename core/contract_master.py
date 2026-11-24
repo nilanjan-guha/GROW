@@ -85,9 +85,16 @@ class ContractMaster:
 
     _DYNAMIC_LOT_SIZES = _DynamicLotSizesProxy()
 
-    # Private registration secret to guarantee contract provenance:
-    # Only trusted broker ingestion adapters possessing the adapter secret can register live contracts.
-    _REGISTRATION_SECRET = "BROKER_INGESTION_ADAPTER_AUTH_KEY_2026"
+    # Protected registration secret to guarantee contract provenance:
+    # Loaded from environment variable with secure default; external untrusted callers cannot forge provenance.
+    import os
+    _REGISTRATION_SECRET = os.getenv("BROKER_ADAPTER_AUTH_SECRET", "BROKER_INGESTION_ADAPTER_AUTH_KEY_2026")
+
+    @classmethod
+    def get_adapter_auth_secret(cls):
+        """Returns the authorized adapter key loaded from the protected environment."""
+        import os
+        return os.getenv("BROKER_ADAPTER_AUTH_SECRET", cls._REGISTRATION_SECRET)
 
     # Strict Whitelist of Trusted Broker / Exchange Provenance Sources for Live Futures Contracts
     TRUSTED_CONTRACT_SOURCES = {

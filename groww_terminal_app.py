@@ -141,7 +141,10 @@ def auto_connect_groww():
                     from core.contract_master import ContractMaster
                     contract_map = {}
                     today_str = str(datetime.date.today())
+                    today_dt = datetime.date.today()
                     if 'lot_size' in fno_df.columns:
+                        # Group rows by underlying symbol to systematically sort by nearest active expiry
+                        grouped_rows = {}
                         for _, row in fno_df.dropna(subset=['underlying_symbol', 'lot_size']).iterrows():
                             u_sym = str(row['underlying_symbol']).strip().upper()
                             raw_lot = row['lot_size']
@@ -156,7 +159,6 @@ def auto_connect_groww():
                                 continue
 
                             # Broker instrument master metadata: NEVER manufacture synthetic IDs or fake expiries!
-                            # Both instrument_id and expiry MUST be authoritative from broker feed.
                             raw_inst = row.get('groww_symbol') or row.get('trading_symbol') or row.get('instrument_id')
                             if not raw_inst:
                                 continue
@@ -167,23 +169,41 @@ def auto_connect_groww():
                             raw_exp = row.get('expiry_date') or row.get('expiry')
                             if not raw_exp:
                                 continue
-                            exp_val = str(raw_exp).strip()
+                            try:
+                                exp_parsed = pd.to_datetime(raw_exp).date()
+                                if exp_parsed < today_dt:
+                                    continue  # Skip already expired contracts
+                            except Exception:
+                                continue
 
-                            # Preserve every expiry using composite key so subsequent expiries don't overwrite prior expiries
-                            composite_key = f"{u_sym}:{exp_val}"
-                            spec_dict = {
+                            exp_val = str(exp_parsed)
+                            grouped_rows.setdefault(u_sym, []).append({
+                                "exp_dt": exp_parsed,
+                                "exp_val": exp_val,
                                 "lot_size": lot_val,
-                                "expiry": exp_val,
-                                "instrument_id": inst_id,
-                                "source": "GROWW_API",
-                                "update_date": today_str
-                            }
-                            contract_map[composite_key] = spec_dict
-                            # Also store under primary symbol if not yet populated (earliest active expiry takes precedence)
-                            if u_sym not in contract_map:
-                                contract_map[u_sym] = spec_dict
+                                "instrument_id": inst_id
+                            })
+
+                        # Register every expiry with composite key; choose earliest active expiry as symbol alias
+                        for u_sym, contracts in grouped_rows.items():
+                            # Sort by nearest expiry date
+                            contracts.sort(key=lambda x: x["exp_dt"])
+                            for idx, c in enumerate(contracts):
+                                spec_dict = {
+                                    "lot_size": c["lot_size"],
+                                    "expiry": c["exp_val"],
+                                    "instrument_id": c["instrument_id"],
+                                    "source": "GROWW_API",
+                                    "update_date": today_str
+                                }
+                                contract_map[f"{u_sym}:{c['exp_val']}"] = spec_dict
+                                if idx == 0:
+                                    # Nearest active expiry becomes default symbol alias
+                                    contract_map[u_sym] = spec_dict
+
                     if contract_map:
-                        ContractMaster.register_dynamic_contracts(contract_map, adapter_secret=ContractMaster._REGISTRATION_SECRET)
+                        auth_secret = ContractMaster.get_adapter_auth_secret()
+                        ContractMaster.register_dynamic_contracts(contract_map, adapter_secret=auth_secret)
                         print(f"Registered {len(contract_map)} dynamic F&O contract lot sizes into ContractMaster via authorized Groww adapter.")
                 except Exception as c_err:
                     print("ContractMaster dynamic registration notice:", c_err)
@@ -239,7 +259,7 @@ def classify_stock_sector(sym):
         return mapped_sec
 
     yf_ticker = f"{clean_sym}.NS"
-    sector_name = "NIFTY INFRA"  # Default fallback
+    sector_name = "UNMAPPED"  # Fail-closed: Never default to NIFTY INFRA for unmapped stocks
     try:
         t = yf.Ticker(yf_ticker)
         # Handle Yahoo Finance 401 Unauthorized / Invalid Crumb gracefully
@@ -1513,6 +1533,23 @@ def log_confirmed_signal_endpoint():
 
         if cand_ts and str(cand_ts).strip() != str(authoritative_ts).strip():
             return jsonify({"success": False, "error": f"Server rejection: Candidate candle ({cand_ts}) is stale compared to authoritative completed candle ({authoritative_ts})."}), 409
+
+        # Independent Stock-Feed Freshness Revalidation (P0):
+        # Validate that the actual stock's feed is also fresh, contiguous, and uncorrupted
+        stock_cached_entry = raw_market.get(sym) or raw_market.get(f"{clean_s}.NS") or raw_market.get(clean_s)
+        if isinstance(stock_cached_entry, dict) and stock_cached_entry.get("df") is not None:
+            stk_df = stock_cached_entry["df"]
+            if not stk_df.empty:
+                stk_val = MarketValidator.validate_feed_freshness(stk_df, max_delay_seconds=300, candle_duration_seconds=300)
+                if not stk_val.get("is_valid", False):
+                    return jsonify({"success": False, "error": f"Server rejection: Stock feed {sym} failed freshness revalidation ({stk_val.get('reason')})."}), 409
+
+        # Contract Master Validation:
+        # Verify the underlying contract is recognized in the F&O contract master with valid positive lot size
+        from core.contract_master import ContractMaster
+        contract_spec = ContractMaster.get_contract_spec(clean_s)
+        if not contract_spec or not contract_spec.get("lot_size") or int(contract_spec.get("lot_size")) <= 0:
+            return jsonify({"success": False, "error": f"Server rejection: No valid F&O contract specification found for {clean_s}."}), 403
 
         if not client_candle_ts or str(client_candle_ts).strip() == "":
             return jsonify({"success": False, "error": "Server rejection: Missing candle timestamp in trade submission."}), 400
