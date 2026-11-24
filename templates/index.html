@@ -769,16 +769,16 @@
                     const isSelected = (sym === currentStockSymbol);
                     const card = document.createElement('div');
                     card.className = `sector-card ${isSelected ? 'selected' : ''}`;
-                    card.style.padding = '8px 10px';
+                    card.style.padding = '8px 12px';
                     card.onclick = () => selectStock(sym);
                     card.innerHTML = `
-                        <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <span style="font-size:0.78rem; font-weight:800; color:#fff;">#${idx+1} ${sym.replace('.NS', '')}</span>
-                            <span style="color:var(--neon-green); font-size:0.75rem; font-weight:800;">+${stk.change.toFixed(1)}%</span>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                            <span style="font-size:0.82rem; font-weight:800; color:#fff; letter-spacing:0.3px;">#${idx+1} ${sym.replace('.NS', '')}</span>
+                            <span style="color:var(--neon-green); font-size:0.80rem; font-weight:800; font-family:'JetBrains Mono', monospace; background:rgba(0,255,170,0.12); padding:2px 6px; border-radius:4px; border:1px solid rgba(0,255,170,0.3);">+${stk.change.toFixed(1)}%</span>
                         </div>
-                        <div style="font-size:0.63rem; color:var(--text-muted); display:flex; justify-content:space-between; margin-top:2px;">
-                            <span>Mom Vel: <b style="color:var(--neon-cyan);">${Number(stk.velocity || 1.2).toFixed(1)}x</b></span>
-                            <span style="color:#94a3b8; font-weight:bold;">CALL MOVER</span>
+                        <div style="font-size:0.70rem; color:var(--text-muted); display:flex; justify-content:space-between; align-items:center;">
+                            <span style="display:flex; align-items:center; gap:4px;">Mom Vel: <b style="color:var(--neon-cyan); font-family:'JetBrains Mono', monospace; font-size:0.72rem;">${Number(stk.velocity || 1.2).toFixed(1)}x</b></span>
+                            <span style="color:#00ffaa; font-weight:700; font-size:0.65rem; background:rgba(0,255,170,0.08); padding:1px 6px; border-radius:3px; border:1px solid rgba(0,255,170,0.2);">CALL MOVER</span>
                         </div>
                     `;
                     bullEl.appendChild(card);
@@ -794,16 +794,16 @@
                     const isSelected = (sym === currentStockSymbol);
                     const card = document.createElement('div');
                     card.className = `sector-card ${isSelected ? 'selected' : ''}`;
-                    card.style.padding = '8px 10px';
+                    card.style.padding = '8px 12px';
                     card.onclick = () => selectStock(sym);
                     card.innerHTML = `
-                        <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <span style="font-size:0.78rem; font-weight:800; color:#fff;">#${idx+1} ${sym.replace('.NS', '')}</span>
-                            <span style="color:var(--neon-red); font-size:0.75rem; font-weight:800;">${stk.change.toFixed(1)}%</span>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                            <span style="font-size:0.82rem; font-weight:800; color:#fff; letter-spacing:0.3px;">#${idx+1} ${sym.replace('.NS', '')}</span>
+                            <span style="color:var(--neon-red); font-size:0.80rem; font-weight:800; font-family:'JetBrains Mono', monospace; background:rgba(255,51,102,0.12); padding:2px 6px; border-radius:4px; border:1px solid rgba(255,51,102,0.3);">${stk.change.toFixed(1)}%</span>
                         </div>
-                        <div style="font-size:0.63rem; color:var(--text-muted); display:flex; justify-content:space-between; margin-top:2px;">
-                            <span>Mom Vel: <b style="color:var(--neon-amber);">${Number(stk.velocity || 1.2).toFixed(1)}x</b></span>
-                            <span style="color:#94a3b8; font-weight:bold;">PUT MOVER</span>
+                        <div style="font-size:0.70rem; color:var(--text-muted); display:flex; justify-content:space-between; align-items:center;">
+                            <span style="display:flex; align-items:center; gap:4px;">Mom Vel: <b style="color:var(--neon-amber); font-family:'JetBrains Mono', monospace; font-size:0.72rem;">${Number(stk.velocity || 1.2).toFixed(1)}x</b></span>
+                            <span style="color:#ff3366; font-weight:700; font-size:0.65rem; background:rgba(255,51,102,0.08); padding:1px 6px; border-radius:3px; border:1px solid rgba(255,51,102,0.2);">PUT MOVER</span>
                         </div>
                     `;
                     bearEl.appendChild(card);

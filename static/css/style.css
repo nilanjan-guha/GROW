@@ -294,13 +294,13 @@ header {
 /* Sector Cards: Holographic Elevation & 3D Tilt */
 .sector-card {
     position: relative;
-    background: var(--card-glass);
-    border: 1px solid var(--border-subtle);
+    background: rgba(13, 24, 48, 0.75);
+    border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 6px;
-    padding: 12px;
-    margin-bottom: 10px;
+    padding: 10px 12px;
+    margin-bottom: 6px;
     cursor: pointer;
-    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
     overflow: hidden;
     transform-style: preserve-3d;
 }
@@ -312,7 +312,7 @@ header {
     left: -100%;
     width: 60%;
     height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(0, 240, 255, 0.12), transparent);
+    background: linear-gradient(90deg, transparent, rgba(0, 240, 255, 0.15), transparent);
     transform: skewX(-25deg);
     transition: none;
     pointer-events: none;
@@ -324,15 +324,16 @@ header {
 }
 
 .sector-card:hover {
-    transform: translateY(-3px) scale(1.01);
+    transform: translateY(-2px);
     border-color: var(--neon-cyan);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5), 0 0 15px rgba(0, 240, 255, 0.25);
+    background: rgba(18, 32, 64, 0.85);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5), 0 0 12px rgba(0, 240, 255, 0.25);
 }
 
 .sector-card.selected {
     border-color: var(--neon-cyan);
-    background: rgba(0, 240, 255, 0.08);
-    box-shadow: 0 0 20px rgba(0, 240, 255, 0.35), inset 0 0 15px rgba(0, 240, 255, 0.15);
+    background: rgba(0, 240, 255, 0.12);
+    box-shadow: 0 0 16px rgba(0, 240, 255, 0.35), inset 0 0 10px rgba(0, 240, 255, 0.15);
 }
 
 .sec-header-row {

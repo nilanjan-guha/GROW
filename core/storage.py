@@ -515,7 +515,7 @@ def evaluate_open_outcomes(data_map, force_eod=False):
                 now_ts = time.time()
                 for idx, (c_dt, row) in enumerate(df.iterrows()):
                     c_ts = c_dt.timestamp() if hasattr(c_dt, 'timestamp') else float(c_dt)
-                    if c_ts <= last_candle_time or c_ts < eval_min_time:
+                    if (c_ts - last_candle_time) <= 1e-3 or (c_ts - eval_min_time) < -1e-3:
                         continue
 
                     is_last_candle = (idx == len(df) - 1)
