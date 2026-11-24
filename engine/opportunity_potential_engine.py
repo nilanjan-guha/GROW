@@ -8,22 +8,22 @@ class OpportunityPotentialEngine:
     Dedicated Opportunity Potential & Obstacle Clearance Engine:
     
     Before ANY BUY or SELL trade is validated, this engine inspects the market structure
-    to verify whether price has genuine, unobstructed expansion room (strictly > 1.0%)
+    to verify whether price has genuine, unobstructed expansion room (strictly >= 0.70%)
     to the next structural hurdle before facing exhaustion or reversal.
     
     Key Features:
     1. Dual Volatility Tracking:
        - intraday_atr_15m: 15-minute ATR for micro-structure and stop sizing
        - daily_atr_14d: True multi-day ATR for daily range exhaustion
-    2. Strict > 1.0% Potential Gate:
-       - Uses raw unrounded potential (raw_room_to_tp1_pct > 1.0)
+    2. Strict >= 0.70% Potential Gate:
+       - Uses raw unrounded potential (raw_room_to_tp1_pct >= 0.70)
     3. Structural Liquidity Mapping:
        - Distinguishes confirmed structural targets (PDH/PDL, ORH/ORL, Swing Pivots, Order Blocks)
          from volatility-based extensions.
     4. Reversal and Setup Invalidation:
        - Detects opposing candle momentum, rejection wicks, and opposing order flow.
     5. Reward-to-Risk Validation:
-       - Computes actual risk_reward_ratio against structural stop-loss and requires RR >= 1.5.
+       - Computes actual risk_reward_ratio against structural stop-loss and requires RR >= 1.25.
     """
 
     @staticmethod
@@ -235,7 +235,10 @@ class OpportunityPotentialEngine:
 
             obstacles.sort(key=lambda x: x[1])
             immediate_obstacle_str = f"{obstacles[0][0]} @ ₹{obstacles[0][1]:.1f}" if obstacles else "None"
-            meaningful_obstacles = [obs for obs in obstacles if ((obs[1] - curr_c) / curr_c) >= 0.0025]
+            
+            # Use dynamic_clearance_pct (converted to fraction) as minimum obstacle threshold so no gap exists:
+            min_obs_thresh = max(0.0015, dynamic_clearance_pct / 100.0)
+            meaningful_obstacles = [obs for obs in obstacles if ((obs[1] - curr_c) / curr_c) >= min_obs_thresh]
 
             if meaningful_obstacles:
                 nearest_name, nearest_price, tp1_type = meaningful_obstacles[0]
@@ -246,6 +249,12 @@ class OpportunityPotentialEngine:
                 else:
                     tp2 = round(tp1 + (atr_5m_14 * 1.5), 2)
                     tp2_type = "ESTIMATED_ATR_EXTENSION"
+            elif obstacles:
+                # An obstacle exists within the clearance threshold: account for it directly (never ignore nearby ceiling!)
+                nearest_name, nearest_price, tp1_type = obstacles[0]
+                tp1 = round(nearest_price, 2)
+                tp2 = round(tp1 + (atr_5m_14 * 1.5), 2)
+                tp2_type = "ESTIMATED_ATR_EXTENSION"
             else:
                 nearest_name = "Blue Sky Expansion (No major structural resistance)"
                 tp1 = round(curr_c + (daily_atr * 0.75), 2)
@@ -345,7 +354,10 @@ class OpportunityPotentialEngine:
 
             obstacles.sort(key=lambda x: x[1], reverse=True)
             immediate_obstacle_str = f"{obstacles[0][0]} @ ₹{obstacles[0][1]:.1f}" if obstacles else "None"
-            meaningful_obstacles = [obs for obs in obstacles if ((curr_c - obs[1]) / curr_c) >= 0.0025]
+            
+            # Use dynamic_clearance_pct (converted to fraction) as minimum obstacle threshold so no gap exists:
+            min_obs_thresh = max(0.0015, dynamic_clearance_pct / 100.0)
+            meaningful_obstacles = [obs for obs in obstacles if ((curr_c - obs[1]) / curr_c) >= min_obs_thresh]
 
             if meaningful_obstacles:
                 nearest_name, nearest_price, tp1_type = meaningful_obstacles[0]
@@ -356,6 +368,12 @@ class OpportunityPotentialEngine:
                 else:
                     tp2 = round(tp1 - (atr_5m_14 * 1.5), 2)
                     tp2_type = "ESTIMATED_ATR_EXTENSION"
+            elif obstacles:
+                # An obstacle exists within the clearance threshold: account for it directly (never ignore nearby floor!)
+                nearest_name, nearest_price, tp1_type = obstacles[0]
+                tp1 = round(nearest_price, 2)
+                tp2 = round(tp1 - (atr_5m_14 * 1.5), 2)
+                tp2_type = "ESTIMATED_ATR_EXTENSION"
             else:
                 nearest_name = "Blue Sky Breakdown (No major structural support)"
                 tp1 = round(curr_c - (daily_atr * 0.75), 2)

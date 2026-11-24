@@ -2,6 +2,7 @@ import unittest
 import os
 import tempfile
 import sqlite3
+import time
 import pandas as pd
 import numpy as np
 import datetime
@@ -601,6 +602,73 @@ class TestIntradayScreenerCore(unittest.TestCase):
         # Margin return is ~9.8%, Notional return is ~1.97%
         self.assertGreater(net_pnl_margin, return_on_notional)
         self.assertAlmostEqual(return_on_notional, 1.97, places=1)
+
+    def test_evaluate_open_outcomes_gap_through_stop(self):
+        # 1. Test BUY signal with gap-through-stop
+        # Signal entry = 1000.0, SL = 990.0, TP1 = 1020.0
+        sig_id = storage.log_signal({
+            "symbol": "TESTGAP.NS",
+            "strategy": "OB_PULLBACK",
+            "direction": "BUY",
+            "entry_price": 1000.0,
+            "stop_loss": 990.0,
+            "target_1": 1020.0,
+            "target_2": 1040.0,
+            "signal_price": 999.0,
+            "expected_entry_price": 1000.0,
+            "actual_entry_price": 1000.0
+        })
+        
+        conn = storage.get_db_connection()
+        c = conn.cursor()
+        # Set signal timestamp and last_candle_time to 1 hour ago so test candles are guaranteed completed
+        one_hour_ago = time.time() - 3600
+        c.execute("UPDATE historical_signals SET timestamp = ?, last_candle_time = ? WHERE id = ?", (one_hour_ago, one_hour_ago, sig_id))
+        conn.commit()
+        conn.close()
+
+        # Subsequent candle formed 30 minutes ago (well completed, c_ts + 300 <= now)
+        c_time = pd.to_datetime(one_hour_ago + 300, unit='s', utc=True).tz_convert('Asia/Kolkata')
+        df_gap = pd.DataFrame({
+            "Open": [980.0],
+            "High": [985.0],
+            "Low": [975.0],
+            "Close": [978.0],
+            "Volume": [10000]
+        }, index=pd.DatetimeIndex([c_time]))
+        
+        storage.evaluate_open_outcomes({"TESTGAP.NS": df_gap})
+        
+        conn = storage.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM historical_signals WHERE id = ?", (sig_id,))
+        sig = cursor.fetchone()
+        conn.close()
+        
+        self.assertEqual(sig["outcome"], "LOSS")
+        # Final P&L should be based on Open (980 - 1000 = -20), NOT the SL (990 - 1000 = -10)
+        self.assertEqual(sig["final_pnl"], -20.0)
+
+    def test_nifty_benchmark_fail_closed_gate(self):
+        # Verify that compute_and_update_ranked_opportunities fails-closed when NIFTY feed is corrupted
+        import groww_terminal_app as gta
+        
+        # Corrupted NIFTY: negative low price
+        bad_nifty = self.df_5m.copy()
+        bad_nifty.loc[bad_nifty.index[0], "Low"] = -100.0
+        
+        # Inject corrupted NIFTY into screener_state raw_market_cache
+        gta.screener_state.setdefault("raw_market_cache", {})["^NSEI"] = {
+            "timestamp": datetime.datetime.now().timestamp(),
+            "df": bad_nifty
+        }
+        
+        result, ts = gta.compute_and_update_ranked_opportunities()
+        
+        self.assertEqual(result.get("benchmark_status"), "INVALID_BENCHMARK")
+        self.assertEqual(len(result.get("top_bullish", [])), 0)
+        self.assertEqual(len(result.get("top_bearish", [])), 0)
+        self.assertIsNone(ts)
 
 if __name__ == '__main__':
     unittest.main()

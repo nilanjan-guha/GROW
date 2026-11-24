@@ -91,7 +91,12 @@ def init_db():
         ("tp2_hit", "INTEGER DEFAULT 0"),
         ("tp2_hit_time", "REAL"),
         ("net_pnl", "REAL DEFAULT 0.0"),
-        ("brokerage_costs", "REAL DEFAULT 0.0")
+        ("brokerage_costs", "REAL DEFAULT 0.0"),
+        ("signal_price", "REAL"),
+        ("expected_entry_price", "REAL"),
+        ("actual_entry_price", "REAL"),
+        ("entry_timestamp", "REAL"),
+        ("execution_status", "TEXT DEFAULT 'SIGNAL_GENERATED'")
     ]:
         if col_name not in existing_cols:
             try:
@@ -139,9 +144,10 @@ def log_signal(signal_dict):
         cursor.execute("""
         INSERT INTO historical_signals (
             timestamp, datetime_str, symbol, direction, strategy, 
-            entry_price, stop_loss, current_stop_loss, target_1, target_2, score, 
+            entry_price, signal_price, expected_entry_price, actual_entry_price, entry_timestamp, execution_status,
+            stop_loss, current_stop_loss, target_1, target_2, score, 
             confidence, catalyst, features_json, market_regime, outcome
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             now,
             time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -149,6 +155,11 @@ def log_signal(signal_dict):
             direction,
             strategy,
             signal_dict.get("entry_price"),
+            signal_dict.get("signal_price", signal_dict.get("entry_price")),
+            signal_dict.get("expected_entry_price", signal_dict.get("entry_price")),
+            signal_dict.get("actual_entry_price"),
+            signal_dict.get("entry_timestamp"),
+            signal_dict.get("execution_status", "SIGNAL_GENERATED"),
             signal_dict.get("stop_loss"),
             signal_dict.get("stop_loss"),
             signal_dict.get("target_1"),
@@ -308,6 +319,7 @@ def evaluate_open_outcomes(data_map, force_eod=False):
                         continue
 
                     newest_candle_time = max(newest_candle_time, c_ts)
+                    c_open = float(row.get('Open', entry))
                     c_high = float(row.get('High', entry))
                     c_low = float(row.get('Low', entry))
 
@@ -315,6 +327,14 @@ def evaluate_open_outcomes(data_map, force_eod=False):
                         mfe = max(mfe, c_high - entry)
                         mae = min(mae, c_low - entry)
                         
+                        # Gap-through-stop check: if candle opens below or at stop loss, exit at Open
+                        if not tp1_hit and c_open <= orig_sl:
+                            outcome = "LOSS"
+                            final_pnl = round(c_open - entry, 2)
+                            brokerage_costs = est_costs
+                            net_pnl = round(final_pnl - brokerage_costs, 2)
+                            break
+
                         # Ambiguous same-candle check: if candle touches both TP1 and original SL before TP1 was confirmed
                         if not tp1_hit:
                             hit_tp1_now = c_high >= tp1
@@ -338,6 +358,14 @@ def evaluate_open_outcomes(data_map, force_eod=False):
                         
                         # Independent TP2 tracking or trailing breakeven stop evaluation
                         if tp1_hit:
+                            # Gap-through breakeven stop (only if open gapped strictly below breakeven stop sl)
+                            if c_open < sl:
+                                outcome = "WIN_PARTIAL"
+                                final_pnl = round(0.5 * (tp1 - entry) + 0.5 * (c_open - entry), 2)
+                                brokerage_costs = est_costs
+                                net_pnl = round(final_pnl - brokerage_costs, 2)
+                                break
+
                             hit_tp2_now = tp2 and (c_high >= tp2)
                             hit_be_sl_now = c_low <= sl
                             if hit_tp2_now and hit_be_sl_now:
@@ -364,6 +392,14 @@ def evaluate_open_outcomes(data_map, force_eod=False):
                     elif direction == "SELL":
                         mfe = max(mfe, entry - c_low)
                         mae = min(mae, entry - c_high)
+
+                        # Gap-through-stop check: if candle opens above or at stop loss, exit at Open
+                        if not tp1_hit and c_open >= orig_sl:
+                            outcome = "LOSS"
+                            final_pnl = round(entry - c_open, 2)
+                            brokerage_costs = est_costs
+                            net_pnl = round(final_pnl - brokerage_costs, 2)
+                            break
                         
                         if not tp1_hit:
                             hit_tp1_now = c_low <= tp1
@@ -386,6 +422,14 @@ def evaluate_open_outcomes(data_map, force_eod=False):
                                 sl = min(sl, entry)
 
                         if tp1_hit:
+                            # Gap-through breakeven stop (only if open gapped strictly above breakeven stop sl)
+                            if c_open > sl:
+                                outcome = "WIN_PARTIAL"
+                                final_pnl = round(0.5 * (entry - tp1) + 0.5 * (entry - c_open), 2)
+                                brokerage_costs = est_costs
+                                net_pnl = round(final_pnl - brokerage_costs, 2)
+                                break
+
                             hit_tp2_now = tp2 and (c_low <= tp2)
                             hit_be_sl_now = c_high >= sl
                             if hit_tp2_now and hit_be_sl_now:
@@ -415,14 +459,21 @@ def evaluate_open_outcomes(data_map, force_eod=False):
                 is_completed = data.get("is_completed", (c_ts + 300 <= now))
                 if is_completed and c_ts > last_candle_time and c_ts > sig_time:
                     newest_candle_time = c_ts
+                    c_open = float(data.get("open", entry))
                     c_high = float(data.get("high", entry))
                     c_low = float(data.get("low", entry))
 
                     if direction == "BUY":
                         mfe = max(mfe, c_high - entry)
                         mae = min(mae, c_low - entry)
-                        
-                        if not tp1_hit:
+
+                        # Gap-through-stop check: if candle opens below or at stop loss, exit at Open
+                        if not tp1_hit and c_open <= orig_sl:
+                            outcome = "LOSS"
+                            final_pnl = round(c_open - entry, 2)
+                            brokerage_costs = est_costs
+                            net_pnl = round(final_pnl - brokerage_costs, 2)
+                        elif not tp1_hit:
                             hit_tp1_now = c_high >= tp1
                             hit_orig_sl_now = c_low <= orig_sl
                             if hit_tp1_now and hit_orig_sl_now:
@@ -440,7 +491,33 @@ def evaluate_open_outcomes(data_map, force_eod=False):
                                 tp1_hit_time = c_ts
                                 sl = max(sl, entry)
                         
-                        if tp1_hit and outcome == "ACTIVE":
+                        if tp1_hit and outcome == "ACTIVE" and "open" in data:
+                            if c_open < sl:
+                                outcome = "WIN_PARTIAL"
+                                final_pnl = round(0.5 * (tp1 - entry) + 0.5 * (c_open - entry), 2)
+                                brokerage_costs = est_costs
+                                net_pnl = round(final_pnl - brokerage_costs, 2)
+                            else:
+                                hit_tp2_now = tp2 and (c_high >= tp2)
+                                hit_be_sl_now = c_low <= sl
+                                if hit_tp2_now and hit_be_sl_now:
+                                    outcome = "WIN_PARTIAL"
+                                    final_pnl = round(0.5 * (tp1 - entry) + 0.5 * (sl - entry), 2)
+                                    brokerage_costs = est_costs
+                                    net_pnl = round(final_pnl - brokerage_costs, 2)
+                                elif hit_tp2_now:
+                                    tp2_hit = 1
+                                    tp2_hit_time = c_ts
+                                    outcome = "WIN_FULL"
+                                    final_pnl = round(0.5 * (tp1 - entry) + 0.5 * (tp2 - entry), 2)
+                                    brokerage_costs = est_costs
+                                    net_pnl = round(final_pnl - brokerage_costs, 2)
+                                elif hit_be_sl_now:
+                                    outcome = "WIN_PARTIAL"
+                                    final_pnl = round(0.5 * (tp1 - entry) + 0.5 * (sl - entry), 2)
+                                    brokerage_costs = est_costs
+                                    net_pnl = round(final_pnl - brokerage_costs, 2)
+                        elif tp1_hit and outcome == "ACTIVE":
                             hit_tp2_now = tp2 and (c_high >= tp2)
                             hit_be_sl_now = c_low <= sl
                             if hit_tp2_now and hit_be_sl_now:
@@ -464,8 +541,14 @@ def evaluate_open_outcomes(data_map, force_eod=False):
                     elif direction == "SELL":
                         mfe = max(mfe, entry - c_low)
                         mae = min(mae, entry - c_high)
-                        
-                        if not tp1_hit:
+
+                        # Gap-through-stop check: if candle opens above or at stop loss, exit at Open
+                        if not tp1_hit and c_open >= orig_sl:
+                            outcome = "LOSS"
+                            final_pnl = round(entry - c_open, 2)
+                            brokerage_costs = est_costs
+                            net_pnl = round(final_pnl - brokerage_costs, 2)
+                        elif not tp1_hit:
                             hit_tp1_now = c_low <= tp1
                             hit_orig_sl_now = c_high >= orig_sl
                             if hit_tp1_now and hit_orig_sl_now:
@@ -483,7 +566,33 @@ def evaluate_open_outcomes(data_map, force_eod=False):
                                 tp1_hit_time = c_ts
                                 sl = min(sl, entry)
 
-                        if tp1_hit and outcome == "ACTIVE":
+                        if tp1_hit and outcome == "ACTIVE" and "open" in data:
+                            if c_open > sl:
+                                outcome = "WIN_PARTIAL"
+                                final_pnl = round(0.5 * (entry - tp1) + 0.5 * (entry - c_open), 2)
+                                brokerage_costs = est_costs
+                                net_pnl = round(final_pnl - brokerage_costs, 2)
+                            else:
+                                hit_tp2_now = tp2 and (c_low <= tp2)
+                                hit_be_sl_now = c_high >= sl
+                                if hit_tp2_now and hit_be_sl_now:
+                                    outcome = "WIN_PARTIAL"
+                                    final_pnl = round(0.5 * (entry - tp1) + 0.5 * (entry - sl), 2)
+                                    brokerage_costs = est_costs
+                                    net_pnl = round(final_pnl - brokerage_costs, 2)
+                                elif hit_tp2_now:
+                                    tp2_hit = 1
+                                    tp2_hit_time = c_ts
+                                    outcome = "WIN_FULL"
+                                    final_pnl = round(0.5 * (entry - tp1) + 0.5 * (entry - tp2), 2)
+                                    brokerage_costs = est_costs
+                                    net_pnl = round(final_pnl - brokerage_costs, 2)
+                                elif hit_be_sl_now:
+                                    outcome = "WIN_PARTIAL"
+                                    final_pnl = round(0.5 * (entry - tp1) + 0.5 * (entry - sl), 2)
+                                    brokerage_costs = est_costs
+                                    net_pnl = round(final_pnl - brokerage_costs, 2)
+                        elif tp1_hit and outcome == "ACTIVE":
                             hit_tp2_now = tp2 and (c_low <= tp2)
                             hit_be_sl_now = c_high >= sl
                             if hit_tp2_now and hit_be_sl_now:

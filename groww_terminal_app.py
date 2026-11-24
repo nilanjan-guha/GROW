@@ -1028,7 +1028,7 @@ def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
     """
     now = time.time()
     
-    # Determine latest completed candle timestamp from NIFTY
+    # Determine latest completed candle timestamp from NIFTY (Fail-Closed Benchmark Gate)
     raw_market = screener_state.get("raw_market_cache", {})
     nifty_cached = raw_market.get("^NSEI") if isinstance(raw_market, dict) else None
     nifty_df = nifty_cached.get("df") if isinstance(nifty_cached, dict) else None
@@ -1036,15 +1036,25 @@ def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
     eval_nifty = None
     if nifty_df is not None and not nifty_df.empty:
         nifty_val = MarketValidator.validate_feed_freshness(nifty_df, max_delay_seconds=300, candle_duration_seconds=300)
+        # P1 Fail-Closed Gate: If NIFTY benchmark validation fails, reject immediately! Never construct eval_nifty from corrupted feed.
+        if not nifty_val.get("is_valid", False):
+            print(f"[BENCHMARK GATE] NIFTY validation rejected: {nifty_val.get('reason')}. Fail-closed: producing no actionable rankings.")
+            return {
+                "top_bullish": [], "top_bearish": [], "entry_ready": [], "ignition": [], "preparing": [], "observing": [],
+                "benchmark_status": "INVALID_BENCHMARK",
+                "benchmark_reason": nifty_val.get("reason")
+            }, None
+
         is_nifty_comp = nifty_val.get("is_completed_candle", False)
         eval_nifty = nifty_df if is_nifty_comp else nifty_df.iloc[:-1]
         if not eval_nifty.empty:
             current_candle_ts = str(eval_nifty.index[-1])
     
-    if not current_candle_ts:
-        # If NIFTY data is unavailable, market-wide synchronization cannot be established
+    if not current_candle_ts or eval_nifty is None or eval_nifty.empty:
+        # If NIFTY data is unavailable or corrupted, market-wide synchronization cannot be established
         return {
-            "top_bullish": [], "top_bearish": [], "entry_ready": [], "ignition": [], "preparing": [], "observing": []
+            "top_bullish": [], "top_bearish": [], "entry_ready": [], "ignition": [], "preparing": [], "observing": [],
+            "benchmark_status": "BENCHMARK_UNAVAILABLE"
         }, None
 
     candidates = []
