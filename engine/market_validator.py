@@ -232,9 +232,9 @@ class MarketValidator:
         if np.any(l > o) or np.any(l > c):
             return {"is_valid": False, "status": "CORRUPT_OHLC_LOW", "reason": "Low price violated boundary (Low > Open or Low > Close)"}
 
-        # Session-aware Intraday Continuity & Missing Candle Validation:
+        # Session-aware Intraday Continuity & Missing Candle Validation (Item 6):
         # Distinguish normal overnight/weekend session gaps from missing intraday candles.
-        # Normal 5-minute session has 75 candles (09:15 to 15:30).
+        # Normal 5-minute session has 75 candles (09:15 to 15:30 IST).
         df_eval['Date'] = df_eval.index.date
         session_dates = df_eval['Date'].unique()
         session_stats = []
@@ -244,15 +244,27 @@ class MarketValidator:
         for s_date in session_dates:
             s_slice = df_eval[df_eval['Date'] == s_date]
             n_bars = len(s_slice)
+            
+            # Check timestamps alignment to 5-minute boundaries (minutes % 5 == 0 or 15)
+            s_minutes = [t.minute for t in s_slice.index]
+            unaligned_bars = sum(1 for m in s_minutes if m % 5 != 0)
+            if unaligned_bars > 0:
+                has_intraday_data_corruption = True
+                corrupt_session_reason = f"Session {s_date} contains {unaligned_bars} non-5-minute aligned candle timestamps"
+                break
+
             # Evaluate intraday intervals between consecutive candles within the SAME session
             if n_bars >= 2:
                 sec_diffs = (s_slice.index[1:] - s_slice.index[:-1]).total_seconds()
                 # Missing candles inside trading session (interval > 360 seconds / 6 minutes)
                 intraday_gaps = [d for d in sec_diffs if d > 360]
-                if len(intraday_gaps) > 3:  # More than 3 gaps inside a single session indicates corrupted historical feed
+                # Reject sessions with missing intraday gaps (> 1 gap or total missing duration > 15 mins)
+                total_missing_gap_secs = sum(d - 300 for d in intraday_gaps)
+                if len(intraday_gaps) > 1 or total_missing_gap_secs > 900:
                     has_intraday_data_corruption = True
-                    corrupt_session_reason = f"Session {s_date} has {len(intraday_gaps)} missing intraday candle gaps"
+                    corrupt_session_reason = f"Session {s_date} has {len(intraday_gaps)} missing intraday candle gaps ({int(total_missing_gap_secs/60)}m missing)"
                     break
+
             session_stats.append({
                 "date": str(s_date),
                 "candles_count": n_bars

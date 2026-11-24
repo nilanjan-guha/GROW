@@ -68,9 +68,16 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
         "out_of_sample_trades": 0
     }
     
+    # Realistic Indian Intraday Equity/Futures Statutory Friction:
+    # Brokerage (₹20/order or 0.03%), STT (0.025% on sell side for equity intraday / 0.0125% for futures),
+    # Exchange turnover charge (NSE 0.00325%), GST (18% on brokerage+txn), Stamp duty (0.003% on buy), SEBI fee (0.0001%)
+    # Total round-trip statutory friction: ~0.08% to 0.12% depending on side and turnover
     entry_slippage_pct = 0.03
-    total_friction_pct = 0.10
+    exit_slippage_pct = 0.03
+    base_statutory_friction_pct = 0.08  # STT + Exchange + GST + Stamp Duty
     max_holding_candles = 6
+    max_concurrent_portfolio_trades = 4  # Concurrency limit across shared portfolio capital
+    active_portfolio_trades = []  # Tracks active positions: [{"symbol": sym, "exit_time": ts, "capital_alloc": 0.25}]
 
     for sym in sample_symbols:
         print(f"Replaying {sym}...")
@@ -196,7 +203,8 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
                 sector_bias=sector_bias,
                 nifty_df=nifty_sub,
                 daily_df=daily_sub,
-                is_replay=True
+                is_replay=True,
+                sector_df=sector_sub
             )
             
             stats["total_evaluations"] += 1
@@ -255,7 +263,7 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
                 risk = sl - actual_entry
                 reward = actual_entry - tp1
 
-            if risk <= 0 or (reward / risk) < 1.20:
+            if risk <= 0 or (reward / risk) < 1.25:
                 stats["rejected_no_risk"] += 1
                 stats["watch_only_candidates"] += 1
                 continue
@@ -359,10 +367,15 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
             is_out_of_sample = (idx >= int(len(df) * 0.60))
             is_win = False
 
-            # Separate Gross vs Net PnL (Entry friction: 0.05% + Exit friction: 0.05% = 0.10% total)
+            # Separate Gross vs Net PnL with Side-Specific Indian Statutory Friction:
+            # Buy side statutory friction: 0.035% (Brokerage + Stamp + Exch + GST)
+            # Sell side statutory friction: 0.055% (STT 0.025% + Brokerage + Exch + GST)
+            # Total friction: 0.090% + slippage
+            trade_friction_pct = base_statutory_friction_pct + (0.015 if direction == "BEARISH" else 0.010)
+
             if hit_tp:
                 gross_diff = (exit_price_actual - actual_entry) / actual_entry * 100 if direction == "BULLISH" else (actual_entry - exit_price_actual) / actual_entry * 100
-                net_pnl = gross_diff - total_friction_pct
+                net_pnl = gross_diff - trade_friction_pct
                 stats["gross_pnl_pct"] += gross_diff
                 stats["total_pnl_pct"] += net_pnl
                 stats["trade_gross_pnls"].append(gross_diff)
@@ -382,7 +395,7 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
             elif hit_sl:
                 stats["losses"] += 1
                 gross_diff = -(abs(actual_entry - exit_price_actual) / actual_entry * 100)
-                net_pnl = gross_diff - total_friction_pct
+                net_pnl = gross_diff - trade_friction_pct
                 stats["gross_pnl_pct"] += gross_diff
                 stats["total_pnl_pct"] += net_pnl
                 stats["trade_gross_pnls"].append(gross_diff)
@@ -394,7 +407,7 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
                 stats["equity_curve"].append(prev_eq * (1.0 + (net_pnl / 100.0) * 0.20))
             else:
                 gross_diff = ((exit_price_actual - actual_entry) / actual_entry * 100) if direction == "BULLISH" else ((actual_entry - exit_price_actual) / actual_entry * 100)
-                net_pnl = gross_diff - total_friction_pct
+                net_pnl = gross_diff - trade_friction_pct
                 stats["gross_pnl_pct"] += gross_diff
                 stats["total_pnl_pct"] += net_pnl
                 stats["trade_gross_pnls"].append(gross_diff)

@@ -440,11 +440,11 @@ class OpportunityRankingEngine:
         rr_ratio = float(opp_eval.get("risk_reward_ratio", 0.0)) if opp_eval else 0.0
         exhaustion_risk = opp_eval.get("exhaustion_risk", "LOW") if opp_eval else "LOW"
 
-        # Quality Gates for CONFIRMED (Balanced for Intraday: realistic targets > 0.7%, RR >= 1.30, not over-strict):
+        # Quality Gates for CONFIRMED (Consistent across Potential Engine, Ranking, and Replay: potential >= 0.70%, RR >= 1.25):
         is_viable_opportunity = (
             opp_eval.get("is_viable", False) and 
             potential_pct >= 0.70 and 
-            rr_ratio >= 1.30 and 
+            rr_ratio >= 1.25 and 
             exhaustion_risk != "HIGH"
         ) if opp_eval else False
 
@@ -482,8 +482,8 @@ class OpportunityRankingEngine:
 
         # Stage Classification with Strictly Enforced Directional Quality Gates:
         # A stock can ONLY be CONFIRMED (ENTRY READY) if EVERY condition is met simultaneously:
-        # 1. is_viable_opportunity (opp_eval viable, potential >= 0.70%, not high exhaustion)
-        # 2. Valid structural stop-loss, target, and computed RR >= 1.30
+        # 1. is_viable_opportunity (opp_eval viable, potential >= 0.70%, RR >= 1.25, not high exhaustion)
+        # 2. Valid structural stop-loss, target, and computed RR >= 1.25
         # 3. Confirmation score meets threshold (>= 45) strictly aligned with direction
         # 4. Conviction score >= 50
         is_strictly_confirmed = (
@@ -739,7 +739,7 @@ class OpportunityRankingEngine:
         all_candidates = bullish + bearish
         all_candidates.sort(key=neutral_quality_score, reverse=True)
 
-        # 1. ENTRY READY (Max 2): Strictly CONFIRMED 5-minute setups with valid structure & RR >= 1.30
+        # 1. ENTRY READY (Max 2): Strictly CONFIRMED 5-minute setups with valid structure & RR >= 1.25
         entry_ready_list = [c for c in all_candidates if c.get("stage") == "CONFIRMED"][:2]
 
         # 2. IGNITION (Expanding right now across ORH/PDH or high volume breakout)

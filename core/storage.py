@@ -634,7 +634,16 @@ def get_strategy_performance_stats(as_of_ts=None):
         conn = get_db_connection()
         cursor = conn.cursor()
         if as_of_ts is not None:
-            as_of_str = str(as_of_ts)
+            # Convert as_of_ts to epoch float if needed
+            if hasattr(as_of_ts, 'timestamp'):
+                as_of_num = as_of_ts.timestamp()
+            else:
+                try:
+                    import pandas as pd
+                    as_of_num = pd.to_datetime(as_of_ts).timestamp()
+                except Exception:
+                    as_of_num = float(as_of_ts)
+
             cursor.execute("""
                 SELECT 
                     strategy,
@@ -643,9 +652,14 @@ def get_strategy_performance_stats(as_of_ts=None):
                     SUM(CASE WHEN outcome = 'LOSS' THEN 1 ELSE 0 END) as losses,
                     AVG(net_pnl) as avg_pnl
                 FROM historical_signals 
-                WHERE outcome IS NOT NULL AND outcome != 'ACTIVE' AND timestamp <= ?
+                WHERE outcome IS NOT NULL 
+                  AND outcome != 'ACTIVE' 
+                  AND (
+                    (closed_at IS NOT NULL AND closed_at <= ?)
+                    OR (closed_at IS NULL AND (timestamp <= ? OR last_candle_time <= ?))
+                  )
                 GROUP BY strategy
-            """, (as_of_str,))
+            """, (as_of_num, as_of_num, as_of_num))
             rows = []
             for r in cursor.fetchall():
                 d = dict(r)

@@ -816,8 +816,8 @@ def smc_scan():
         # 4c. Fetch NIFTY 50 Macro Regime Context
         nifty_regime = {"regime": "NEUTRAL", "bias": "NEUTRAL", "alignment_score": 50}
         try:
-            nifty_cached = screener_state.get("raw_market_cache", {}).get("^NSEI")
-            if nifty_cached and (now - nifty_cached.get("timestamp", 0) < 300):
+            nifty_cached = screener_state.get("raw_market_cache", {}).get("^NSEI") if isinstance(screener_state.get("raw_market_cache"), dict) else None
+            if nifty_cached and isinstance(nifty_cached, dict) and (now - nifty_cached.get("timestamp", 0) < 300):
                 nifty_df = nifty_cached.get("df")
             else:
                 nifty_df = yf.download("^NSEI", period="2d", interval="5m", progress=False)
@@ -1029,8 +1029,9 @@ def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
     now = time.time()
     
     # Determine latest completed candle timestamp from NIFTY
-    nifty_cached = screener_state.get("raw_market_cache", {}).get("^NSEI", {})
-    nifty_df = nifty_cached.get("df")
+    raw_market = screener_state.get("raw_market_cache", {})
+    nifty_cached = raw_market.get("^NSEI") if isinstance(raw_market, dict) else None
+    nifty_df = nifty_cached.get("df") if isinstance(nifty_cached, dict) else None
     current_candle_ts = None
     eval_nifty = None
     if nifty_df is not None and not nifty_df.empty:
@@ -1184,6 +1185,14 @@ def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
         if recent_vol_10 < 5000 or avg_turnover_10 < 1500000:
             continue
 
+        # Resolve official Sector Index candles for live 3-Way Relative Strength
+        sec_ticker = groww_sector_engine.get_sector_index_ticker(sec_name)
+        sec_df = None
+        if sec_ticker:
+            sec_cache_entry = screener_state.get("raw_market_cache", {}).get(sec_ticker)
+            if isinstance(sec_cache_entry, dict) and sec_cache_entry.get("df") is not None:
+                sec_df = sec_cache_entry.get("df")
+
         eval_res = OpportunityRankingEngine.evaluate_stock_opportunity(
             stock_df=eval_df_sym,
             symbol=sym,
@@ -1194,7 +1203,8 @@ def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
             opp_eval=opp_eval,
             time_slot_rvol=time_slot_rvol,
             rvol_obs=rvol_obs,
-            is_liquid=True
+            is_liquid=True,
+            sector_df=sec_df
         )
         if eval_res:
             candidates.append(eval_res)
@@ -1222,8 +1232,9 @@ def get_ranked_opportunities_endpoint():
         now = time.time()
         
         # Determine latest completed candle timestamp from NIFTY
-        nifty_cached = screener_state.get("raw_market_cache", {}).get("^NSEI", {})
-        nifty_df = nifty_cached.get("df")
+        raw_market = screener_state.get("raw_market_cache", {})
+        nifty_cached = raw_market.get("^NSEI") if isinstance(raw_market, dict) else None
+        nifty_df = nifty_cached.get("df") if isinstance(nifty_cached, dict) else None
         current_candle_ts = None
         if nifty_df is not None and not nifty_df.empty:
             nifty_val = MarketValidator.validate_feed_freshness(nifty_df, max_delay_seconds=300, candle_duration_seconds=300)
@@ -1346,8 +1357,9 @@ def log_confirmed_signal_endpoint():
 
         # 2. Revalidate completed 5m candle freshness: must match the authoritative latest completed market candle
         # Reject signal logging if the authoritative latest completed market candle cannot be established!
-        nifty_cached = screener_state.get("raw_market_cache", {}).get("^NSEI", {})
-        nifty_df = nifty_cached.get("df")
+        raw_market = screener_state.get("raw_market_cache", {})
+        nifty_cached = raw_market.get("^NSEI") if isinstance(raw_market, dict) else None
+        nifty_df = nifty_cached.get("df") if isinstance(nifty_cached, dict) else None
         latest_market_completed_ts = None
         if nifty_df is not None and not nifty_df.empty:
             nifty_val = MarketValidator.validate_feed_freshness(nifty_df, max_delay_seconds=300, candle_duration_seconds=300)

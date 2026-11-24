@@ -106,7 +106,8 @@ class ScreenerPipeline:
             catalyst_info=news_cat,
             anomaly_info=anomaly_info,
             daily_df=daily_df,
-            market_regime_info=nifty_regime
+            market_regime_info=nifty_regime,
+            as_of_ts=eval_df.index[-1] if not eval_df.empty else None
         )
         if not inst_res:
             return None

@@ -233,12 +233,26 @@ class StrategyLearningEngine:
 
             # If historical replay cutoff provided, query point-in-time closed trades up to as_of_ts
             if as_of_ts is not None:
-                as_of_str = str(as_of_ts)
+                if hasattr(as_of_ts, 'timestamp'):
+                    as_of_num = as_of_ts.timestamp()
+                else:
+                    try:
+                        import pandas as pd
+                        as_of_num = pd.to_datetime(as_of_ts).timestamp()
+                    except Exception:
+                        as_of_num = float(as_of_ts)
+
                 c.execute("""
                     SELECT strategy, outcome 
                     FROM historical_signals 
-                    WHERE outcome IS NOT NULL AND outcome != 'ACTIVE' AND timestamp <= ? AND strategy = ?
-                """, (as_of_str, strategy))
+                    WHERE outcome IS NOT NULL 
+                      AND outcome != 'ACTIVE' 
+                      AND (
+                        (closed_at IS NOT NULL AND closed_at <= ?)
+                        OR (closed_at IS NULL AND (timestamp <= ? OR last_candle_time <= ?))
+                      )
+                      AND strategy = ?
+                """, (as_of_num, as_of_num, as_of_num, strategy))
                 hist_rows = c.fetchall()
                 conn.close()
                 if len(hist_rows) < StrategyLearningEngine.MIN_OBSERVATIONS:

@@ -38,8 +38,6 @@ class GrowwSectorEngine:
         Extracts sector information from all available sector payloads from Groww and falls back to official taxonomy.
         """
         norm_fno = {s.upper().replace(".NS", "") for s in fno_universe_set} if fno_universe_set else set()
-        if not norm_fno:
-            return {}
 
         universe_map = {}
 
@@ -51,7 +49,7 @@ class GrowwSectorEngine:
                 for stk in stks:
                     sym = stk.get("nseScriptCode") or stk.get("symbol") or ""
                     clean = str(sym).upper().replace(".NS", "").strip()
-                    if clean in norm_fno:
+                    if not norm_fno or clean in norm_fno:
                         universe_map[clean] = s_name
                         universe_map[f"{clean}.NS"] = s_name
 
@@ -128,7 +126,9 @@ class GrowwSectorEngine:
             ]
         }
 
-        # Index symbol mapping for sector index relative strength calculation
+        # Official Index symbol mapping for sector index relative strength calculation
+        # Only true, official thematic/sectoral indices are mapped.
+        # Unsupported/hybrid sectors are marked None (UNAVAILABLE) to prevent misleading RS proxy bias.
         SECTOR_TO_INDEX_BENCHMARK = {
             "BANKING": "^NSEBANK",
             "FINANCIAL_SERVICES": "^NSEBANK",
@@ -138,19 +138,19 @@ class GrowwSectorEngine:
             "METALS_MINING": "^CNXMETAL",
             "PHARMA_HEALTHCARE": "^CNXPHARMA",
             "FMCG_CONSUMPTION": "^CNXFMCG",
-            "CAPITAL_GOODS_DEFENCE": "^CNXINFRA",
             "INFRA_CEMENT_REALTY": "^CNXREALTY",
-            "CHEMICALS_FERTILIZERS": "^CNXINFRA",
-            "TELECOM": "^CNXINFRA",
-            "CONSUMER_SERVICES_RETAIL": "^CNXFMCG",
-            "ELECTRONICS_EMS_CABLES": "^CNXINFRA"
+            "CAPITAL_GOODS_DEFENCE": None,  # No clean index; marked unavailable
+            "CHEMICALS_FERTILIZERS": None,  # Marked unavailable to avoid false proxy bias
+            "TELECOM": None,                # Marked unavailable
+            "CONSUMER_SERVICES_RETAIL": None, # Marked unavailable
+            "ELECTRONICS_EMS_CABLES": None  # Marked unavailable
         }
 
         # Populate for all matched instruments
         for sec_name, stks in COMPLETE_FNO_SECTOR_TAXONOMY.items():
             for stk in stks:
                 clean = stk.upper()
-                if clean in norm_fno and clean not in universe_map:
+                if (not norm_fno or clean in norm_fno) and clean not in universe_map:
                     universe_map[clean] = sec_name
                     universe_map[f"{clean}.NS"] = sec_name
 
@@ -165,7 +165,10 @@ class GrowwSectorEngine:
         return universe_map
 
     def get_sector_index_ticker(self, sector_name):
-        """Returns the official NSE sector index ticker for relative strength analysis"""
+        """
+        Returns the official NSE sector index ticker for relative strength analysis.
+        Returns None if an official sector benchmark is unavailable (prevents misleading proxy bias).
+        """
         mapping = getattr(self, "sector_to_index_benchmark", {
             "BANKING": "^NSEBANK",
             "FINANCIAL_SERVICES": "^NSEBANK",
@@ -175,14 +178,14 @@ class GrowwSectorEngine:
             "METALS_MINING": "^CNXMETAL",
             "PHARMA_HEALTHCARE": "^CNXPHARMA",
             "FMCG_CONSUMPTION": "^CNXFMCG",
-            "CAPITAL_GOODS_DEFENCE": "^CNXINFRA",
             "INFRA_CEMENT_REALTY": "^CNXREALTY",
-            "CHEMICALS_FERTILIZERS": "^CNXINFRA",
-            "TELECOM": "^CNXINFRA",
-            "CONSUMER_SERVICES_RETAIL": "^CNXFMCG",
-            "ELECTRONICS_EMS_CABLES": "^CNXINFRA"
+            "CAPITAL_GOODS_DEFENCE": None,
+            "CHEMICALS_FERTILIZERS": None,
+            "TELECOM": None,
+            "CONSUMER_SERVICES_RETAIL": None,
+            "ELECTRONICS_EMS_CABLES": None
         })
-        return mapping.get(sector_name, "^NSEBANK" if "BANK" in str(sector_name).upper() else "^CNXIT")
+        return mapping.get(sector_name, None)
 
     def fetch_groww_trending_sectors(self, fno_universe_set):
         """
@@ -394,9 +397,9 @@ class GrowwSectorEngine:
         self.selected_sector_fno_count = self.actual_fno_coverage
         self.selected_sector_coverage_pct = round((self.selected_sector_fno_count / exp_denom) * 100, 2)
         
-        # Full universe mapping check across the global stock_to_sector_map
-        all_mapped_symbols = set(new_stock_to_sector_map.keys())
-        all_mapped_fno = {s.replace(".NS", "").upper() for s in all_mapped_symbols}
+        # Full universe mapping check across the authoritative full_universe_stock_map (Item 4)
+        complete_universe_mapping = getattr(self, "full_universe_stock_map", {})
+        all_mapped_fno = {s.replace(".NS", "").upper() for s, sec in complete_universe_mapping.items() if sec != "UNMAPPED"}
         full_mapped_count = len(norm_fno.intersection(all_mapped_fno)) if norm_fno else len(all_mapped_fno)
         self.full_universe_mapped_count = full_mapped_count
         self.full_universe_coverage_pct = round((full_mapped_count / exp_denom) * 100, 2)
