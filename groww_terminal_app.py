@@ -1533,17 +1533,20 @@ def log_confirmed_signal_endpoint():
 
         exp_entry = round(entry_val * (1.0 + slippage_pct) if normalized_direction == "BUY" else entry_val * (1.0 - slippage_pct), 2)
 
-        # Derive authoritative candle timestamps
+        # Derive authoritative candle timestamps without guessing
         # authoritative_ts is the start timestamp of the completed 5m candle
         try:
             if hasattr(authoritative_ts, 'timestamp'):
                 c_start_ts = float(authoritative_ts.timestamp())
+            elif isinstance(authoritative_ts, (int, float)):
+                c_start_ts = float(authoritative_ts)
             elif isinstance(authoritative_ts, str) and authoritative_ts.replace('.', '', 1).isdigit():
                 c_start_ts = float(authoritative_ts)
             else:
-                c_start_ts = float(pd.to_datetime(authoritative_ts).timestamp())
-        except Exception:
-            c_start_ts = time.time() - 300.0
+                parsed_dt = pd.to_datetime(authoritative_ts)
+                c_start_ts = float(parsed_dt.timestamp())
+        except Exception as ts_err:
+            return jsonify({"success": False, "error": f"Server rejection: Unparseable authoritative candle timestamp '{authoritative_ts}': {ts_err}"}), 400
 
         c_close_ts = c_start_ts + 300.0
 
@@ -1553,7 +1556,10 @@ def log_confirmed_signal_endpoint():
         contract_spec = ContractMaster.get_contract_spec(clean_cand_sym)
         
         req_inst = (data.get("instrument_type") or "").upper()
-        if req_inst in ("FUTURES", "OPTIONS", "EQUITY_INTRADAY"):
+        if req_inst == "OPTIONS":
+            # Reject OPTIONS until dedicated option chain contracts (strike, expiry, type) are integrated
+            return jsonify({"success": False, "error": "Server rejection: OPTIONS trading mode requires live contract-level option chain and strikes (currently disabled until option chain feed is active)."}), 400
+        elif req_inst in ("FUTURES", "EQUITY_INTRADAY"):
             intended_inst = req_inst
         else:
             intended_inst = "FUTURES" if contract_spec else "EQUITY_INTRADAY"

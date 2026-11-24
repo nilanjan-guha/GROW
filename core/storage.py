@@ -233,18 +233,47 @@ def evaluate_candle_transition(direction, entry, orig_sl, sl, tp1, tp2, tp1_hit_
             "sl": sl, "should_break": False
         }
 
-    # Reject missing, non-finite, or non-positive candle values (corrupted feed protection)
+    # Reject missing, non-finite, non-positive, or structurally inconsistent candle values (corrupted feed protection)
     import math
-    for val in (entry, orig_sl, sl, tp1, c_open, c_high, c_low):
-        if val is None or not math.isfinite(float(val)) or float(val) <= 0:
+    try:
+        f_entry = float(entry)
+        f_orig_sl = float(orig_sl)
+        f_sl = float(sl)
+        f_tp1 = float(tp1)
+        f_open = float(c_open)
+        f_high = float(c_high)
+        f_low = float(c_low)
+    except (ValueError, TypeError):
+        return {
+            "outcome": "ACTIVE", "final_pnl": 0.0, "net_pnl": 0.0, "brokerage_costs": est_costs,
+            "tp1_hit": 1 if tp1_hit_prior else 0, "tp1_hit_time": None, "tp2_hit": 0, "tp2_hit_time": None,
+            "sl": sl, "should_break": False
+        }
+
+    for val in (f_entry, f_orig_sl, f_sl, f_tp1, f_open, f_high, f_low):
+        if not math.isfinite(val) or val <= 0:
             return {
                 "outcome": "ACTIVE", "final_pnl": 0.0, "net_pnl": 0.0, "brokerage_costs": est_costs,
                 "tp1_hit": 1 if tp1_hit_prior else 0, "tp1_hit_time": None, "tp2_hit": 0, "tp2_hit_time": None,
                 "sl": sl, "should_break": False
             }
 
-    if tp2 is not None and (not math.isfinite(float(tp2)) or float(tp2) <= 0):
-        tp2 = None
+    # Structural consistency: High must be >= max(Open, Low), Low must be <= min(Open, High)
+    if f_high < f_open or f_high < f_low or f_low > f_open:
+        return {
+            "outcome": "ACTIVE", "final_pnl": 0.0, "net_pnl": 0.0, "brokerage_costs": est_costs,
+            "tp1_hit": 1 if tp1_hit_prior else 0, "tp1_hit_time": None, "tp2_hit": 0, "tp2_hit_time": None,
+            "sl": sl, "should_break": False
+        }
+
+    entry, orig_sl, sl, tp1, c_open, c_high, c_low = f_entry, f_orig_sl, f_sl, f_tp1, f_open, f_high, f_low
+
+    if tp2 is not None:
+        try:
+            f_tp2 = float(tp2)
+            tp2 = f_tp2 if (math.isfinite(f_tp2) and f_tp2 > 0) else None
+        except (ValueError, TypeError):
+            tp2 = None
 
     direction = norm_dir
     outcome = "ACTIVE"
@@ -262,11 +291,10 @@ def evaluate_candle_transition(direction, entry, orig_sl, sl, tp1, tp2, tp1_hit_
         if cost_calc_fn:
             try:
                 if is_partial and exit_p2 is not None:
-                    c1 = cost_calc_fn(exit_p1, fraction=0.5)
-                    c2 = cost_calc_fn(exit_p2, fraction=0.5)
-                    tot_cost = c1 + c2
+                    # Accurately compute multi-exit costs with 1 entry leg and 2 half-quantity exit legs
+                    tot_cost = cost_calc_fn([(exit_p1, 0.5), (exit_p2, 0.5)])
                 else:
-                    tot_cost = cost_calc_fn(exit_p1, fraction=1.0)
+                    tot_cost = cost_calc_fn([(exit_p1, 1.0)])
                 return round(tot_cost, 2), round(pnl_val - tot_cost, 2)
             except Exception:
                 pass
@@ -519,10 +547,16 @@ def evaluate_open_outcomes(data_map, force_eod=False):
             est_costs = default_costs["cost_per_share"]
 
             def make_cost_calc(entry_p, quantity, inst):
-                def _calc(exit_p, fraction=1.0):
-                    sub_qty = max(1, int(round(quantity * fraction)))
-                    c = IndianMarketCosts.calculate_intraday_costs(entry_p, exit_p, quantity=sub_qty, instrument_type=inst)
-                    return c["cost_per_share"] * fraction
+                def _calc(exit_tuples):
+                    # exit_tuples: list of (exit_price, fraction)
+                    raw_exits = []
+                    for ep, frac in exit_tuples:
+                        sub_q = max(1, int(round(quantity * frac)))
+                        raw_exits.append((ep, sub_q))
+                    res_cost = IndianMarketCosts.calculate_multi_exit_costs(
+                        entry_price=entry_p, exits=raw_exits, total_quantity=quantity, instrument_type=inst
+                    )
+                    return res_cost["cost_per_share"]
                 return _calc
 
             cost_calc_fn = make_cost_calc(entry, qty, inst_type)

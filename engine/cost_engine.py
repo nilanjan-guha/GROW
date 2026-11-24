@@ -179,6 +179,112 @@ class IndianMarketCosts:
         }
 
     @staticmethod
+    def calculate_multi_exit_costs(entry_price: float, exits: list, total_quantity: int = 100, instrument_type: str = "EQUITY_INTRADAY", include_slippage: bool = True) -> dict:
+        """
+        Accurately calculates total transaction friction for a trade with 1 entry order and N partial exit orders.
+        Guarantees:
+        - Exactly 1 entry leg (brokerage, stamp duty, entry slippage evaluated once across total_quantity).
+        - Exactly 1 exit leg per partial exit (brokerage, STT, exit slippage evaluated per exit order/quantity).
+        - Exchange turnover charges and SEBI charges evaluated on exact aggregate turnover.
+        - GST computed on total brokerage + exchange charges + SEBI charges.
+        - cost_per_share computed as total_costs / total_quantity.
+        
+        exits is a list of tuples/dicts: [(exit_price, quantity), ...] or [{'price': p, 'quantity': q}, ...]
+        """
+        entry = float(entry_price)
+        tot_qty = max(1, int(total_quantity))
+        inst = instrument_type.upper()
+
+        clean_exits = []
+        for e in exits:
+            if isinstance(e, (list, tuple)):
+                clean_exits.append((float(e[0]), int(e[1])))
+            elif isinstance(e, dict):
+                clean_exits.append((float(e.get("price", entry)), int(e.get("quantity", 0))))
+
+        sum_exit_qty = sum(q for _, q in clean_exits)
+        if sum_exit_qty <= 0:
+            clean_exits = [(entry, tot_qty)]
+            sum_exit_qty = tot_qty
+
+        # 1. Entry side (evaluated once)
+        buy_turnover = entry * tot_qty
+        if "OPTION" in inst:
+            buy_brokerage = 20.0
+            stamp_duty = round(buy_turnover * 0.00003, 2)
+            entry_slippage = round(buy_turnover * 0.005, 2) if include_slippage else 0.0
+        elif "FUTURE" in inst:
+            buy_brokerage = 20.0
+            stamp_duty = round(buy_turnover * 0.00002, 2)
+            entry_slippage = round(buy_turnover * 0.00015, 2) if include_slippage else 0.0
+        else:
+            buy_brokerage = min(20.0, buy_turnover * 0.0005)
+            stamp_duty = round(buy_turnover * 0.00003, 2)
+            entry_slippage = round(buy_turnover * 0.0002, 2) if include_slippage else 0.0
+
+        # 2. Exit sides (evaluated per order)
+        total_sell_turnover = 0.0
+        total_sell_brokerage = 0.0
+        total_stt = 0.0
+        total_exit_slippage = 0.0
+
+        for exit_p, q in clean_exits:
+            q = max(1, int(q))
+            sell_turnover = exit_p * q
+            total_sell_turnover += sell_turnover
+
+            if "OPTION" in inst:
+                total_sell_brokerage += 20.0
+                total_stt += round(sell_turnover * 0.00100, 2)
+                if include_slippage:
+                    total_exit_slippage += round(sell_turnover * 0.005, 2)
+            elif "FUTURE" in inst:
+                total_sell_brokerage += 20.0
+                total_stt += round(sell_turnover * 0.00020, 2)
+                if include_slippage:
+                    total_exit_slippage += round(sell_turnover * 0.00015, 2)
+            else:
+                total_sell_brokerage += min(20.0, sell_turnover * 0.0005)
+                total_stt += round(sell_turnover * 0.00025, 2)
+                if include_slippage:
+                    total_exit_slippage += round(sell_turnover * 0.0002, 2)
+
+        total_turnover = buy_turnover + total_sell_turnover
+        total_brokerage = round(buy_brokerage + total_sell_brokerage, 2)
+
+        # 3. Exchange & regulatory charges
+        if "OPTION" in inst:
+            exch_charges = round(total_turnover * 0.00053, 2)
+        elif "FUTURE" in inst:
+            exch_charges = round(total_turnover * 0.0000200, 2)
+        else:
+            exch_charges = round(total_turnover * 0.0000345, 2)
+
+        sebi_charges = round(total_turnover * 0.000001, 2)
+        gst = round((total_brokerage + exch_charges + sebi_charges) * 0.18, 2)
+        slippage = round(entry_slippage + total_exit_slippage, 2)
+
+        total_costs = round(total_brokerage + total_stt + exch_charges + sebi_charges + stamp_duty + gst + slippage, 2)
+        cost_per_share = round(total_costs / tot_qty, 2)
+
+        return {
+            "instrument": inst,
+            "quantity": tot_qty,
+            "total_costs": total_costs,
+            "cost_per_share": cost_per_share,
+            "brokerage": total_brokerage,
+            "stt": round(total_stt, 2),
+            "exchange_charges": exch_charges,
+            "stamp_duty": stamp_duty,
+            "sebi_charges": sebi_charges,
+            "gst": gst,
+            "slippage": slippage,
+            "buy_turnover": round(buy_turnover, 2),
+            "sell_turnover": round(total_sell_turnover, 2),
+            "total_turnover": round(total_turnover, 2)
+        }
+
+    @staticmethod
     def calculate_intraday_costs(entry_price: float, exit_price: float, quantity: int = 100, instrument_type: str = "EQUITY_INTRADAY") -> dict:
         """Unified interface routing to specialized calculators"""
         inst = instrument_type.upper()
