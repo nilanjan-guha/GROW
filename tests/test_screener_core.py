@@ -408,6 +408,37 @@ class TestIntradayScreenerCore(unittest.TestCase):
         self.assertIn("volume_profile_vah", strat_res)
         self.assertIn("volume_profile_val", strat_res)
         self.assertGreater(strat_res["volume_profile_poc"], 0.0)
+        self.assertLessEqual(strat_res["volume_profile_val"], strat_res["volume_profile_vah"])
+
+    def test_strict_requested_window_validation(self):
+        from engine.market_validator import MarketValidator
+        first_candle = self.df_5m.index[0]
+        last_candle = self.df_5m.index[-1]
+        
+        # Valid matching window
+        val_ok = MarketValidator.validate_historical_replay_data(
+            self.df_5m,
+            requested_start_dt=first_candle,
+            requested_end_dt=last_candle
+        )
+        self.assertTrue(val_ok.get("is_valid", False))
+        
+        # Mismatched requested start
+        wrong_start = first_candle + pd.Timedelta(minutes=5)
+        val_bad_start = MarketValidator.validate_historical_replay_data(
+            self.df_5m,
+            requested_start_dt=wrong_start
+        )
+        self.assertFalse(val_bad_start.get("is_valid", False))
+        self.assertIn("does not match requested_start_dt", val_bad_start.get("reason", ""))
+
+    def test_instrument_turnover_costs_futures_vs_equity(self):
+        # Futures should have lower STT (0.0125% vs 0.025%) and lower stamp duty (0.002% vs 0.003%)
+        turnover = 100000.0
+        equity_stt = turnover * 0.00025
+        futures_stt = turnover * 0.000125
+        self.assertEqual(equity_stt, 25.0)
+        self.assertEqual(futures_stt, 12.5)
 
 if __name__ == '__main__':
     unittest.main()

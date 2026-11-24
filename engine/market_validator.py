@@ -152,6 +152,30 @@ class MarketValidator:
 
         is_completed = (now_ts >= candle_end)
 
+        # STRICT 5-MINUTE TIMEFRAME & SESSION GRID ENFORCEMENT (Live P0):
+        # 1. Reject 1-minute, 3-minute, 15-minute or other invalid candle intervals
+        # 2. Enforce seconds == 0 and microseconds == 0
+        # 3. Enforce minutes % 5 == 0
+        if len(df_eval) >= 2:
+            recent_diffs = (df_eval.index[1:] - df_eval.index[:-1]).total_seconds()
+            # If median interval is less than 240 seconds (e.g. 60s for 1m feed) or greater than 360 seconds (15m feed), reject!
+            median_interval = float(np.median(recent_diffs[-10:] if len(recent_diffs) >= 10 else recent_diffs))
+            if abs(median_interval - candle_duration_seconds) > 60:
+                return {
+                    "is_valid": False,
+                    "status": "INVALID_TIMEFRAME",
+                    "reason": f"Feed candle interval {int(median_interval)}s does not match expected {candle_duration_seconds}s (5-minute required; 1-minute strictly rejected)"
+                }
+
+        # Check timestamp alignment on recent candles
+        for t in df_eval.index[-5:]:
+            if t.second != 0 or t.microsecond != 0 or (t.minute % 5 != 0):
+                return {
+                    "is_valid": False,
+                    "status": "UNALIGNED_CANDLE_TIMESTAMPS",
+                    "reason": f"Candle timestamp {t.strftime('%Y-%m-%d %H:%M:%S')} is not aligned to exact 5-minute boundary"
+                }
+
         # Session freshness check
         if MarketValidator.is_market_open(now):
             last_date = last_dt.date() if hasattr(last_dt, 'date') else None
@@ -323,17 +347,40 @@ class MarketValidator:
                     has_intraday_data_corruption = True
                     corrupt_session_reason = f"Session {s_date} incomplete: expected {expected_count} bars, found {n_bars} (missing {expected_count - n_bars})"
                     break
-            elif is_first_session and requested_start_dt is None:
-                # If requested_start_dt not specified and intermediate sessions follow, must start at 09:15
-                if len(session_dates) > 1 and actual_minutes[0] != start_m:
+            elif is_first_session:
+                if requested_start_dt is not None:
+                    # Strict window start boundary validation:
+                    req_start = pd.to_datetime(requested_start_dt)
+                    if hasattr(req_start, 'tz') and req_start.tz is not None and df_eval.index.tz is None:
+                        req_start = req_start.tz_localize(None)
+                    elif hasattr(req_start, 'tz') and req_start.tz is None and df_eval.index.tz is not None:
+                        req_start = req_start.tz_localize(df_eval.index.tz)
+                    if df_eval.index[0] != req_start:
+                        has_intraday_data_corruption = True
+                        corrupt_session_reason = f"First candle {df_eval.index[0]} does not match requested_start_dt {req_start}"
+                        break
+                elif len(session_dates) > 1 and actual_minutes[0] != start_m:
+                    # If requested_start_dt not specified and intermediate sessions follow, must start at 09:15
                     has_intraday_data_corruption = True
                     corrupt_session_reason = f"First session {s_date} missing market open (starts at {s_slice.index[0].strftime('%H:%M')})"
                     break
-            elif is_final_session and not allow_partial_final_session:
-                if n_bars != expected_count:
-                    has_intraday_data_corruption = True
-                    corrupt_session_reason = f"Final session {s_date} incomplete: expected {expected_count} bars, found {n_bars}"
-                    break
+            elif is_final_session:
+                if requested_end_dt is not None:
+                    # Strict window end boundary validation:
+                    req_end = pd.to_datetime(requested_end_dt)
+                    if hasattr(req_end, 'tz') and req_end.tz is not None and df_eval.index.tz is None:
+                        req_end = req_end.tz_localize(None)
+                    elif hasattr(req_end, 'tz') and req_end.tz is None and df_eval.index.tz is not None:
+                        req_end = req_end.tz_localize(df_eval.index.tz)
+                    if df_eval.index[-1] != req_end:
+                        has_intraday_data_corruption = True
+                        corrupt_session_reason = f"Final candle {df_eval.index[-1]} does not match requested_end_dt {req_end}"
+                        break
+                elif not allow_partial_final_session:
+                    if n_bars != expected_count:
+                        has_intraday_data_corruption = True
+                        corrupt_session_reason = f"Final session {s_date} incomplete: expected {expected_count} bars, found {n_bars}"
+                        break
 
             session_stats.append({
                 "date": str(s_date),

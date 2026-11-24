@@ -111,7 +111,8 @@ class InstitutionalStrategyEngine:
         rsi = float(100 - (100 / (1 + rs)).iloc[-1])
 
         tr = pd.concat([h - l, (h - c.shift(1)).abs(), (l - c.shift(1)).abs()], axis=1).max(axis=1)
-        atr14 = float(tr.rolling(14).mean().iloc[-1]) or (curr_c * 0.01)
+        rolling_atr_series = tr.rolling(14).mean().bfill()
+        atr14 = float(rolling_atr_series.iloc[-1]) or (curr_c * 0.01)
 
         # UNIFIED TIME-OF-DAY RVOL (Across Anomaly and Institutional Engine)
         from engine.anomaly_engine import AnomalyDetector
@@ -173,10 +174,11 @@ class InstitutionalStrategyEngine:
 
         # 2. Incremental order block lifecycle state machine:
         # States: CREATED -> ACTIVE -> PARTIALLY_MITIGATED -> FULLY_MITIGATED -> INVALIDATED
-        # Requires displacement (expansion candle range >= 1.25x ATR or RVOL >= 1.20)
+        # Requires displacement (expansion candle range >= 1.25x ATR at formation or RVOL >= 1.20)
         active_bull_obs = []
         active_bear_obs = []
         vol_series = v.values
+        atr_values = rolling_atr_series.values
         
         for k in range(1, len(hist_df)):
             c_prev = float(c.iloc[k-1])
@@ -190,14 +192,17 @@ class InstitutionalStrategyEngine:
             v_curr = float(v.iloc[k])
             curr_rng = h_curr - l_curr
             
+            # Point-in-time ATR at candle k (prevents lookahead distortion across volatility regimes)
+            k_atr = float(atr_values[k]) if k < len(atr_values) and np.isfinite(atr_values[k]) and atr_values[k] > 0 else (atr14 or (curr_c * 0.01))
+
             # 15-period volume mean up to bar k-1 for local RVOL
             past_vols = vol_series[max(0, k-15):k]
             v_mean = float(np.mean(past_vols)) if len(past_vols) > 0 else (v_curr or 1.0)
             bar_rvol = v_curr / (v_mean or 1.0)
             
-            # Displacement check on confirming candle k:
-            # Body must expand with significant movement (range >= 1.25x ATR OR bar RVOL >= 1.20)
-            has_displacement = (curr_rng >= (atr14 * 1.20)) or (bar_rvol >= 1.20) or (abs(c_curr - o_curr) >= (atr14 * 0.8))
+            # Displacement check on confirming candle k using formation-time ATR (k_atr):
+            # Body must expand with significant movement (range >= 1.20x k_atr OR bar RVOL >= 1.20)
+            has_displacement = (curr_rng >= (k_atr * 1.20)) or (bar_rvol >= 1.20) or (abs(c_curr - o_curr) >= (k_atr * 0.8))
             
             # Bullish Demand OB: Down candle followed by displacement breaking above its high
             if c_prev < o_prev and c_curr > h_prev and has_displacement:
@@ -226,29 +231,48 @@ class InstitutionalStrategyEngine:
             # - PARTIALLY_MITIGATED: price wicks or trades into zone (l_curr <= ob["top"] and l_curr >= ob["bottom"] for demand; h_curr >= ob["bottom"] and h_curr <= ob["top"] for supply)
             # - FULLY_MITIGATED: price completely traverses the zone (l_curr < ob["bottom"] for demand; h_curr > ob["top"] for supply)
             # - INVALIDATED: candle CLOSE breaches the structural invalidation boundary (c_curr < ob["bottom"] for demand; c_curr > ob["top"] for supply)
+            #
+            # Breaker Block State Progression:
+            # Once INVALIDATED, an OB enters the Breaker Block lifecycle:
+            # 1. BREAKER_PENDING_RETEST: Price has breached the zone, waiting for a pullback to retest the flip boundary.
+            # 2. BREAKER_CONFIRMED_REJECTION: Subsequent candle touches the flip zone and closes rejecting away from it.
             for ob in active_bull_obs:
-                if ob["created_at_idx"] < k and ob["state"] not in ("INVALIDATED",):
-                    if c_curr < ob["bottom"]:
-                        ob["state"] = "INVALIDATED"
-                        ob["invalidated_at_idx"] = k
-                        ob["breaker_type"] = "BEARISH_BREAKER" # Invalidated Demand OB becomes a Bearish Breaker Block
-                    elif l_curr < ob["bottom"]:
-                        ob["state"] = "FULLY_MITIGATED"
-                    elif l_curr <= ob["top"]:
-                        if ob["state"] == "ACTIVE":
-                            ob["state"] = "PARTIALLY_MITIGATED"
+                if ob["created_at_idx"] < k:
+                    if ob["state"] not in ("INVALIDATED", "BREAKER_PENDING_RETEST", "BREAKER_CONFIRMED_REJECTION"):
+                        if c_curr < ob["bottom"]:
+                            ob["state"] = "INVALIDATED"
+                            ob["invalidated_at_idx"] = k
+                            ob["breaker_type"] = "BEARISH_BREAKER" # Invalidated Demand OB becomes a Bearish Breaker Block
+                            ob["breaker_state"] = "BREAKER_PENDING_RETEST"
+                        elif l_curr < ob["bottom"]:
+                            ob["state"] = "FULLY_MITIGATED"
+                        elif l_curr <= ob["top"]:
+                            if ob["state"] == "ACTIVE":
+                                ob["state"] = "PARTIALLY_MITIGATED"
+                    elif ob.get("breaker_state") == "BREAKER_PENDING_RETEST" and k > ob["invalidated_at_idx"]:
+                        # Test if price pulled back into the flip zone (bottom to top) and closed below top (bearish rejection)
+                        if h_curr >= ob["bottom"] and c_curr <= ob["top"] and c_curr < o_curr:
+                            ob["breaker_state"] = "BREAKER_CONFIRMED_REJECTION"
+                            ob["breaker_confirmed_at_idx"] = k
             
             for ob in active_bear_obs:
-                if ob["created_at_idx"] < k and ob["state"] not in ("INVALIDATED",):
-                    if c_curr > ob["top"]:
-                        ob["state"] = "INVALIDATED"
-                        ob["invalidated_at_idx"] = k
-                        ob["breaker_type"] = "BULLISH_BREAKER" # Invalidated Supply OB becomes a Bullish Breaker Block
-                    elif h_curr > ob["top"]:
-                        ob["state"] = "FULLY_MITIGATED"
-                    elif h_curr >= ob["bottom"]:
-                        if ob["state"] == "ACTIVE":
-                            ob["state"] = "PARTIALLY_MITIGATED"
+                if ob["created_at_idx"] < k:
+                    if ob["state"] not in ("INVALIDATED", "BREAKER_PENDING_RETEST", "BREAKER_CONFIRMED_REJECTION"):
+                        if c_curr > ob["top"]:
+                            ob["state"] = "INVALIDATED"
+                            ob["invalidated_at_idx"] = k
+                            ob["breaker_type"] = "BULLISH_BREAKER" # Invalidated Supply OB becomes a Bullish Breaker Block
+                            ob["breaker_state"] = "BREAKER_PENDING_RETEST"
+                        elif h_curr > ob["top"]:
+                            ob["state"] = "FULLY_MITIGATED"
+                        elif h_curr >= ob["bottom"]:
+                            if ob["state"] == "ACTIVE":
+                                ob["state"] = "PARTIALLY_MITIGATED"
+                    elif ob.get("breaker_state") == "BREAKER_PENDING_RETEST" and k > ob["invalidated_at_idx"]:
+                        # Test if price pulled back into the flip zone (bottom to top) and closed above bottom (bullish rejection)
+                        if l_curr <= ob["top"] and c_curr >= ob["bottom"] and c_curr > o_curr:
+                            ob["breaker_state"] = "BREAKER_CONFIRMED_REJECTION"
+                            ob["breaker_confirmed_at_idx"] = k
 
         # Relevant Order Blocks & Institutional Breaker Blocks:
         # Demand OB must be BELOW or touching current price (cannot be above current price for Bullish!)
@@ -258,11 +282,11 @@ class InstitutionalStrategyEngine:
         fully_mitigated_bull_obs = [ob for ob in active_bull_obs if ob["state"] == "FULLY_MITIGATED"]
         fully_mitigated_bear_obs = [ob for ob in active_bear_obs if ob["state"] == "FULLY_MITIGATED"]
         
-        # Institutional Breaker Blocks (Trapped Liquidity Flip Zones):
-        # Bullish Breaker: Prior supply OB breached by aggressive buying, now acting as support below price
-        bull_breakers = [ob for ob in active_bear_obs if ob.get("breaker_type") == "BULLISH_BREAKER" and ob["bottom"] <= (curr_c * 1.005)]
-        # Bearish Breaker: Prior demand OB breached by aggressive selling, now acting as resistance above price
-        bear_breakers = [ob for ob in active_bull_obs if ob.get("breaker_type") == "BEARISH_BREAKER" and ob["top"] >= (curr_c * 0.995)]
+        # Institutional Breaker Blocks (Trapped Liquidity Flip Zones with Confirmed Retest & Rejection):
+        # Bullish Breaker: Prior supply OB breached by aggressive buying, retested, and confirmed rejecting upwards
+        bull_breakers = [ob for ob in active_bear_obs if ob.get("breaker_type") == "BULLISH_BREAKER" and ob.get("breaker_state") == "BREAKER_CONFIRMED_REJECTION" and ob["bottom"] <= (curr_c * 1.005)]
+        # Bearish Breaker: Prior demand OB breached by aggressive selling, retested, and confirmed rejecting downwards
+        bear_breakers = [ob for ob in active_bull_obs if ob.get("breaker_type") == "BEARISH_BREAKER" and ob.get("breaker_state") == "BREAKER_CONFIRMED_REJECTION" and ob["top"] >= (curr_c * 0.995)]
 
         near_demand_ob = min(fresh_bull_obs, key=lambda ob: abs(curr_c - ob['top'])) if fresh_bull_obs else None
         near_supply_ob = min(fresh_bear_obs, key=lambda ob: abs(curr_c - ob['bottom'])) if fresh_bear_obs else None
@@ -282,12 +306,13 @@ class InstitutionalStrategyEngine:
                 if abs(swing_lows[s_idx] - swing_lows[-1]) / swing_lows[-1] <= 0.0015:
                     eql_clusters.append(swing_lows[-1])
 
-        # Inducement Swept: Price pierced EQH/EQL cluster and rejected (Institutional Stop Run / Counterparty Fill)
+        # Inducement Swept: Price pierced EQH/EQL cluster and rejected on completed candle
+        # Note: Distinguish pure price rejection from estimated absorption
         has_eqh_inducement_sweep = bool(eqh_clusters and float(h.iloc[-1]) >= eqh_clusters[-1] and curr_c < eqh_clusters[-1])
         has_eql_inducement_sweep = bool(eql_clusters and float(l.iloc[-1]) <= eql_clusters[-1] and curr_c > eql_clusters[-1])
 
-        # 4. Auction Market Theory: Intraday Volume Profile POC (Point of Control) & Value Area (VAH/VAL 70%)
-        # Discretize today's volume into price bins to establish high-volume acceptance vs low-volume rejection
+        # 4. Auction Market Theory: Intraday Volume Profile POC (Point of Control) & Contiguous Value Area (VAH/VAL 70%)
+        # Discretize today's volume into price bins using candle range split, then expand contiguously from POC
         poc_price = vwap
         vah_price = vwap * 1.01
         val_price = vwap * 0.99
@@ -296,35 +321,56 @@ class InstitutionalStrategyEngine:
         is_outside_value_area = False
 
         if not today_df.empty and len(today_df) >= 5:
-            t_closes = today_df['Close'].values
-            t_vols = today_df['Volume'].values
             price_min = float(today_df['Low'].min())
             price_max = float(today_df['High'].max())
             if price_max > price_min:
                 num_bins = min(30, max(10, len(today_df)))
                 bin_edges = np.linspace(price_min, price_max, num_bins + 1)
                 bin_volumes = np.zeros(num_bins)
-                bin_indices = np.clip(np.digitize(t_closes, bin_edges) - 1, 0, num_bins - 1)
-                for b_i, vol in zip(bin_indices, t_vols):
-                    bin_volumes[b_i] += vol
+
+                # Distribute candle volume across 5 price points across its High-Low range (not single Close point)
+                for _, row in today_df.iterrows():
+                    bar_h = float(row['High'])
+                    bar_l = float(row['Low'])
+                    bar_vol = float(row['Volume'])
+                    if bar_h > bar_l:
+                        sample_prices = np.linspace(bar_l, bar_h, 5)
+                        sub_indices = np.clip(np.digitize(sample_prices, bin_edges) - 1, 0, num_bins - 1)
+                        for s_idx in sub_indices:
+                            bin_volumes[s_idx] += (bar_vol / 5.0)
+                    else:
+                        c_idx = int(np.clip(np.digitize([bar_h], bin_edges)[0] - 1, 0, num_bins - 1))
+                        bin_volumes[c_idx] += bar_vol
                 
                 max_vol_bin = int(np.argmax(bin_volumes))
                 poc_price = (bin_edges[max_vol_bin] + bin_edges[max_vol_bin + 1]) / 2.0
                 
-                # Value Area (70% highest volume range)
+                # Contiguous Value Area Expansion from POC bin:
+                # Expands symmetrically / contiguously by adding the adjacent bin with higher volume until 70% volume is enclosed
                 total_vol = float(np.sum(bin_volumes))
                 target_va_vol = total_vol * 0.70
-                sorted_bins_by_vol = np.argsort(bin_volumes)[::-1]
-                cum_va_vol = 0.0
-                va_bin_indices = []
-                for b_idx in sorted_bins_by_vol:
-                    cum_va_vol += bin_volumes[b_idx]
-                    va_bin_indices.append(b_idx)
-                    if cum_va_vol >= target_va_vol:
+                cum_va_vol = float(bin_volumes[max_vol_bin])
+                left_idx = max_vol_bin
+                right_idx = max_vol_bin
+
+                while cum_va_vol < target_va_vol and (left_idx > 0 or right_idx < num_bins - 1):
+                    vol_left = bin_volumes[left_idx - 1] if left_idx > 0 else -1.0
+                    vol_right = bin_volumes[right_idx + 1] if right_idx < num_bins - 1 else -1.0
+                    
+                    if vol_left >= vol_right and left_idx > 0:
+                        left_idx -= 1
+                        cum_va_vol += bin_volumes[left_idx]
+                    elif right_idx < num_bins - 1:
+                        right_idx += 1
+                        cum_va_vol += bin_volumes[right_idx]
+                    elif left_idx > 0:
+                        left_idx -= 1
+                        cum_va_vol += bin_volumes[left_idx]
+                    else:
                         break
-                if va_bin_indices:
-                    val_price = float(bin_edges[min(va_bin_indices)])
-                    vah_price = float(bin_edges[max(va_bin_indices) + 1])
+
+                val_price = float(bin_edges[left_idx])
+                vah_price = float(bin_edges[right_idx + 1])
 
             is_above_poc = curr_c >= poc_price
             is_below_poc = curr_c <= poc_price
@@ -426,11 +472,11 @@ class InstitutionalStrategyEngine:
         elif near_bear_breaker and (near_bear_breaker['bottom'] * 0.985 <= curr_c <= near_bear_breaker['top'] * 1.005) and is_below_poc:
             evaluated_signals.append({"strategy": "Bearish Breaker Block", "direction": "SELL", "weight": 27})
 
-        # Strategy M3: Liquidity Inducement Trap & Counterparty Absorption
+        # Strategy M3: Liquidity Inducement Trap & Rejection (Avoid claiming absorption without order-flow delta proof)
         if has_eql_inducement_sweep and is_above_poc:
-            evaluated_signals.append({"strategy": "Liquidity Inducement Absorption", "direction": "BUY", "weight": 26})
+            evaluated_signals.append({"strategy": "Liquidity Inducement Rejection", "direction": "BUY", "weight": 26})
         elif has_eqh_inducement_sweep and is_below_poc:
-            evaluated_signals.append({"strategy": "Liquidity Inducement Absorption", "direction": "SELL", "weight": 26})
+            evaluated_signals.append({"strategy": "Liquidity Inducement Rejection", "direction": "SELL", "weight": 26})
 
         # Strategy M4: Auction Market Theory - Value Area Repricing Expansion
         if is_outside_value_area and rvol >= 1.3:

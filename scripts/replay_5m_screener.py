@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from engine.screener_pipeline import ScreenerPipeline
 
-def run_screener_replay(sample_symbols=None, days="1mo"):
+def run_screener_replay(sample_symbols=None, days="1mo", instrument_type="EQUITY"):
     import yfinance as yf
     
     if not sample_symbols:
@@ -32,7 +32,7 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
             "AXISBANK.NS", "KOTAKBANK.NS", "HINDUNILVR.NS", "BAJFINANCE.NS", "MARUTI.NS"
         ]
     
-    print(f"=== STARTING 5-MINUTE SCREENER REPLAY VALIDATION ({len(sample_symbols)} STOCKS | PERIOD: {days}) ===")
+    print(f"=== STARTING 5-MINUTE SCREENER REPLAY VALIDATION ({len(sample_symbols)} STOCKS | PERIOD: {days} | INSTRUMENT: {instrument_type}) ===")
     
     # Initialize replay statistics upfront before downloading or validating any benchmark (P0)
     stats = {
@@ -490,23 +490,38 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
                 max_fav = (actual_entry - min(in_trade_lows[:exit_offset+1])) / actual_entry * 100
                 max_adv = (max(in_trade_highs[:exit_offset+1]) - actual_entry) / actual_entry * 100
 
-            # Realistic Statutory Turnover Costs for Indian Intraday Equity/Futures (Item F):
-            # Brokerage: min(₹20, 0.03% of turnover) each side
-            # STT: 0.025% on sell side (equity intraday) / 0.0125% for futures
-            # Exchange charge: 0.00325% on total turnover
-            # SEBI turnover fee: ₹10 per crore (0.0001% of turnover)
-            # GST: 18% on (Brokerage + Exchange + SEBI)
-            # Stamp duty: 0.003% on buy side (equity) / 0.002% (futures)
+            # Realistic Statutory Turnover Costs for Indian Intraday Equity / Futures:
+            # Equity Intraday:
+            # - Brokerage: min(₹20, 0.03% of turnover) each side
+            # - STT: 0.025% on sell side only
+            # - Exchange turnover charge: 0.00325% on total turnover
+            # - SEBI turnover fee: ₹10 per crore (0.0001% of turnover)
+            # - Stamp duty: 0.003% on buy side only
+            # - GST: 18% on (Brokerage + Exchange + SEBI)
+            #
+            # Futures Intraday:
+            # - Brokerage: min(₹20, 0.03% of turnover) each side
+            # - STT: 0.0125% on sell side only
+            # - Exchange turnover charge: 0.0019% on total turnover
+            # - SEBI turnover fee: ₹10 per crore (0.0001% of turnover)
+            # - Stamp duty: 0.002% on buy side only
+            # - GST: 18% on (Brokerage + Exchange + SEBI)
             entry_turnover_rs = actual_entry * trade_qty
             exit_turnover_rs = exit_price_actual * trade_qty
             total_turnover_rs = entry_turnover_rs + exit_turnover_rs
 
             brokerage_rs = min(20.0, entry_turnover_rs * 0.0003) + min(20.0, exit_turnover_rs * 0.0003)
-            stt_rs = (exit_turnover_rs if direction == "BULLISH" else entry_turnover_rs) * 0.00025
-            exch_turnover_fee_rs = total_turnover_rs * 0.0000325
+            if instrument_type.upper() == "FUTURES":
+                stt_rs = (exit_turnover_rs if direction == "BULLISH" else entry_turnover_rs) * 0.000125
+                exch_turnover_fee_rs = total_turnover_rs * 0.000019
+                stamp_duty_rs = (entry_turnover_rs if direction == "BULLISH" else exit_turnover_rs) * 0.00002
+            else:
+                stt_rs = (exit_turnover_rs if direction == "BULLISH" else entry_turnover_rs) * 0.00025
+                exch_turnover_fee_rs = total_turnover_rs * 0.0000325
+                stamp_duty_rs = (entry_turnover_rs if direction == "BULLISH" else exit_turnover_rs) * 0.00003
+            
             sebi_charges_rs = total_turnover_rs * 0.000001
             gst_rs = (brokerage_rs + exch_turnover_fee_rs + sebi_charges_rs) * 0.18
-            stamp_duty_rs = (entry_turnover_rs if direction == "BULLISH" else exit_turnover_rs) * 0.00003
             total_friction_rs = brokerage_rs + stt_rs + exch_turnover_fee_rs + sebi_charges_rs + gst_rs + stamp_duty_rs
 
             gross_realized_rs = (exit_price_actual - actual_entry) * trade_qty if direction == "BULLISH" else (actual_entry - exit_price_actual) * trade_qty
