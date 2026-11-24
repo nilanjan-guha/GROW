@@ -1216,38 +1216,48 @@ sniperSellTrigger =
 if enableSniperEngine and not inTrade and (bar_index - lastExitBar >= cooldownBarsInput)
     // ── LONG ENTRY ──
     if sniperBuyTrigger and not pendingOrder
-        // Structural low: Cushion SL right below the most recent swing low / SSL sweep origin
-        float structLow = not na(internalLow.currentLevel) ? internalLow.currentLevel : low[1]
-        if not na(lastBullBreakoutLevel) and lastBullBreakoutLevel < close
-            structLow := math.min(structLow, math.min(low, low[1]))
-        if sweepLow and not na(swingLow.currentLevel) and swingLow.currentLevel < structLow
-            structLow := swingLow.currentLevel
-        // OTE-based SL: Place SL at 100% retracement (below OTE swing low origin)
-        if bullOteHit and not na(oteSwingLow)
-            structLow := math.min(structLow, oteSwingLow)
-        // Dynamic Institutional Buffer: 0.75 ATR on Options to completely eliminate 1-minute market-maker wick hunting
-        slBuffer = isOption ? math.max(atr14 * 0.75, 4.0) : math.max(atr14 * 0.25, 5.0)
-        calcSL    = math.min(structLow, low) - slBuffer
-        calcEntry = close
+        // Precision Support Origin & Tight Risk Calibration:
+        // 1. Identify true institutional support base (Sweep origin, Demand OB, or FVG CE midpoint)
+        float supportBase = not na(internalLow.currentLevel) ? internalLow.currentLevel : low
+        if not na(lastBullFvgMid) and lastBullFvgMid < close and lastBullFvgMid >= supportBase
+            supportBase := lastBullFvgMid
+        if sweepLow and not na(swingLow.currentLevel) and swingLow.currentLevel < close
+            supportBase := swingLow.currentLevel
+        if bullOteHit and not na(oteSwingLow) and oteSwingLow < close
+            supportBase := oteSwingLow
+
+        // Optimal Entry Price: If price already expanded upward, target entry near lower quartile of bar or support base
+        float calcEntry = close
+        // If option bar has a large wick or body, entry gets optimized towards the support level
+        if isOption and (close - low) > (atr14 * 0.5)
+            calcEntry := math.min(close, (high + low + close) / 3.0)
+
+        // Ultra-Tight Micro SL placed right below supportBase:
+        // Capped buffer between 2.5 and 4.0 points on options so a loss is tiny!
+        slBuffer  = isOption ? math.min(atr14 * 0.40, 4.0) : math.min(atr14 * 0.20, 5.0)
+        calcSL    = math.min(supportBase, low) - slBuffer
         riskDist  = calcEntry - calcSL
 
-        if riskDist >= (atr14 * minRiskAtr * 0.5)
+        // Guard against zero/negative or abnormally bloated SL (Must have defined, small risk)
+        if riskDist >= syminfo.mintick and riskDist <= (atr14 * 3.0)
             inTrade         := true
             tradeDir        := 1
             entryBarIdx     := bar_index
             entryPrice      := calcEntry
             stopLossPrice   := calcSL
-            // Minimum Guaranteed High R:R Target (>= 3.0R) to eliminate micro-targets
-            minTargetDistance = riskDist * math.max(3.0, sniperRRRatio)
+            // Minimum Guaranteed High R:R Target (>= 3.5R up to 6R) so profit is massive compared to tiny SL
+            minTargetDistance = riskDist * math.max(3.5, sniperRRRatio)
             
-            // DOL Target: Use Draw on Liquidity pool (EQH / Previous major swing high) only if it offers substantial expansion (>= 3R)
+            // DOL Target: Use Draw on Liquidity pool (EQH / Previous major swing high)
             dolTP = hasBullDOL and not na(dolBullTarget) and dolBullTarget >= entryPrice + minTargetDistance ? math.min(dolBullTarget, entryPrice + riskDist * 6.0) : na
             oppositeSwingTP = targetOppositeSwing and not na(swingHigh.currentLevel) and swingHigh.currentLevel >= entryPrice + minTargetDistance ? math.min(swingHigh.currentLevel, entryPrice + (riskDist * 5.0)) : na
 
             targetHighPrice = not na(dolTP) ? dolTP : (not na(oppositeSwingTP) ? oppositeSwingTP : entryPrice + minTargetDistance)
             takeProfitPrice := targetHighPrice
 
-            // Label with score and primary reason
+            // Label with score, tiny SL amount, and primary reason
+            float rPoints = math.round(riskDist, 1)
+            float rRatio  = math.round((takeProfitPrice - entryPrice) / riskDist, 1)
             entryReason = bullOteHit ? "OTE" : (bullSMTDiv ? "SMT" : (bullIFVGRetest ? "IFVG" : (bprBullRetest ? "BPR" : (judasSwingBull ? "JUDAS" : (po3DistBull ? "PO3" : "MSS")))))
             activeTPBox := box.new(left=entryBarIdx, top=takeProfitPrice, right=entryBarIdx + 1, bottom=entryPrice,
                                    bgcolor=colTPBox, border_color=color.teal, border_style=line.style_solid)
@@ -1255,32 +1265,31 @@ if enableSniperEngine and not inTrade and (bar_index - lastExitBar >= cooldownBa
                                    bgcolor=colSLBox, border_color=color.maroon, border_style=line.style_solid)
             buyLabelText = isIndex ? "BUY CALL (CE) " : (isCallOption ? "BUY CALL " : (isPutOption ? "BUY PUT " : "BUY "))
             activeLbl   := label.new(entryBarIdx + 1, entryPrice,
-                                     buyLabelText + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##") + " | " + entryReason + " [" + str.tostring(institutBullScore) + "/19]",
+                                     buyLabelText + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##") + " (-" + str.tostring(rPoints) + " pts)" + " | 1:" + str.tostring(rRatio) + "R [" + str.tostring(institutBullScore) + "/19]",
                                      style=label.style_label_left, color=color(na), textcolor=color.teal, size=size.tiny)
 
     // ── SHORT ENTRY (Index / Spot charts only) ──
     else if sniperSellTrigger and not pendingOrder
-        float structHigh = not na(internalHigh.currentLevel) ? internalHigh.currentLevel : high[1]
-        if not na(lastBearBreakoutLevel) and lastBearBreakoutLevel > close
-            structHigh := math.max(structHigh, math.max(high, high[1]))
-        if sweepHigh and not na(swingHigh.currentLevel) and swingHigh.currentLevel > structHigh
-            structHigh := swingHigh.currentLevel
-        if bearOteHit and not na(oteSwingHigh)
-            structHigh := math.max(structHigh, oteSwingHigh)
-        // Dynamic Institutional Buffer: 0.75 ATR on Options to completely eliminate 1-minute market-maker wick hunting
-        slBuffer = isOption ? math.max(atr14 * 0.75, 4.0) : math.max(atr14 * 0.25, 5.0)
-        calcSL    = math.max(structHigh, high) + slBuffer
-        calcEntry = close
+        float resistanceBase = not na(internalHigh.currentLevel) ? internalHigh.currentLevel : high
+        if not na(lastBearFvgMid) and lastBearFvgMid > close and lastBearFvgMid <= resistanceBase
+            resistanceBase := lastBearFvgMid
+        if sweepHigh and not na(swingHigh.currentLevel) and swingHigh.currentLevel > close
+            resistanceBase := swingHigh.currentLevel
+        if bearOteHit and not na(oteSwingHigh) and oteSwingHigh > close
+            resistanceBase := oteSwingHigh
+
+        float calcEntry = close
+        slBuffer  = isOption ? math.min(atr14 * 0.40, 4.0) : math.min(atr14 * 0.20, 5.0)
+        calcSL    = math.max(resistanceBase, high) + slBuffer
         riskDist  = calcSL - calcEntry
 
-        if riskDist >= (atr14 * minRiskAtr * 0.5)
+        if riskDist >= syminfo.mintick and riskDist <= (atr14 * 3.0)
             inTrade         := true
             tradeDir        := -1
             entryBarIdx     := bar_index
             entryPrice      := calcEntry
             stopLossPrice   := calcSL
-            // Minimum Guaranteed High R:R Target (>= 3.0R) to eliminate micro-targets
-            minTargetDistance = riskDist * math.max(3.0, sniperRRRatio)
+            minTargetDistance = riskDist * math.max(3.5, sniperRRRatio)
             
             dolTP = hasBearDOL and not na(dolBearTarget) and dolBearTarget <= entryPrice - minTargetDistance ? math.max(dolBearTarget, entryPrice - riskDist * 6.0) : na
             oppositeSwingTP = targetOppositeSwing and not na(swingLow.currentLevel) and swingLow.currentLevel <= entryPrice - minTargetDistance and swingLow.currentLevel > 0 ? math.max(swingLow.currentLevel, entryPrice - (riskDist * 5.0)) : na
@@ -1288,6 +1297,8 @@ if enableSniperEngine and not inTrade and (bar_index - lastExitBar >= cooldownBa
             targetLowPrice  = not na(dolTP) ? dolTP : (not na(oppositeSwingTP) ? oppositeSwingTP : entryPrice - minTargetDistance)
             takeProfitPrice := targetLowPrice
 
+            float rPoints = math.round(riskDist, 1)
+            float rRatio  = math.round((entryPrice - takeProfitPrice) / riskDist, 1)
             entryReason = bearOteHit ? "OTE" : (bearSMTDiv ? "SMT" : (bearIFVGRetest ? "IFVG" : (bprBearRetest ? "BPR" : (judasSwingBear ? "JUDAS" : (po3DistBear ? "PO3" : "MSS")))))
             activeTPBox := box.new(left=entryBarIdx, top=entryPrice, right=entryBarIdx + 1, bottom=takeProfitPrice,
                                    bgcolor=colTPBox, border_color=color.teal, border_style=line.style_solid)
@@ -1295,7 +1306,7 @@ if enableSniperEngine and not inTrade and (bar_index - lastExitBar >= cooldownBa
                                    bgcolor=colSLBox, border_color=color.maroon, border_style=line.style_solid)
             sellLabelText = isIndex ? "BUY PUT (PE) " : "SELL "
             activeLbl   := label.new(entryBarIdx + 1, entryPrice,
-                                     sellLabelText + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##") + " | " + entryReason + " [" + str.tostring(institutBearScore) + "/19]",
+                                     sellLabelText + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##") + " (-" + str.tostring(rPoints) + " pts)" + " | 1:" + str.tostring(rRatio) + "R [" + str.tostring(institutBearScore) + "/19]",
                                      style=label.style_label_left, color=color(na), textcolor=color.maroon, size=size.tiny)
 
 // Active Trade Progression (With Break-Even & Full Swing Target Delivery)
