@@ -791,6 +791,17 @@ cvdHighest5 = ta.highest(sessionCvd, 5)
 priceHighest5 = ta.highest(high, 5)
 bearCvdDivergence = (high >= priceHighest5) and (sessionCvd < cvdHighest5[1])
 
+// Exhaustion Auction & Climax Detection (Blocks late entries at trend tops/bottoms)
+// Volume spike >= 2.0x 20 EMA + long rejection wick or tiny body = exhaustion / retail trapped
+volClimax = volume >= volEma20 * 2.0
+bullExhaustion = volClimax and (upperWickLen >= candleSpread * 0.45 or (bodyLen <= candleSpread * 0.25 and close < high - candleSpread * 0.3))
+bearExhaustion = volClimax and (lowerWickLen >= candleSpread * 0.45 or (bodyLen <= candleSpread * 0.25 and close > low + candleSpread * 0.3))
+
+// Overextended / Exhaustion Filter: Price extended too far away from EMA 20 (chasing the train)
+ema20 = ta.ema(close, 20)
+isOverextendedLong  = close > ema20 + (atr14 * 2.8) or bullExhaustion
+isOverextendedShort = close < ema20 - (atr14 * 2.8) or bearExhaustion
+
 // Master Order Flow Filters for Entries:
 orderFlowBullConfirmed = not useOrderFlowFilter or (isPositiveDelta or bullishAbsorption or (requireCvdDivergence and bullCvdDivergence))
 orderFlowBearConfirmed = not useOrderFlowFilter or (isNegativeDelta or bearishAbsorption or (requireCvdDivergence and bearCvdDivergence))
@@ -1094,10 +1105,12 @@ institutBearScore := institutBearScore + (isInKillzone ? 1 : 0)
 institutBearScore := institutBearScore + (isNegativeDelta ? 1 : 0)
 institutBearScore := institutBearScore + (parentBearConfirmed ? 1 : 0)
 
-// Maximum possible score = 19. Minimum score for HIGH QUALITY institutional entry = 7
-minInstitScore = 7
-isHighQualityBull = institutBullScore >= minInstitScore and hasPremiumExpansion
-isHighQualityBear = institutBearScore >= minInstitScore and hasPremiumExpansion
+// Maximum possible score = 19.
+// Calibrated threshold: 5 allows earlier smart entries at origins (Sweeps, OTE, SMT, Early Breakouts)
+// Higher scores (7+) represent mature confirmations which often arrive too late!
+minInstitScore = input.int(5, 'Minimum Institutional Confluence Score (5 = Early Snipers, 7 = Late Confirmed)', minval = 3, maxval = 12, group = INSTIT_GROUP)
+isHighQualityBull = institutBullScore >= minInstitScore and hasPremiumExpansion and not isOverextendedLong
+isHighQualityBear = institutBearScore >= minInstitScore and hasPremiumExpansion and not isOverextendedShort
 
 // Recent BOS / Structure Breakout Level Memory
 var float lastBullBreakoutLevel = na
@@ -1116,25 +1129,31 @@ if triggeredBearShift
 bullBreakoutRetest = not na(lastBullBreakoutLevel) and (bar_index - lastBullBreakoutBar <= 5) and (low <= lastBullBreakoutLevel + (atr14 * 0.4)) and (close > open)
 bearBreakoutRetest = not na(lastBearBreakoutLevel) and (bar_index - lastBearBreakoutBar <= 5) and (high >= lastBearBreakoutLevel - (atr14 * 0.4)) and (close < open)
 
-// CHoCH / BOS Breakout Shift (Market Structure Shift) with displacement confirmation
-isBullChochOrBos = triggeredBullShift and close > open and isDisplacement
-isBearChochOrBos = triggeredBearShift and close < open and isDisplacement
+// Early Turn & Structure Shift Triggers:
+// 1. Early CHoCH/BOS on 1-min: Do not require delayed massive displacement if there's already absorption or sweep
+isEarlyBullShift = triggeredBullShift and close > open and (isDisplacement or bullishAbsorption or isPositiveDelta)
+isEarlyBearShift = triggeredBearShift and close < open and (isDisplacement or bearishAbsorption or isNegativeDelta)
+
+// 2. Pure Liquidity Sweep & Spring/Upthrust Reversal (Enter at the very origin before market takes off!)
+sweepSpringBull = sweepLow and close > open and (bullishAbsorption or barDelta > 0 or bullCvdDivergence)
+sweepUpthrustBear = sweepHigh and close < open and (bearishAbsorption or barDelta < 0 or bearCvdDivergence)
 
 // ═══════════════════════════════════════════════════════════════════════
 // INSTITUTIONAL ENTRY MASTER TRIGGER
 // Full Checklist: MSS + Liquidity Sweep + Order Flow + Index Sync + Score
-// Only fires when minimum 7/19 institutional confluence score is met
+// Now calibrated for EARLIER institutional execution and strict anti-exhaustion
 // ═══════════════════════════════════════════════════════════════════════
 optionIndexFilter = isCallOption ? parentBullConfirmed : (isPutOption ? parentBearConfirmed : true)
 
 // Institutional Buy Trigger: ALL of the below must align
 sniperBuyTrigger =
-     isHighQualityBull and          // Must meet minimum 7/19 institutional score
+     isHighQualityBull and          // Must meet institutional score & NOT exhausted/overextended
      optionIndexFilter and          // Parent Index must be aligned with option direction
      orderFlowBullConfirmed and     // Order Flow / Volume Delta / Absorption confirmed
      isInKillzone and               // Active in institutional killzone (avoid chop)
      (
-         isBullChochOrBos or        // MSS + Displacement
+         isEarlyBullShift or        // Early MSS / CHoCH at the turn
+         sweepSpringBull or         // Early SSL Sweep + Spring / Absorption (Pre-move entry!)
          bullOteHit or              // OTE Golden Pocket 62%-79% retracement
          bullIFVGRetest or          // Inverted FVG demand zone
          bprBullRetest or           // Balanced Price Range demand zone
@@ -1148,11 +1167,12 @@ sniperBuyTrigger =
 // Institutional Sell Trigger: Only on Index/Spot charts, never direct sell on option premium charts
 sniperSellTrigger =
      not isOption and               // Options are always "BUY" direction (CE or PE)
-     isHighQualityBear and          // Must meet minimum 7/19 institutional score
+     isHighQualityBear and          // Must meet institutional score & NOT exhausted/overextended
      orderFlowBearConfirmed and     // Order Flow / Volume Delta / Absorption confirmed
      isInKillzone and               // Active in institutional killzone
      (
-         isBearChochOrBos or
+         isEarlyBearShift or        // Early MSS / CHoCH at the turn
+         sweepUpthrustBear or       // Early BSL Sweep + Upthrust / Absorption (Pre-move entry!)
          bearOteHit or
          bearIFVGRetest or
          bprBearRetest or
