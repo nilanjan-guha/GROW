@@ -873,21 +873,21 @@ detectedIndexTicker = str.contains(tickerUpper, "BANKNIFTY") ? (dhanPrefix + "BA
 parentIndexTicker   = (not autoIndexSymbol and manualIndexSymbol != "") ? manualIndexSymbol : detectedIndexTicker
 
 // Fetch Parent Index Price Action & Market Structure (Only active when viewing an Option Chart)
-// CRITICAL: Request previous COMPLETED candle [1] to avoid provisional/forming candle repainting
-[idxOpenRaw, idxHighRaw, idxLowRaw, idxCloseRaw, idxEma50Raw, idxEma200Raw] = request.security(parentIndexTicker, timeframe.period, [open[1], high[1], low[1], close[1], ta.ema(close, 50)[1], ta.ema(close, 200)[1]], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+// Uses current bar security to guarantee zero delay between index moves and option triggers
+[idxOpenRaw, idxHighRaw, idxLowRaw, idxCloseRaw, idxEma50Raw, idxEma200Raw] = request.security(parentIndexTicker, timeframe.period, [open, high, low, close, ta.ema(close, 50), ta.ema(close, 200)], gaps=barmerge.gaps_off)
 
 // Robust Fallback: If Dhan/Exchange prefix caused NaN, fallback to standard NSE ticker
-idxClose = not na(idxCloseRaw) ? idxCloseRaw : request.security("NSE:NIFTY", timeframe.period, close[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-idxOpen  = not na(idxOpenRaw) ? idxOpenRaw : request.security("NSE:NIFTY", timeframe.period, open[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-idxHigh  = not na(idxHighRaw) ? idxHighRaw : request.security("NSE:NIFTY", timeframe.period, high[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-idxLow   = not na(idxLowRaw) ? idxLowRaw : request.security("NSE:NIFTY", timeframe.period, low[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-idxEma50 = not na(idxEma50Raw) ? idxEma50Raw : request.security("NSE:NIFTY", timeframe.period, ta.ema(close, 50)[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-idxEma200= not na(idxEma200Raw) ? idxEma200Raw : request.security("NSE:NIFTY", timeframe.period, ta.ema(close, 200)[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+idxClose = not na(idxCloseRaw) ? idxCloseRaw : request.security("NSE:NIFTY", timeframe.period, close, gaps=barmerge.gaps_off)
+idxOpen  = not na(idxOpenRaw) ? idxOpenRaw : request.security("NSE:NIFTY", timeframe.period, open, gaps=barmerge.gaps_off)
+idxHigh  = not na(idxHighRaw) ? idxHighRaw : request.security("NSE:NIFTY", timeframe.period, high, gaps=barmerge.gaps_off)
+idxLow   = not na(idxLowRaw) ? idxLowRaw : request.security("NSE:NIFTY", timeframe.period, low, gaps=barmerge.gaps_off)
+idxEma50 = not na(idxEma50Raw) ? idxEma50Raw : request.security("NSE:NIFTY", timeframe.period, ta.ema(close, 50), gaps=barmerge.gaps_off)
+idxEma200= not na(idxEma200Raw) ? idxEma200Raw : request.security("NSE:NIFTY", timeframe.period, ta.ema(close, 200), gaps=barmerge.gaps_off)
 
-// Parent Index Trend & Structural Shift Metrics (Computed on Previous Completed Index Candle):
-// 1. Index Trend Alignment (EMA 50 & 200)
-idxBullTrend = idxClose > idxEma50 and idxEma50 >= idxEma200
-idxBearTrend = idxClose < idxEma50 and idxEma50 <= idxEma200
+// Parent Index Trend & Structural Shift Metrics:
+// 1. Index Trend Alignment (EMA 50 & 200 or close vs EMA 50)
+idxBullTrend = (idxClose > idxEma50 and idxEma50 >= idxEma200) or (idxClose > idxEma50 and idxClose > idxOpen)
+idxBearTrend = (idxClose < idxEma50 and idxEma50 <= idxEma200) or (idxClose < idxEma50 and idxClose < idxOpen)
 
 // 2. Index Displacement / Momentum Shift
 idxCandleBody = math.abs(idxClose - idxOpen)
@@ -896,17 +896,17 @@ idxBullDisplacement = idxClose > idxOpen and (idxCandleBody / idxCandleRange) >=
 idxBearDisplacement = idxClose < idxOpen and (idxCandleBody / idxCandleRange) >= 0.35 and idxClose < idxEma50
 
 // 3. Index Structure Shift (Immediate break of recent highs/lows)
-idxHighRaw3 = request.security(parentIndexTicker, timeframe.period, ta.highest(high, 5)[2], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-idxLowRaw3  = request.security(parentIndexTicker, timeframe.period, ta.lowest(low, 5)[2], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-idxHigh3    = not na(idxHighRaw3) ? idxHighRaw3 : request.security("NSE:NIFTY", timeframe.period, ta.highest(high, 5)[2], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-idxLow3     = not na(idxLowRaw3) ? idxLowRaw3 : request.security("NSE:NIFTY", timeframe.period, ta.lowest(low, 5)[2], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+idxHighRaw3 = request.security(parentIndexTicker, timeframe.period, ta.highest(high, 5)[1], gaps=barmerge.gaps_off)
+idxLowRaw3  = request.security(parentIndexTicker, timeframe.period, ta.lowest(low, 5)[1], gaps=barmerge.gaps_off)
+idxHigh3    = not na(idxHighRaw3) ? idxHighRaw3 : request.security("NSE:NIFTY", timeframe.period, ta.highest(high, 5)[1], gaps=barmerge.gaps_off)
+idxLow3     = not na(idxLowRaw3) ? idxLowRaw3 : request.security("NSE:NIFTY", timeframe.period, ta.lowest(low, 5)[1], gaps=barmerge.gaps_off)
 
 idxBullBreak = not na(idxHigh3) and idxClose > idxHigh3
 idxBearBreak = not na(idxLow3) and idxClose < idxLow3
 
 // Absolute True Directional Bias of Parent Index:
-indexIsBullish = (idxBullTrend or idxBullDisplacement or idxBullBreak) and (idxClose > idxOpen or idxClose > idxEma50)
-indexIsBearish = (idxBearTrend or idxBearDisplacement or idxBearBreak) and (idxClose < idxOpen or idxClose < idxEma50)
+indexIsBullish = (idxBullTrend or idxBullDisplacement or idxBullBreak) and idxClose >= idxEma50
+indexIsBearish = (idxBearTrend or idxBearDisplacement or idxBearBreak) and idxClose <= idxEma50
 
 // Parent Index Permission Rules for Options:
 // If on CALL option chart: Parent Index MUST be Bullish. ABSOLUTELY FORBIDDEN if Index is Bearish!
@@ -918,7 +918,7 @@ parentBearConfirmed = not (isPutOption and useIndexSync and strictIndexAlignment
 // Premium Movement & Liquidity Filter:
 // Prevents taking signals when premium is dead/flat-lining or experiencing theta decay with no volume
 premiumRange3       = ta.highest(high, 3) - ta.lowest(low, 3)
-hasPremiumExpansion = not isOption or (premiumRange3 >= atr14 * minOptionMomentumAtr and volume >= ta.ema(volume, 10) * 0.75)
+hasPremiumExpansion = not isOption or (premiumRange3 >= atr14 * 0.5 and volume >= ta.ema(volume, 10) * 0.5)
 
 //---------------------------------------------------------------------------------------------------------------------}
 // INSTITUTIONAL CONCEPTS ENGINE (OTE / IFVG / SMT / BPR / DOL / PO3 / Judas Swing)
