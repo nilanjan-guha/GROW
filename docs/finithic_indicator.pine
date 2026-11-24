@@ -47,6 +47,7 @@ GAPS_GROUP                      = 'SMC: Fair Value Gaps (FVG)'
 LEVELS_GROUP                    = 'SMC: Multi-Timeframe Highs & Lows'
 ZONES_GROUP                     = 'SMC: Premium & Discount Zones'
 SNIPER_GROUP                    = '1M Sniper Scalper Engine'
+ORDERFLOW_GROUP                 = 'Order Flow / CVD & Absorption Engine'
 
 // SMC Inputs
 modeInput                       = input.string( HISTORICAL, 'Structure History Mode', group = SMART_GROUP, options = [HISTORICAL, PRESENT])
@@ -719,6 +720,66 @@ colPendingShort = color.new(#e91e63, 85)
 barHourMinute = hour * 100 + minute
 isInKillzone  = not useKillzones or ((barHourMinute >= 915 and barHourMinute <= 1145) or (barHourMinute >= 1315 and barHourMinute <= 1515))
 
+// Order Flow & Cumulative Volume Delta (CVD) Engine Inputs
+useOrderFlowFilter = input.bool(true, 'Require Order Flow / Delta Confirmation', group = ORDERFLOW_GROUP)
+requireCvdDivergence = input.bool(true, 'Detect Delta & CVD Absorption (Fakeout Filter)', group = ORDERFLOW_GROUP)
+showDeltaStatsOnHud  = input.bool(true, 'Show Delta & CVD State on Scoreboard', group = ORDERFLOW_GROUP)
+
+// High-Fidelity Synthetic Intra-Bar Order Flow Delta Estimation
+// Uses tick price location and close-to-open displacement to estimate aggressive Buyer vs Seller volume
+candleSpread     = math.max(high - low, syminfo.mintick)
+upperWickLen     = high - math.max(open, close)
+lowerWickLen     = math.min(open, close) - low
+bodyLen          = math.abs(close - open)
+
+// Relative buyer pressure (0.0 to 1.0): Price closing near high with buying wick gives high buyer ratio
+buyerPressure    = ((close - low) + (close - open) * 0.5) / (candleSpread * 1.5)
+buyerRatio       = math.max(0.0, math.min(1.0, 0.5 + ((close - (high + low) * 0.5) / candleSpread) * 0.5))
+
+// Estimated aggressive buying vs aggressive selling volume
+estBuyVol        = volume * buyerRatio
+estSellVol       = volume * (1.0 - buyerRatio)
+barDelta         = estBuyVol - estSellVol
+
+// Cumulative Volume Delta (CVD) tracking per session
+var float sessionCvd = 0.0
+isNewSession = ta.change(time("D")) != 0
+if isNewSession
+    sessionCvd := barDelta
+else
+    sessionCvd := sessionCvd + barDelta
+
+// Order Flow Metrics:
+// 1. Bullish Aggressive Delta: Delta is positive and accelerating
+deltaEma = ta.ema(barDelta, 9)
+isPositiveDelta = barDelta > 0
+isNegativeDelta = barDelta < 0
+isAggressiveBullDelta = barDelta > 0 and barDelta >= deltaEma
+isAggressiveBearDelta = barDelta < 0 and barDelta <= deltaEma
+
+// 2. Order Flow Absorption (Crucial for eliminating premature Stop Losses):
+// Bullish Absorption: Price swept new low (or lower low), but sellers got absorbed!
+// (Delta is positive OR session CVD turns upwards while price made a low wick)
+bullishAbsorption = (low <= low[1] or low <= ta.lowest(low, 3)[1]) and (close > open or lowerWickLen >= candleSpread * 0.35) and (barDelta > 0 or sessionCvd > sessionCvd[1])
+
+// Bearish Absorption: Price pushed into high (or higher high), but buyers trapped at the top!
+bearishAbsorption = (high >= high[1] or high >= ta.highest(high, 3)[1]) and (close < open or upperWickLen >= candleSpread * 0.35) and (barDelta < 0 or sessionCvd < sessionCvd[1])
+
+// 3. CVD Divergence:
+// Price drops to a swing low, but CVD makes a HIGHER LOW (Smart Money Accumulation)
+cvdLowest5 = ta.lowest(sessionCvd, 5)
+priceLowest5 = ta.lowest(low, 5)
+bullCvdDivergence = (low <= priceLowest5) and (sessionCvd > cvdLowest5[1])
+
+// Price pushes to a swing high, but CVD makes a LOWER HIGH (Smart Money Distribution)
+cvdHighest5 = ta.highest(sessionCvd, 5)
+priceHighest5 = ta.highest(high, 5)
+bearCvdDivergence = (high >= priceHighest5) and (sessionCvd < cvdHighest5[1])
+
+// Master Order Flow Filters for Entries:
+orderFlowBullConfirmed = not useOrderFlowFilter or (isPositiveDelta or bullishAbsorption or (requireCvdDivergence and bullCvdDivergence))
+orderFlowBearConfirmed = not useOrderFlowFilter or (isNegativeDelta or bearishAbsorption or (requireCvdDivergence and bearCvdDivergence))
+
 // Volume Expansion & Institutional Displacement Filters
 volEma20          = ta.ema(volume, 20)
 isVolumeExpanded  = not useVolumeDisplace or (volume >= volEma20 * volMultInput)
@@ -796,9 +857,9 @@ bearBreakoutRetest = not na(lastBearBreakoutLevel) and (bar_index - lastBearBrea
 isBullChochOrBos = triggeredBullShift and close > open
 isBearChochOrBos = triggeredBearShift and close < open
 
-// Complete Trigger: Immediate CHoCH/BOS Shift OR Retest OR Sweep OR OB/FVG touch OR HTF confluence
-sniperBuyTrigger  = isBullChochOrBos or (bullTrend and (bullBreakoutRetest or (sweepLow and close > open) or obDemandTouch or fvgDemandRetest)) or htfMajorBuy
-sniperSellTrigger = not isOption and (isBearChochOrBos or (bearTrend and (bearBreakoutRetest or (sweepHigh and close < open) or obSupplyTouch or fvgSupplyRetest)) or htfMajorSell)
+// Complete Trigger: Immediate CHoCH/BOS Shift OR Retest OR Sweep OR OB/FVG touch OR HTF confluence + Order Flow
+sniperBuyTrigger  = orderFlowBullConfirmed and (isBullChochOrBos or (bullTrend and (bullBreakoutRetest or (sweepLow and close > open) or obDemandTouch or fvgDemandRetest)) or htfMajorBuy)
+sniperSellTrigger = not isOption and orderFlowBearConfirmed and (isBearChochOrBos or (bearTrend and (bearBreakoutRetest or (sweepHigh and close < open) or obSupplyTouch or fvgSupplyRetest)) or htfMajorSell)
 
 // Direct Execution & Retest Management
 if enableSniperEngine and not inTrade and (bar_index - lastExitBar >= cooldownBarsInput)
@@ -914,13 +975,13 @@ if inTrade
                 label.new(bar_index, high, "SL HIT", style=label.style_label_down, color=color(na), textcolor=color.red, size=size.small)
 
 // Top-Right Scoreboard Table
-var table dash = table.new(position.top_right, 2, 6, bgcolor=color.new(#131722, 10), border_color=color.new(#2a2e39, 40), border_width=1)
+var table dash = table.new(position.top_right, 2, 7, bgcolor=color.new(#131722, 10), border_color=color.new(#2a2e39, 40), border_width=1)
 
 if showSniperScoreboard and barstate.islast
     totalTrades = totalWins + totalLosses
     winRate     = totalTrades > 0 ? (totalWins / totalTrades) * 100.0 : 0.0
 
-    table.cell(dash, 0, 0, "SMC SNIPER ENGINE", bgcolor=color.new(#1e222d, 0), text_color=color.white, text_size=size.small)
+    table.cell(dash, 0, 0, "SMC SNIPER + ORDER FLOW", bgcolor=color.new(#1e222d, 0), text_color=color.white, text_size=size.small)
     table.merge_cells(dash, 0, 0, 1, 0)
 
     table.cell(dash, 0, 1, "Win Rate", text_color=color.silver, text_size=size.small)
@@ -939,6 +1000,12 @@ if showSniperScoreboard and barstate.islast
 
     table.cell(dash, 0, 5, "Tight SL", text_color=color.silver, text_size=size.small)
     table.cell(dash, 1, 5, inTrade ? str.tostring(stopLossPrice, "#.##") : (pendingOrder ? str.tostring(pendingSL, "#.##") : "--"), text_color=color.maroon, text_size=size.small)
+
+    // Order Flow / Delta HUD Indicator
+    string ofStatus = bullishAbsorption ? "BULL ABSORPTION" : (bearishAbsorption ? "BEAR ABSORPTION" : (barDelta > 0 ? "BUY DELTA (+)" : "SELL DELTA (-)"))
+    color ofColor   = (bullishAbsorption or barDelta > 0) ? color.teal : color.maroon
+    table.cell(dash, 0, 6, "Order Flow / CVD", text_color=color.silver, text_size=size.small)
+    table.cell(dash, 1, 6, ofStatus, bgcolor=color.new(ofColor, 50), text_color=color.white, text_size=size.small)
 
 //---------------------------------------------------------------------------------------------------------------------}
 // ALERTS

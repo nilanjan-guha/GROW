@@ -242,17 +242,18 @@ class StrategyLearningEngine:
                     except Exception:
                         as_of_num = float(as_of_ts)
 
+                # STRICT POINT-IN-TIME LEARNING:
+                # Only include trades where outcome completion time (closed_at) is known and <= as_of_num.
+                # Never fall back to entry timestamp!
                 c.execute("""
                     SELECT strategy, outcome 
                     FROM historical_signals 
                     WHERE outcome IS NOT NULL 
                       AND outcome != 'ACTIVE' 
-                      AND (
-                        (closed_at IS NOT NULL AND closed_at <= ?)
-                        OR (closed_at IS NULL AND (timestamp <= ? OR last_candle_time <= ?))
-                      )
+                      AND closed_at IS NOT NULL 
+                      AND closed_at <= ?
                       AND strategy = ?
-                """, (as_of_num, as_of_num, as_of_num, strategy))
+                """, (as_of_num, strategy))
                 hist_rows = c.fetchall()
                 conn.close()
                 if len(hist_rows) < StrategyLearningEngine.MIN_OBSERVATIONS:

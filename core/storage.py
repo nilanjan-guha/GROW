@@ -644,6 +644,9 @@ def get_strategy_performance_stats(as_of_ts=None):
                 except Exception:
                     as_of_num = float(as_of_ts)
 
+            # STRICT POINT-IN-TIME LEARNING:
+            # Only include trades where outcome completion time (closed_at) is known and <= as_of_num.
+            # Never fall back to entry timestamp, which leaks trades that completed after as_of_num!
             cursor.execute("""
                 SELECT 
                     strategy,
@@ -654,12 +657,10 @@ def get_strategy_performance_stats(as_of_ts=None):
                 FROM historical_signals 
                 WHERE outcome IS NOT NULL 
                   AND outcome != 'ACTIVE' 
-                  AND (
-                    (closed_at IS NOT NULL AND closed_at <= ?)
-                    OR (closed_at IS NULL AND (timestamp <= ? OR last_candle_time <= ?))
-                  )
+                  AND closed_at IS NOT NULL 
+                  AND closed_at <= ?
                 GROUP BY strategy
-            """, (as_of_num, as_of_num, as_of_num))
+            """, (as_of_num,))
             rows = []
             for r in cursor.fetchall():
                 d = dict(r)

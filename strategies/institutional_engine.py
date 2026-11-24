@@ -222,26 +222,29 @@ class InstitutionalStrategyEngine:
                 })
             
             # Lifecycle state progression for candles subsequent to creation:
-            # - TOUCH 0-50% into zone: PARTIALLY_MITIGATED (wick enters upper/lower half)
-            # - PIERCE past mid (50% equilibrium): FULLY_MITIGATED
-            # - PIERCE past bottom (bull) or top (bear): INVALIDATED
+            # - ACTIVE: zone untouched (l_curr > ob["top"] for demand; h_curr < ob["bottom"] for supply)
+            # - PARTIALLY_MITIGATED: price wicks or trades into zone (l_curr <= ob["top"] and l_curr >= ob["bottom"] for demand; h_curr >= ob["bottom"] and h_curr <= ob["top"] for supply)
+            # - FULLY_MITIGATED: price completely traverses the zone (l_curr < ob["bottom"] for demand; h_curr > ob["top"] for supply)
+            # - INVALIDATED: candle CLOSE breaches the structural invalidation boundary (c_curr < ob["bottom"] for demand; c_curr > ob["top"] for supply)
             for ob in active_bull_obs:
-                if ob["created_at_idx"] < k and ob["state"] in ("ACTIVE", "PARTIALLY_MITIGATED", "FULLY_MITIGATED"):
-                    if l_curr < ob["bottom"]:
+                if ob["created_at_idx"] < k and ob["state"] not in ("INVALIDATED",):
+                    if c_curr < ob["bottom"]:
                         ob["state"] = "INVALIDATED"
-                    elif l_curr <= ob["mid"]:
+                    elif l_curr < ob["bottom"]:
                         ob["state"] = "FULLY_MITIGATED"
                     elif l_curr <= ob["top"]:
-                        ob["state"] = "PARTIALLY_MITIGATED"
+                        if ob["state"] == "ACTIVE":
+                            ob["state"] = "PARTIALLY_MITIGATED"
             
             for ob in active_bear_obs:
-                if ob["created_at_idx"] < k and ob["state"] in ("ACTIVE", "PARTIALLY_MITIGATED", "FULLY_MITIGATED"):
-                    if h_curr > ob["top"]:
+                if ob["created_at_idx"] < k and ob["state"] not in ("INVALIDATED",):
+                    if c_curr > ob["top"]:
                         ob["state"] = "INVALIDATED"
-                    elif h_curr >= ob["mid"]:
+                    elif h_curr > ob["top"]:
                         ob["state"] = "FULLY_MITIGATED"
                     elif h_curr >= ob["bottom"]:
-                        ob["state"] = "PARTIALLY_MITIGATED"
+                        if ob["state"] == "ACTIVE":
+                            ob["state"] = "PARTIALLY_MITIGATED"
 
         # Relevant Order Blocks:
         # Demand OB must be BELOW or touching current price (cannot be above current price for Bullish!)

@@ -137,8 +137,11 @@ class OpportunityRankingEngine:
                 c_6 = float(sc.iloc[-6])
                 rs_accel_6 = round(((sc.iloc[-1] - c_6) / c_6) * 100, 2) if c_6 > 0 else 0.0
 
-        # Synchronize Sector Index (e.g. ^NSEBANK, ^CNXIT) if dataframe provided
+        # Synchronize Sector Index (e.g. ^NSEBANK, ^CNXIT) strictly to exact matching completed candle timestamp
         actual_sector_pct = float(sector_change_pct)
+        is_sector_aligned = False
+        sector_rs_available = False
+
         if sector_df is not None and not sector_df.empty:
             sec_df_c = sector_df.copy()
             if not pd.api.types.is_datetime64_any_dtype(sec_df_c.index):
@@ -152,30 +155,38 @@ class OpportunityRankingEngine:
                 pass
             today_sec = sec_df_c[sec_df_c.index.date == today_date] if today_date else sec_df_c
             if not today_sec.empty and len(today_sec) >= 2:
-                sec_joined = pd.DataFrame({"stock_c": today_stock['Close']}).join(
-                    pd.DataFrame({"sec_c": today_sec['Close']}), how="inner"
-                ).dropna()
-                if not sec_joined.empty:
-                    sec_open = float(today_sec['Open'].iloc[0])
-                    sec_last = float(sec_joined['sec_c'].iloc[-1])
-                    actual_sector_pct = float(((sec_last - sec_open) / sec_open) * 100) if sec_open > 0 else actual_sector_pct
+                # STRICT TIMESTAMP EQUALITY: Latest sector completed candle must match latest stock completed candle
+                latest_sec_ts = today_sec.index[-1]
+                latest_stock_ts = today_stock.index[-1]
+                if latest_sec_ts == latest_stock_ts:
+                    sec_joined = pd.DataFrame({"stock_c": today_stock['Close']}).join(
+                        pd.DataFrame({"sec_c": today_sec['Close']}), how="inner"
+                    ).dropna()
+                    if not sec_joined.empty:
+                        sec_open = float(today_sec['Open'].iloc[0])
+                        sec_last = float(sec_joined['sec_c'].iloc[-1])
+                        actual_sector_pct = float(((sec_last - sec_open) / sec_open) * 100) if sec_open > 0 else 0.0
+                        is_sector_aligned = True
+                        sector_rs_available = True
 
         rs_nifty = round(stock_change_pct - nifty_change_pct, 2) if is_aligned else 0.0
-        rs_sector = round(stock_change_pct - actual_sector_pct, 2)
-        sector_rs_nifty = round(actual_sector_pct - nifty_change_pct, 2) if is_aligned else 0.0
+        rs_sector = round(stock_change_pct - actual_sector_pct, 2) if is_sector_aligned else 0.0
+        sector_rs_nifty = round(actual_sector_pct - nifty_change_pct, 2) if (is_aligned and is_sector_aligned) else 0.0
 
         return {
             "stock_change_pct": round(stock_change_pct, 2),
-            "sector_change_pct": round(actual_sector_pct, 2),
-            "nifty_change_pct": round(nifty_change_pct, 2),
+            "sector_change_pct": round(actual_sector_pct, 2) if is_sector_aligned else None,
+            "nifty_change_pct": round(nifty_change_pct, 2) if is_aligned else None,
             "rs_nifty": rs_nifty,
             "rs_sector": rs_sector,
             "sector_rs_nifty": sector_rs_nifty,
+            "sector_rs_available": sector_rs_available,
             "rs_accel_3": rs_accel_3,
             "rs_accel_6": rs_accel_6,
             "rs_accel": rs_accel_3,
             "is_aligned": is_aligned,
-            "alignment_status": "ALIGNED" if is_aligned else "DATA_MISALIGNED"
+            "is_sector_aligned": is_sector_aligned,
+            "alignment_status": "ALIGNED" if (is_aligned and (sector_df is None or is_sector_aligned)) else "DATA_MISALIGNED"
         }
 
     @staticmethod

@@ -245,12 +245,19 @@ class MarketValidator:
             s_slice = df_eval[df_eval['Date'] == s_date]
             n_bars = len(s_slice)
             
-            # Check timestamps alignment to 5-minute boundaries (minutes % 5 == 0 or 15)
-            s_minutes = [t.minute for t in s_slice.index]
-            unaligned_bars = sum(1 for m in s_minutes if m % 5 != 0)
+            # Check timestamps alignment to exact 5-minute boundaries:
+            # - seconds == 0 and microseconds == 0
+            # - minute % 5 == 0
+            # - time between 09:15 and 15:30 IST
+            unaligned_bars = 0
+            for t in s_slice.index:
+                if t.second != 0 or t.microsecond != 0 or (t.minute % 5 != 0):
+                    unaligned_bars += 1
+                elif (t.hour < 9 or (t.hour == 9 and t.minute < 15)) or (t.hour > 15 or (t.hour == 15 and t.minute > 30)):
+                    unaligned_bars += 1
             if unaligned_bars > 0:
                 has_intraday_data_corruption = True
-                corrupt_session_reason = f"Session {s_date} contains {unaligned_bars} non-5-minute aligned candle timestamps"
+                corrupt_session_reason = f"Session {s_date} contains {unaligned_bars} non-5-minute aligned or off-market candle timestamps"
                 break
 
             # Evaluate intraday intervals between consecutive candles within the SAME session
