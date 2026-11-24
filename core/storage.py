@@ -391,9 +391,28 @@ def evaluate_open_outcomes(data_map, force_eod=False):
                                 tp1_hit = 1
                                 tp1_hit_time = c_ts
                                 sl = max(sl, entry)
-                                # Chronology: TP1 was touched during this candle after the open.
-                                # Check if TP2 was also touched during this same candle
-                                if tp2 and c_high >= tp2:
+                                # Chronology & Same-Candle Ambiguity:
+                                # TP1 was touched during this candle. Now check remaining 50% position against breakeven stop (sl) and TP2:
+                                hit_tp2_same_candle = bool(tp2 and c_high >= tp2)
+                                hit_be_same_candle = bool(c_low <= sl)
+
+                                if hit_tp2_same_candle and hit_be_same_candle:
+                                    # Both TP2 and BE stop touched in the same candle:
+                                    # Intrabar sequence is ambiguous. Apply conservative stop-first principle (or partial win at BE).
+                                    outcome = "WIN_PARTIAL"
+                                    final_pnl = round(0.5 * (tp1 - entry) + 0.5 * (sl - entry), 2)
+                                    brokerage_costs = est_costs
+                                    net_pnl = round(final_pnl - brokerage_costs, 2)
+                                    break
+                                elif hit_be_same_candle:
+                                    # After hitting TP1, price retraced to breakeven stop within the same candle
+                                    outcome = "WIN_PARTIAL"
+                                    final_pnl = round(0.5 * (tp1 - entry) + 0.5 * (sl - entry), 2)
+                                    brokerage_costs = est_costs
+                                    net_pnl = round(final_pnl - brokerage_costs, 2)
+                                    break
+                                elif hit_tp2_same_candle:
+                                    # TP2 touched with low remaining strictly above breakeven stop
                                     tp2_hit = 1
                                     tp2_hit_time = c_ts
                                     outcome = "WIN_FULL"
@@ -401,7 +420,7 @@ def evaluate_open_outcomes(data_map, force_eod=False):
                                     brokerage_costs = est_costs
                                     net_pnl = round(final_pnl - brokerage_costs, 2)
                                     break
-                                # If TP2 not reached, remaining 50% continues with trailing BE stop (sl) for subsequent candles
+                                # If neither TP2 nor BE stop touched, remaining 50% continues ACTIVE with trailing BE stop for subsequent candles
 
                     elif direction == "SELL":
                         mfe = max(mfe, entry - c_low)
@@ -468,7 +487,28 @@ def evaluate_open_outcomes(data_map, force_eod=False):
                                 tp1_hit = 1
                                 tp1_hit_time = c_ts
                                 sl = min(sl, entry)
-                                if tp2 and c_low <= tp2:
+                                # Chronology & Same-Candle Ambiguity:
+                                # TP1 was touched during this candle. Now check remaining 50% position against breakeven stop (sl) and TP2:
+                                hit_tp2_same_candle = bool(tp2 and c_low <= tp2)
+                                hit_be_same_candle = bool(c_high >= sl)
+
+                                if hit_tp2_same_candle and hit_be_same_candle:
+                                    # Both TP2 and BE stop touched in the same candle:
+                                    # Intrabar sequence is ambiguous. Apply conservative stop-first principle (exit at BE).
+                                    outcome = "WIN_PARTIAL"
+                                    final_pnl = round(0.5 * (entry - tp1) + 0.5 * (entry - sl), 2)
+                                    brokerage_costs = est_costs
+                                    net_pnl = round(final_pnl - brokerage_costs, 2)
+                                    break
+                                elif hit_be_same_candle:
+                                    # After hitting TP1, price pulled back to breakeven stop within the same candle
+                                    outcome = "WIN_PARTIAL"
+                                    final_pnl = round(0.5 * (entry - tp1) + 0.5 * (entry - sl), 2)
+                                    brokerage_costs = est_costs
+                                    net_pnl = round(final_pnl - brokerage_costs, 2)
+                                    break
+                                elif hit_tp2_same_candle:
+                                    # TP2 touched with high remaining strictly below breakeven stop
                                     tp2_hit = 1
                                     tp2_hit_time = c_ts
                                     outcome = "WIN_FULL"
@@ -545,7 +585,20 @@ def evaluate_open_outcomes(data_map, force_eod=False):
                                     tp1_hit = 1
                                     tp1_hit_time = c_ts
                                     sl = max(sl, entry)
-                                    if tp2 and c_high >= tp2:
+                                    hit_tp2_same_candle = bool(tp2 and c_high >= tp2)
+                                    hit_be_same_candle = bool(c_low <= sl)
+
+                                    if hit_tp2_same_candle and hit_be_same_candle:
+                                        outcome = "WIN_PARTIAL"
+                                        final_pnl = round(0.5 * (tp1 - entry) + 0.5 * (sl - entry), 2)
+                                        brokerage_costs = est_costs
+                                        net_pnl = round(final_pnl - brokerage_costs, 2)
+                                    elif hit_be_same_candle:
+                                        outcome = "WIN_PARTIAL"
+                                        final_pnl = round(0.5 * (tp1 - entry) + 0.5 * (sl - entry), 2)
+                                        brokerage_costs = est_costs
+                                        net_pnl = round(final_pnl - brokerage_costs, 2)
+                                    elif hit_tp2_same_candle:
                                         tp2_hit = 1
                                         tp2_hit_time = c_ts
                                         outcome = "WIN_FULL"
@@ -609,7 +662,20 @@ def evaluate_open_outcomes(data_map, force_eod=False):
                                     tp1_hit = 1
                                     tp1_hit_time = c_ts
                                     sl = min(sl, entry)
-                                    if tp2 and c_low <= tp2:
+                                    hit_tp2_same_candle = bool(tp2 and c_low <= tp2)
+                                    hit_be_same_candle = bool(c_high >= sl)
+
+                                    if hit_tp2_same_candle and hit_be_same_candle:
+                                        outcome = "WIN_PARTIAL"
+                                        final_pnl = round(0.5 * (entry - tp1) + 0.5 * (entry - sl), 2)
+                                        brokerage_costs = est_costs
+                                        net_pnl = round(final_pnl - brokerage_costs, 2)
+                                    elif hit_be_same_candle:
+                                        outcome = "WIN_PARTIAL"
+                                        final_pnl = round(0.5 * (entry - tp1) + 0.5 * (entry - sl), 2)
+                                        brokerage_costs = est_costs
+                                        net_pnl = round(final_pnl - brokerage_costs, 2)
+                                    elif hit_tp2_same_candle:
                                         tp2_hit = 1
                                         tp2_hit_time = c_ts
                                         outcome = "WIN_FULL"

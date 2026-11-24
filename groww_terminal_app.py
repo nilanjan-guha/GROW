@@ -995,7 +995,7 @@ def smc_scan():
                     "expected_entry_price": exp_entry,
                     "actual_entry_price": None,
                     "entry_timestamp": None,
-                    "execution_status": "PENDING_FILL"
+                    "execution_status": "SIGNAL_GENERATED"
                 })
                 res["signal_id"] = signal_id
                 # Instantly cache to active_signals_map
@@ -1520,7 +1520,7 @@ def log_confirmed_signal_endpoint():
             "expected_entry_price": exp_entry,
             "actual_entry_price": exp_entry,
             "entry_timestamp": time.time(),
-            "execution_status": "EXECUTED_SIMULATED"
+            "execution_status": "PAPER_FILLED"
         })
 
         # Cache in memory

@@ -650,10 +650,10 @@ class TestIntradayScreenerCore(unittest.TestCase):
         self.assertEqual(sig["final_pnl"], -20.0)
 
     def test_same_candle_tp1_does_not_falsely_trigger_pre_tp1_open_breakeven(self):
-        # Regression test for P0 audit bug:
-        # A candle opens below entry price (e.g. at 995 for entry 1000, orig_sl 990, tp1 1010).
-        # During the candle, price rallies to 1015 (touching TP1).
-        # The candle's Open (995) MUST NOT be treated as a breakeven exit since it occurred BEFORE TP1!
+        # When a candle touches both TP1 and breakeven stop:
+        # In a single completed bar, it is impossible to know whether the low occurred before TP1 or after TP1.
+        # Under conservative accounting, touching both TP1 and breakeven stop in the same bar yields WIN_PARTIAL
+        # (50% locked at TP1, 50% stopped at breakeven), NOT a full loss or premature gap exit at open.
         sig_id = storage.log_signal({
             "symbol": "TEST_CHRONO.NS",
             "direction": "BUY",
@@ -685,11 +685,54 @@ class TestIntradayScreenerCore(unittest.TestCase):
 
         conn = storage.get_db_connection()
         cursor = conn.cursor()
+        cursor.execute("SELECT outcome, tp1_hit, tp2_hit, current_stop_loss, final_pnl FROM historical_signals WHERE id = ?", (sig_id,))
+        sig = cursor.fetchone()
+        conn.close()
+
+        # Trade exits as WIN_PARTIAL under conservative same-candle breakeven sequence, with final_pnl calculated at BE (5.0), NOT open exit!
+        self.assertEqual(sig["tp1_hit"], 1)
+        self.assertEqual(sig["outcome"], "WIN_PARTIAL")
+        self.assertEqual(sig["final_pnl"], 5.0)
+
+    def test_same_candle_tp1_without_touching_breakeven_remains_active(self):
+        # When a candle reaches TP1 and its Low remains strictly above breakeven stop (sl = entry = 1000.0),
+        # the remaining 50% position MUST remain ACTIVE with current_stop_loss updated to breakeven!
+        sig_id = storage.log_signal({
+            "symbol": "TEST_STILL_ACTIVE.NS",
+            "direction": "BUY",
+            "strategy": "SMC_PULLBACK",
+            "entry_price": 1000.0,
+            "stop_loss": 990.0,
+            "target_1": 1010.0,
+            "target_2": 1030.0
+        })
+
+        conn = storage.get_db_connection()
+        c = conn.cursor()
+        one_hour_ago = time.time() - 3600
+        c.execute("UPDATE historical_signals SET timestamp = ?, last_candle_time = ? WHERE id = ?", (one_hour_ago, one_hour_ago, sig_id))
+        conn.commit()
+        conn.close()
+
+        # Candle opens at 1002, rallies to High 1015 (hits TP1), Low 1001 (strictly above BE 1000), Close 1012.
+        c_time = pd.to_datetime(one_hour_ago + 300, unit='s', utc=True).tz_convert('Asia/Kolkata')
+        df_candle = pd.DataFrame({
+            "Open": [1002.0],
+            "High": [1015.0],
+            "Low": [1001.0],
+            "Close": [1012.0],
+            "Volume": [15000]
+        }, index=pd.DatetimeIndex([c_time]))
+
+        storage.evaluate_open_outcomes({"TEST_STILL_ACTIVE.NS": df_candle})
+
+        conn = storage.get_db_connection()
+        cursor = conn.cursor()
         cursor.execute("SELECT outcome, tp1_hit, tp2_hit, current_stop_loss FROM historical_signals WHERE id = ?", (sig_id,))
         sig = cursor.fetchone()
         conn.close()
 
-        # Trade MUST remain ACTIVE (tp1_hit = 1, stop moved to breakeven 1000.0), NOT falsely closed at 995!
+        # Trade MUST remain ACTIVE (tp1_hit = 1, stop moved to breakeven 1000.0)
         self.assertEqual(sig["tp1_hit"], 1)
         self.assertEqual(sig["outcome"], "ACTIVE")
         self.assertEqual(sig["current_stop_loss"], 1000.0)
@@ -738,6 +781,161 @@ class TestIntradayScreenerCore(unittest.TestCase):
         self.assertEqual(sig["outcome"], "WIN_PARTIAL")
         # Final PnL = 0.5 * (1010 - 1000) + 0.5 * (996 - 1000) = 5.0 - 2.0 = 3.0
         self.assertEqual(sig["final_pnl"], 3.0)
+
+    def test_same_candle_tp1_tp2_and_breakeven_ambiguity_conservative_partial_win(self):
+        # Scenario:
+        # BUY Entry: 1000, SL: 990, TP1: 1010, TP2: 1025
+        # Candle: Open 1003, High 1030 (touches TP1 & TP2), Low 998 (touches breakeven 1000)
+        # Outcome MUST be conservative WIN_PARTIAL (stop-first assumption), NOT WIN_FULL!
+        sig_id = storage.log_signal({
+            "symbol": "TEST_AMBIG_BUY.NS",
+            "direction": "BUY",
+            "strategy": "SMC_PULLBACK",
+            "entry_price": 1000.0,
+            "stop_loss": 990.0,
+            "target_1": 1010.0,
+            "target_2": 1025.0
+        })
+
+        conn = storage.get_db_connection()
+        c = conn.cursor()
+        one_hour_ago = time.time() - 3600
+        c.execute("UPDATE historical_signals SET timestamp = ?, last_candle_time = ? WHERE id = ?", (one_hour_ago, one_hour_ago, sig_id))
+        conn.commit()
+        conn.close()
+
+        c_time = pd.to_datetime(one_hour_ago + 300, unit='s', utc=True).tz_convert('Asia/Kolkata')
+        df_candle = pd.DataFrame({
+            "Open": [1003.0], "High": [1030.0], "Low": [998.0], "Close": [1020.0], "Volume": [25000]
+        }, index=pd.DatetimeIndex([c_time]))
+
+        storage.evaluate_open_outcomes({"TEST_AMBIG_BUY.NS": df_candle})
+
+        conn = storage.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT outcome, tp1_hit, tp2_hit, final_pnl FROM historical_signals WHERE id = ?", (sig_id,))
+        sig = cursor.fetchone()
+        conn.close()
+
+        self.assertEqual(sig["outcome"], "WIN_PARTIAL")
+        self.assertEqual(sig["tp1_hit"], 1)
+        self.assertEqual(sig["tp2_hit"], 0)
+        # PnL: 0.5 * (1010 - 1000) + 0.5 * (1000 - 1000) = 5.0
+        self.assertEqual(sig["final_pnl"], 5.0)
+
+    def test_same_candle_tp1_and_breakeven_touched_without_tp2_exits_partial_win(self):
+        # Scenario:
+        # BUY Entry: 1000, SL: 990, TP1: 1010, TP2: 1030
+        # Candle: Open 1002, High 1015 (hits TP1, but NOT TP2), Low 998 (hits BE 1000)
+        # Outcome MUST be WIN_PARTIAL at breakeven stop, rather than remaining open
+        sig_id = storage.log_signal({
+            "symbol": "TEST_BE_TOUCH.NS",
+            "direction": "BUY",
+            "strategy": "SMC_PULLBACK",
+            "entry_price": 1000.0,
+            "stop_loss": 990.0,
+            "target_1": 1010.0,
+            "target_2": 1030.0
+        })
+
+        conn = storage.get_db_connection()
+        c = conn.cursor()
+        one_hour_ago = time.time() - 3600
+        c.execute("UPDATE historical_signals SET timestamp = ?, last_candle_time = ? WHERE id = ?", (one_hour_ago, one_hour_ago, sig_id))
+        conn.commit()
+        conn.close()
+
+        c_time = pd.to_datetime(one_hour_ago + 300, unit='s', utc=True).tz_convert('Asia/Kolkata')
+        df_candle = pd.DataFrame({
+            "Open": [1002.0], "High": [1015.0], "Low": [998.0], "Close": [1005.0], "Volume": [25000]
+        }, index=pd.DatetimeIndex([c_time]))
+
+        storage.evaluate_open_outcomes({"TEST_BE_TOUCH.NS": df_candle})
+
+        conn = storage.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT outcome, tp1_hit, final_pnl FROM historical_signals WHERE id = ?", (sig_id,))
+        sig = cursor.fetchone()
+        conn.close()
+
+        self.assertEqual(sig["outcome"], "WIN_PARTIAL")
+        self.assertEqual(sig["tp1_hit"], 1)
+        self.assertEqual(sig["final_pnl"], 5.0)
+
+    def test_sell_same_candle_tp1_tp2_and_breakeven_ambiguity_conservative_partial_win(self):
+        # SELL Scenario:
+        # Entry: 1000, SL: 1010, TP1: 990, TP2: 975
+        # Candle: Open 998, Low 970 (hits TP1 & TP2), High 1002 (hits BE 1000)
+        sig_id = storage.log_signal({
+            "symbol": "TEST_AMBIG_SELL.NS",
+            "direction": "SELL",
+            "strategy": "SMC_BREAKDOWN",
+            "entry_price": 1000.0,
+            "stop_loss": 1010.0,
+            "target_1": 990.0,
+            "target_2": 975.0
+        })
+
+        conn = storage.get_db_connection()
+        c = conn.cursor()
+        one_hour_ago = time.time() - 3600
+        c.execute("UPDATE historical_signals SET timestamp = ?, last_candle_time = ? WHERE id = ?", (one_hour_ago, one_hour_ago, sig_id))
+        conn.commit()
+        conn.close()
+
+        c_time = pd.to_datetime(one_hour_ago + 300, unit='s', utc=True).tz_convert('Asia/Kolkata')
+        df_candle = pd.DataFrame({
+            "Open": [998.0], "High": [1002.0], "Low": [970.0], "Close": [980.0], "Volume": [25000]
+        }, index=pd.DatetimeIndex([c_time]))
+
+        storage.evaluate_open_outcomes({"TEST_AMBIG_SELL.NS": df_candle})
+
+        conn = storage.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT outcome, tp1_hit, tp2_hit, final_pnl FROM historical_signals WHERE id = ?", (sig_id,))
+        sig = cursor.fetchone()
+        conn.close()
+
+        self.assertEqual(sig["outcome"], "WIN_PARTIAL")
+        self.assertEqual(sig["tp1_hit"], 1)
+        self.assertEqual(sig["tp2_hit"], 0)
+        # PnL for SELL: 0.5 * (1000 - 990) + 0.5 * (1000 - 1000) = 5.0
+        self.assertEqual(sig["final_pnl"], 5.0)
+
+    def test_dict_input_same_candle_tp1_and_breakeven_ambiguity(self):
+        # Case B (Dictionary input) should behave identically to DataFrame input
+        sig_id = storage.log_signal({
+            "symbol": "TEST_DICT_AMBIG.NS",
+            "direction": "BUY",
+            "strategy": "SMC_PULLBACK",
+            "entry_price": 1000.0,
+            "stop_loss": 990.0,
+            "target_1": 1010.0,
+            "target_2": 1025.0
+        })
+
+        conn = storage.get_db_connection()
+        c = conn.cursor()
+        one_hour_ago = time.time() - 3600
+        c.execute("UPDATE historical_signals SET timestamp = ?, last_candle_time = ? WHERE id = ?", (one_hour_ago, one_hour_ago, sig_id))
+        conn.commit()
+        conn.close()
+
+        dict_candle = {
+            "open": 1003.0, "high": 1030.0, "low": 998.0, "close": 1020.0, "volume": 25000,
+            "timestamp": one_hour_ago + 300, "is_completed": True
+        }
+
+        storage.evaluate_open_outcomes({"TEST_DICT_AMBIG.NS": dict_candle})
+
+        conn = storage.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT outcome, tp1_hit, tp2_hit, final_pnl FROM historical_signals WHERE id = ?", (sig_id,))
+        sig = cursor.fetchone()
+        conn.close()
+
+        self.assertEqual(sig["outcome"], "WIN_PARTIAL")
+        self.assertEqual(sig["final_pnl"], 5.0)
 
     def test_nifty_benchmark_fail_closed_gate(self):
         # Verify that compute_and_update_ranked_opportunities fails-closed when NIFTY feed is corrupted
