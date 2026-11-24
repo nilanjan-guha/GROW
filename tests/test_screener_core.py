@@ -61,6 +61,8 @@ class TestIntradayScreenerCore(unittest.TestCase):
         }, index=pd.DatetimeIndex(d_times))
 
     def tearDown(self):
+        from core.contract_master import ContractMaster
+        ContractMaster._DYNAMIC_CONTRACTS.clear()
         storage.DB_PATH = self.orig_db_path
         os.close(self.temp_db_fd)
         try:
@@ -1468,7 +1470,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
         self.assertEqual(hist_check["lot_size"], 250)
 
         # Reset dynamic contracts
-        ContractMaster._DYNAMIC_LOT_SIZES.clear()
+        ContractMaster._DYNAMIC_CONTRACTS.clear()
 
     def test_eod_squareoff_calculates_actual_exit_costs(self):
         # Verify that EOD auto-squareoff calculates brokerage and statutory costs at actual exit price
@@ -1564,6 +1566,83 @@ class TestIntradayScreenerCore(unittest.TestCase):
             IndianMarketCosts.calculate_multi_exit_costs(entry_price=float('nan'), exits=[(105.0, 50)], total_quantity=50)
         with self.assertRaises(ValueError):
             IndianMarketCosts.calculate_multi_exit_costs(entry_price=100.0, exits=[(105.0, 50)], total_quantity=-5)
+
+    def test_dynamic_contract_master_multi_expiry_registration_and_selection(self):
+        # Verify that multiple futures expiries for the same symbol do not overwrite each other
+        import datetime
+        from core.contract_master import ContractMaster
+
+        today = datetime.date.today()
+        exp_near = today + datetime.timedelta(days=7)
+        exp_far = today + datetime.timedelta(days=35)
+
+        # Register multiple expiries for MULTI_TEST
+        ContractMaster.register_dynamic_contracts({
+            f"MULTI_TEST:{exp_near}": {
+                "lot_size": 250,
+                "estimated_margin_pct": 0.22,
+                "expiry": str(exp_near),
+                "instrument_id": f"FUT-MULTI_TEST-{exp_near}"
+            },
+            f"MULTI_TEST:{exp_far}": {
+                "lot_size": 250,
+                "estimated_margin_pct": 0.25,
+                "expiry": str(exp_far),
+                "instrument_id": f"FUT-MULTI_TEST-{exp_far}"
+            }
+        })
+
+        # Query exact near expiry
+        near_spec = ContractMaster.get_contract_spec("MULTI_TEST", expiry=str(exp_near))
+        self.assertIsNotNone(near_spec)
+        self.assertEqual(near_spec["expiry"], exp_near)
+        self.assertEqual(near_spec["estimated_margin_pct"], 0.22)
+        self.assertEqual(near_spec["instrument_id"], f"FUT-MULTI_TEST-{exp_near}")
+
+        # Query exact far expiry
+        far_spec = ContractMaster.get_contract_spec("MULTI_TEST", expiry=str(exp_far))
+        self.assertIsNotNone(far_spec)
+        self.assertEqual(far_spec["expiry"], exp_far)
+        self.assertEqual(far_spec["estimated_margin_pct"], 0.25)
+        self.assertEqual(far_spec["instrument_id"], f"FUT-MULTI_TEST-{exp_far}")
+
+        # Query without explicit expiry -> defaults to nearest unexpired contract
+        default_spec = ContractMaster.get_contract_spec("MULTI_TEST")
+        self.assertIsNotNone(default_spec)
+        self.assertEqual(default_spec["expiry"], exp_near)
+
+    def test_dictionary_candle_enforces_clock_completion_independently(self):
+        # Verify that an unclosed live candle (is_completed omitted) is rejected when now < c_ts + 300
+        sym = "FUTURE_CANDLE_TEST.NS"
+        sig_id = storage.log_signal({
+            "symbol": sym, "direction": "BUY", "strategy": "Momentum",
+            "entry_price": 500.0, "stop_loss": 490.0, "target_1": 520.0, "target_2": 540.0
+        })
+
+        conn = storage.get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT timestamp FROM historical_signals WHERE id = ?", (sig_id,))
+        sig_ts = float(c.fetchone()["timestamp"])
+
+        # Feed supplies an ongoing active candle timestamped at now (has not closed yet)
+        ongoing_ts = time.time()
+        data_map = {
+            sym: {
+                "open": 500.0, "high": 525.0, "low": 498.0, "close": 522.0,
+                "timestamp": ongoing_ts
+                # is_completed is omitted: evaluator must enforce c_ts + 300 <= now and skip
+            }
+        }
+
+        # Evaluator must NOT process the unclosed candle
+        storage.evaluate_open_outcomes(data_map)
+
+        c.execute("SELECT outcome, tp1_hit FROM historical_signals WHERE id = ?", (sig_id,))
+        row = c.fetchone()
+        conn.close()
+
+        self.assertEqual(row["outcome"], "ACTIVE")
+        self.assertEqual(row["tp1_hit"], 0)
 
 if __name__ == '__main__':
     unittest.main()

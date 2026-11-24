@@ -463,7 +463,7 @@ def evaluate_candle_transition(direction, entry, orig_sl, sl, tp1, tp2, tp1_hit_
         "should_break": should_break
     }
 
-def evaluate_open_outcomes(data_map, force_eod=False):
+def evaluate_open_outcomes(data_map, force_eod=False, evaluation_time=None):
     """
     Evaluates all ACTIVE signals against chronological 5-minute OHLC candles formed strictly AFTER signal candle close.
     Supports either:
@@ -481,7 +481,7 @@ def evaluate_open_outcomes(data_map, force_eod=False):
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM historical_signals WHERE outcome = 'ACTIVE'")
         active_signals = cursor.fetchall()
-        now = time.time()
+        now = float(evaluation_time) if evaluation_time is not None else time.time()
         import datetime
         import pytz
         import pandas as pd
@@ -645,6 +645,20 @@ def evaluate_open_outcomes(data_map, force_eod=False):
                     except Exception:
                         continue
                 
+                # Check for duplicate timestamps and sort monotonically
+                if df.index.has_duplicates:
+                    df = df[~df.index.duplicated(keep='last')]
+                if not df.index.is_monotonic_increasing:
+                    df = df.sort_index()
+
+                # Normalize to Asia/Kolkata timezone awareness to avoid local server timezone skew
+                import pytz
+                ist = pytz.timezone('Asia/Kolkata')
+                if df.index.tz is None:
+                    df.index = df.index.tz_localize(ist)
+                elif str(df.index.tz) != 'Asia/Kolkata':
+                    df.index = df.index.tz_convert(ist)
+
                 # Iterate each completed candle formed strictly after the completed signal candle
                 now_ts = time.time()
                 for idx, (c_dt, row) in enumerate(df.iterrows()):
@@ -728,7 +742,19 @@ def evaluate_open_outcomes(data_map, force_eod=False):
                 except (ValueError, TypeError):
                     continue
 
-                is_completed = data.get("is_completed", (c_ts + 300 <= now))
+                # STRICT CANDLE COMPLETION & 5-MINUTE BOUNDARY ENFORCEMENT:
+                # 1. In live evaluation (data without explicit completion flag), candle must have closed (now >= c_ts + 300).
+                # 2. In replay or simulated feeds where is_completed is explicitly passed:
+                #    Reject if is_completed is False.
+                #    If is_completed is True, candle is evaluated as an authoritative closed bar.
+                is_completed = data.get("is_completed")
+                if is_completed is None:
+                    if c_ts + 300 > now:
+                        continue
+                    is_completed = True
+                elif is_completed is False:
+                    continue
+
                 if is_completed and c_ts > last_candle_time and c_ts >= eval_min_time:
                     raw_open = data.get("open")
                     raw_high = data.get("high")

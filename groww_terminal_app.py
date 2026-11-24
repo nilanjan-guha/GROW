@@ -736,11 +736,22 @@ def smc_scan():
         if not feed_val["is_valid"]:
             # Even when feed is rejected for active signal generation, populate basic technicals for the UI
             reject_smc = res.copy() if res else {}
+            
+            # Safe extraction of current price with strict finite check
+            curr_c = None
+            try:
+                raw_last_c = df['Close'].iloc[-1]
+                val_last_c = float(raw_last_c)
+                if math.isfinite(val_last_c) and val_last_c > 0:
+                    curr_c = val_last_c
+            except Exception:
+                curr_c = None
+
             reject_smc.update({
                 "action": "WAIT FOR ENTRY (NO TRADE)",
                 "verdict": f"FEED REJECTED: {feed_val['status']}",
                 "reasoning": feed_val["reason"],
-                "current_price": float(df['Close'].iloc[-1]),
+                "current_price": curr_c,
                 "signal_status": "NEUTRAL",
                 "signal_id": None,
                 "composite_score": 0,

@@ -75,40 +75,64 @@ class ContractMaster:
     Validates symbol F&O eligibility, dated lot sizes, and estimated baseline exchange margin rates.
     Supports dated historical circular tables as well as dynamic live ingestion from broker/exchange instrument masters.
     """
-    _DYNAMIC_LOT_SIZES = {}
+    _DYNAMIC_CONTRACTS = {}  # Key: (symbol, expiry) or (symbol, 'CURRENT') -> dict
+
+    # Backward compatibility property/dict for legacy tests that access _DYNAMIC_LOT_SIZES directly
+    class _DynamicLotSizesProxy(dict):
+        def clear(self_proxy):
+            ContractMaster._DYNAMIC_CONTRACTS.clear()
+            super().clear()
+
+    _DYNAMIC_LOT_SIZES = _DynamicLotSizesProxy()
 
     @classmethod
     def register_dynamic_contracts(cls, lot_size_map: dict):
         """
         Dynamically registers live contract specifications ingested from broker or exchange instrument masters.
+        Supports registering multiple futures expiries per underlying stock without overwrite.
+        
         Strictly validates:
         - Symbol must be non-empty string.
         - Lot size must be strictly positive int.
         - Margin percentage must be between 0.05 (5%) and 1.0 (100%).
-        - Expiry date, instrument token/identifier, source, and ingestion timestamp are tracked when provided.
+        - Expiry date, instrument token/identifier, source, and ingestion timestamp are tracked and validated.
         """
         if not isinstance(lot_size_map, dict):
             return
         import math
         today_date = datetime.date.today()
-        for sym, val in lot_size_map.items():
-            if not sym or not isinstance(sym, str):
+        for key, val in lot_size_map.items():
+            if not key or not isinstance(key, str):
                 continue
+
+            # Key can be clean symbol, e.g. 'RELIANCE', or composite 'RELIANCE:2026-11-26'
+            parts = key.split(":")
+            sym = parts[0]
             clean = sym.replace(".NS", "").strip().upper()
             if not clean:
                 continue
 
+            explicit_expiry = None
+            if len(parts) > 1:
+                try:
+                    explicit_expiry = pd.to_datetime(parts[1]).date()
+                except Exception:
+                    explicit_expiry = None
+
             if isinstance(val, int):
                 if val > 0:
-                    cls._DYNAMIC_LOT_SIZES[clean] = {
+                    spec_record = {
+                        "symbol": clean,
                         "lot_size": val,
                         "estimated_margin_pct": 0.20,
-                        "expiry": None,
-                        "instrument_id": f"FUT-{clean}-CURRENT",
+                        "expiry": explicit_expiry,
+                        "instrument_id": f"FUT-{clean}-{explicit_expiry or 'CURRENT'}",
                         "source": "BROKER_FEED",
                         "update_date": today_date,
                         "circular_ref": "NSE/FAOP/LIVE"
                     }
+                    exp_key = explicit_expiry or 'CURRENT'
+                    cls._DYNAMIC_CONTRACTS[(clean, exp_key)] = spec_record
             elif isinstance(val, dict):
                 try:
                     raw_lot = val.get("lot_size")
@@ -123,7 +147,7 @@ class ContractMaster:
                     if not (math.isfinite(margin_pct) and 0.05 <= margin_pct <= 1.0):
                         margin_pct = 0.20
 
-                    expiry = val.get("expiry")
+                    expiry = val.get("expiry") or explicit_expiry
                     if expiry is not None:
                         try:
                             expiry = pd.to_datetime(expiry).date()
@@ -132,9 +156,14 @@ class ContractMaster:
 
                     inst_id = str(val.get("instrument_id", f"FUT-{clean}-{expiry or 'CURRENT'}"))
                     source = str(val.get("source", "BROKER_FEED"))
-                    update_dt = val.get("update_date", today_date)
+                    raw_update_dt = val.get("update_date", today_date)
+                    try:
+                        update_dt = pd.to_datetime(raw_update_dt).date()
+                    except Exception:
+                        update_dt = today_date
 
-                    cls._DYNAMIC_LOT_SIZES[clean] = {
+                    spec_record = {
+                        "symbol": clean,
                         "lot_size": lot_size,
                         "estimated_margin_pct": margin_pct,
                         "expiry": expiry,
@@ -143,17 +172,22 @@ class ContractMaster:
                         "update_date": update_dt,
                         "circular_ref": str(val.get("circular_ref", "NSE/FAOP/LIVE"))
                     }
+                    exp_key = expiry or 'CURRENT'
+                    cls._DYNAMIC_CONTRACTS[(clean, exp_key)] = spec_record
                 except (ValueError, TypeError):
                     continue
 
     @classmethod
-    def get_contract_spec(cls, symbol, as_of_date=None):
+    def get_contract_spec(cls, symbol, as_of_date=None, expiry=None):
         """
         Retrieves the exact dated lot size and estimated baseline margin percentage for a symbol as of a specific date.
+        Optionally selects an explicit futures expiry contract.
         
         Clear Source-of-Truth Precedence Policy:
         1. When evaluating for the CURRENT trading date (as_of_date is None or today's date):
-           - Ingested dynamic live broker instrument master (_DYNAMIC_LOT_SIZES) takes precedence.
+           - Ingested dynamic live broker instrument master (_DYNAMIC_CONTRACTS) takes precedence.
+           - If an explicit expiry is requested, retrieves that exact contract (rejecting expired contracts).
+           - If no expiry requested, picks the nearest unexpired registered contract or 'CURRENT'.
            - Falls back to the latest entry in the historical circular table.
         2. When evaluating for a HISTORICAL date (as_of_date < today's date):
            - Strict historical circular table (NSE_CONTRACT_SPECS_HISTORY) on or before as_of_date is the sole source of truth.
@@ -165,7 +199,6 @@ class ContractMaster:
 
         clean_sym = symbol.replace(".NS", "").strip().upper()
         history = NSE_CONTRACT_SPECS_HISTORY.get(clean_sym)
-        dyn = cls._DYNAMIC_LOT_SIZES.get(clean_sym)
 
         # Parse and normalize as_of_date
         today = datetime.date.today()
@@ -185,20 +218,54 @@ class ContractMaster:
 
         is_current_date = (parsed_date is None or parsed_date >= today)
 
-        # 1. Current trading session: Dynamic live broker table takes precedence if present
-        if is_current_date and dyn:
-            return {
-                "symbol": clean_sym,
-                "lot_size": dyn["lot_size"],
-                "estimated_margin_pct": dyn["estimated_margin_pct"],
-                "margin_pct": dyn["estimated_margin_pct"],
-                "expiry": dyn.get("expiry"),
-                "instrument_id": dyn.get("instrument_id"),
-                "source": dyn.get("source", "BROKER_FEED"),
-                "update_date": dyn.get("update_date", today),
-                "effective_date": today,
-                "circular_ref": dyn.get("circular_ref", "NSE/FAOP/LIVE")
-            }
+        # 1. Current trading session: Dynamic live broker contracts take precedence if present
+        if is_current_date and cls._DYNAMIC_CONTRACTS:
+            # Parse requested expiry if supplied
+            target_expiry = None
+            if expiry is not None:
+                try:
+                    target_expiry = pd.to_datetime(expiry).date()
+                except Exception:
+                    target_expiry = None
+
+            # Filter dynamic contracts matching this symbol
+            matching_dyn = []
+            for (s, exp_k), spec in cls._DYNAMIC_CONTRACTS.items():
+                if s == clean_sym:
+                    matching_dyn.append(spec)
+
+            if matching_dyn:
+                chosen_dyn = None
+                if target_expiry is not None:
+                    # Find exact expiry match
+                    for m in matching_dyn:
+                        if m.get("expiry") == target_expiry:
+                            chosen_dyn = m
+                            break
+                else:
+                    # Sort by expiry, favoring unexpired upcoming contracts over expired
+                    unexpired = [m for m in matching_dyn if m.get("expiry") and m.get("expiry") >= today]
+                    if unexpired:
+                        unexpired.sort(key=lambda x: x["expiry"])
+                        chosen_dyn = unexpired[0]
+                    else:
+                        # Fallback to 'CURRENT' or first available
+                        curr_specs = [m for m in matching_dyn if m.get("expiry") is None]
+                        chosen_dyn = curr_specs[0] if curr_specs else matching_dyn[0]
+
+                if chosen_dyn:
+                    return {
+                        "symbol": clean_sym,
+                        "lot_size": chosen_dyn["lot_size"],
+                        "estimated_margin_pct": chosen_dyn["estimated_margin_pct"],
+                        "margin_pct": chosen_dyn["estimated_margin_pct"],
+                        "expiry": chosen_dyn.get("expiry"),
+                        "instrument_id": chosen_dyn.get("instrument_id"),
+                        "source": chosen_dyn.get("source", "BROKER_FEED"),
+                        "update_date": chosen_dyn.get("update_date", today),
+                        "effective_date": today,
+                        "circular_ref": chosen_dyn.get("circular_ref", "NSE/FAOP/LIVE")
+                    }
 
         # 2. Historical replay or fallback to circular table
         if not history:

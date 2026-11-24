@@ -1429,15 +1429,17 @@
         }
 
         function renderRadarData(symbol, smc) {
-            const vwapStr = smc.vwap !== undefined && smc.vwap !== null ? `₹${Number(smc.vwap).toFixed(1)}` : '--';
-            document.getElementById('valPrice').innerText = `₹${Number(smc.current_price || 0).toFixed(1)} (VWAP: ${vwapStr})`;
+            const isFinNum = (val) => val !== undefined && val !== null && !isNaN(Number(val)) && isFinite(Number(val));
+            const priceStr = isFinNum(smc.current_price) ? `₹${Number(smc.current_price).toFixed(1)}` : '--';
+            const vwapStr = isFinNum(smc.vwap) ? `₹${Number(smc.vwap).toFixed(1)}` : '--';
+            document.getElementById('valPrice').innerText = `${priceStr} (VWAP: ${vwapStr})`;
             
-            const rvolVal = Number(smc.vol_multiplier || 1.0).toFixed(2);
-            const rsiStr = smc.rsi !== undefined && smc.rsi !== null ? smc.rsi : '--';
+            const rvolVal = isFinNum(smc.vol_multiplier) ? Number(smc.vol_multiplier).toFixed(2) : '1.00';
+            const rsiStr = isFinNum(smc.rsi) ? Number(smc.rsi).toFixed(1) : '--';
             document.getElementById('valRsi').innerHTML = `<span>RSI: <b style="color:#fff;">${rsiStr}</b></span> <span style="color:#64748b;">|</span> <span>VOL: <b style="color:var(--neon-green);">${rvolVal}x</b></span>`;
             
-            const ema9Str = smc.ema9 !== undefined && smc.ema9 !== null ? smc.ema9 : '--';
-            const ema21Str = smc.ema21 !== undefined && smc.ema21 !== null ? smc.ema21 : '--';
+            const ema9Str = isFinNum(smc.ema9) ? Number(smc.ema9).toFixed(1) : '--';
+            const ema21Str = isFinNum(smc.ema21) ? Number(smc.ema21).toFixed(1) : '--';
             document.getElementById('valEma').innerText = `EMA9: ${ema9Str} | EMA21: ${ema21Str}`;
 
             // Demand & Supply Order Blocks
