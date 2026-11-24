@@ -973,11 +973,16 @@ def smc_scan():
             
             # Persist ONLY CONFIRMED signals generated during live market hours to historical signals database
             if is_completed_candle and mkt_is_open:
+                sig_close_price = inst_res["current_price"]
+                # For 5-minute intraday execution, expected entry at next candle open incorporates conservative slippage
+                slippage_pct = 0.0005  # 0.05% slippage
+                exp_entry = round(sig_close_price * (1.0 + slippage_pct) if inst_res["direction"] == "BUY" else sig_close_price * (1.0 - slippage_pct), 2)
+                
                 signal_id = log_signal({
                     "symbol": symbol,
                     "direction": inst_res["direction"],
                     "strategy": inst_res["primary_strategy"],
-                    "entry_price": inst_res["current_price"],
+                    "entry_price": exp_entry,
                     "stop_loss": inst_res["suggested_sl"],
                     "target_1": inst_res["suggested_tp1"],
                     "target_2": inst_res["suggested_tp2"],
@@ -985,7 +990,12 @@ def smc_scan():
                     "confidence": f"{inst_res['probability_pct']}%",
                     "catalyst": news_headline or "Institutional Order Flow",
                     "features": {"rvol": inst_res["rvol"], "rsi": inst_res["rsi"], "vwap": inst_res["vwap"]},
-                    "all_triggered": inst_res["triggered_strategies"]
+                    "all_triggered": inst_res["triggered_strategies"],
+                    "signal_price": sig_close_price,
+                    "expected_entry_price": exp_entry,
+                    "actual_entry_price": None,
+                    "entry_timestamp": None,
+                    "execution_status": "PENDING_FILL"
                 })
                 res["signal_id"] = signal_id
                 # Instantly cache to active_signals_map
@@ -1490,11 +1500,14 @@ def log_confirmed_signal_endpoint():
         if rr_ratio < 1.20:
             return jsonify({"success": False, "error": f"Server rejection: Minimum risk/reward threshold not met (RR 1:{rr_ratio:.2f} < 1:1.20)."}), 400
 
+        slippage_pct = 0.0005
+        exp_entry = round(entry_val * (1.0 + slippage_pct) if server_direction == "BUY" else entry_val * (1.0 - slippage_pct), 2)
+
         sig_id = log_signal({
             "symbol": sym,
             "direction": server_direction,
             "strategy": matching_cand.get("stage_desc") or "SMC Structure",
-            "entry_price": entry_val,
+            "entry_price": exp_entry,
             "stop_loss": sl_val,
             "target_1": tp1_val,
             "target_2": validated_tp2,
@@ -1502,7 +1515,12 @@ def log_confirmed_signal_endpoint():
             "confidence": f"{matching_cand.get('confirmation_score', 75)}%",
             "catalyst": "SMC Order Flow Ignition",
             "features": {"rvol": matching_cand.get("rvol", 1.0), "rs_nifty": matching_cand.get("rs_nifty", 0.0), "candle_ts": str(authoritative_ts)},
-            "all_triggered": matching_cand.get("reasons", [])
+            "all_triggered": matching_cand.get("reasons", []),
+            "signal_price": entry_val,
+            "expected_entry_price": exp_entry,
+            "actual_entry_price": exp_entry,
+            "entry_timestamp": time.time(),
+            "execution_status": "EXECUTED_SIMULATED"
         })
 
         # Cache in memory

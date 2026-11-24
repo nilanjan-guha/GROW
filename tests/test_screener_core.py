@@ -649,6 +649,96 @@ class TestIntradayScreenerCore(unittest.TestCase):
         # Final P&L should be based on Open (980 - 1000 = -20), NOT the SL (990 - 1000 = -10)
         self.assertEqual(sig["final_pnl"], -20.0)
 
+    def test_same_candle_tp1_does_not_falsely_trigger_pre_tp1_open_breakeven(self):
+        # Regression test for P0 audit bug:
+        # A candle opens below entry price (e.g. at 995 for entry 1000, orig_sl 990, tp1 1010).
+        # During the candle, price rallies to 1015 (touching TP1).
+        # The candle's Open (995) MUST NOT be treated as a breakeven exit since it occurred BEFORE TP1!
+        sig_id = storage.log_signal({
+            "symbol": "TEST_CHRONO.NS",
+            "direction": "BUY",
+            "strategy": "SMC_PULLBACK",
+            "entry_price": 1000.0,
+            "stop_loss": 990.0,
+            "target_1": 1010.0,
+            "target_2": 1025.0
+        })
+
+        conn = storage.get_db_connection()
+        c = conn.cursor()
+        one_hour_ago = time.time() - 3600
+        c.execute("UPDATE historical_signals SET timestamp = ?, last_candle_time = ? WHERE id = ?", (one_hour_ago, one_hour_ago, sig_id))
+        conn.commit()
+        conn.close()
+
+        # Candle opens at 995 (above orig_sl 990, but below entry 1000), rallies to High 1015 (hits TP1), Low 994, Close 1012.
+        c_time = pd.to_datetime(one_hour_ago + 300, unit='s', utc=True).tz_convert('Asia/Kolkata')
+        df_candle = pd.DataFrame({
+            "Open": [995.0],
+            "High": [1015.0],
+            "Low": [994.0],
+            "Close": [1012.0],
+            "Volume": [15000]
+        }, index=pd.DatetimeIndex([c_time]))
+
+        storage.evaluate_open_outcomes({"TEST_CHRONO.NS": df_candle})
+
+        conn = storage.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT outcome, tp1_hit, tp2_hit, current_stop_loss FROM historical_signals WHERE id = ?", (sig_id,))
+        sig = cursor.fetchone()
+        conn.close()
+
+        # Trade MUST remain ACTIVE (tp1_hit = 1, stop moved to breakeven 1000.0), NOT falsely closed at 995!
+        self.assertEqual(sig["tp1_hit"], 1)
+        self.assertEqual(sig["outcome"], "ACTIVE")
+        self.assertEqual(sig["current_stop_loss"], 1000.0)
+
+    def test_subsequent_candle_gap_below_breakeven_after_tp1_hits_partial_win(self):
+        # If TP1 was already confirmed in a previous candle, and the NEXT candle opens below breakeven stop,
+        # it should exit at the new candle's open price.
+        sig_id = storage.log_signal({
+            "symbol": "TEST_BE_GAP.NS",
+            "direction": "BUY",
+            "strategy": "SMC_PULLBACK",
+            "entry_price": 1000.0,
+            "stop_loss": 990.0,
+            "target_1": 1010.0,
+            "target_2": 1030.0
+        })
+
+        conn = storage.get_db_connection()
+        c = conn.cursor()
+        one_hour_ago = time.time() - 3600
+        c.execute("UPDATE historical_signals SET timestamp = ?, last_candle_time = ? WHERE id = ?", (one_hour_ago, one_hour_ago, sig_id))
+        conn.commit()
+        conn.close()
+
+        # Candle 1: hits TP1 (High 1015, Low 1002, Open 1003, Close 1012)
+        c1_time = pd.to_datetime(one_hour_ago + 300, unit='s', utc=True).tz_convert('Asia/Kolkata')
+        # Candle 2: gaps open below breakeven (Open 996, High 998, Low 993, Close 995)
+        c2_time = pd.to_datetime(one_hour_ago + 600, unit='s', utc=True).tz_convert('Asia/Kolkata')
+
+        df_c1 = pd.DataFrame({
+            "Open": [1003.0], "High": [1015.0], "Low": [1002.0], "Close": [1012.0], "Volume": [20000]
+        }, index=pd.DatetimeIndex([c1_time]))
+        df_c2 = pd.DataFrame({
+            "Open": [996.0], "High": [998.0], "Low": [993.0], "Close": [995.0], "Volume": [20000]
+        }, index=pd.DatetimeIndex([c2_time]))
+
+        storage.evaluate_open_outcomes({"TEST_BE_GAP.NS": df_c1})
+        storage.evaluate_open_outcomes({"TEST_BE_GAP.NS": df_c2})
+
+        conn = storage.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT outcome, final_pnl FROM historical_signals WHERE id = ?", (sig_id,))
+        sig = cursor.fetchone()
+        conn.close()
+
+        self.assertEqual(sig["outcome"], "WIN_PARTIAL")
+        # Final PnL = 0.5 * (1010 - 1000) + 0.5 * (996 - 1000) = 5.0 - 2.0 = 3.0
+        self.assertEqual(sig["final_pnl"], 3.0)
+
     def test_nifty_benchmark_fail_closed_gate(self):
         # Verify that compute_and_update_ranked_opportunities fails-closed when NIFTY feed is corrupted
         import groww_terminal_app as gta
