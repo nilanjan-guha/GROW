@@ -45,21 +45,41 @@ class StrategyLearningEngine:
             return "AFTERNOON_EXPANSION"
 
     @staticmethod
-    def calibrate_weights():
+    def calibrate_weights(as_of_ts=None):
         """
         Inspects closed trades in `historical_signals` and calculates weight adjustments.
         Only modifies multipliers if sample size >= MIN_OBSERVATIONS (15).
+        STRICT POINT-IN-TIME:
+        If as_of_ts is provided, only inspects trades where closed_at IS NOT NULL and closed_at <= as_of_ts.
+        Never allows future-outcome leakage into weights.
         """
         StrategyLearningEngine.init_learning_tables()
         conn = get_db_connection()
         c = conn.cursor()
 
-        # Query all closed trades (including SL, Target, and Sideways/EOD closes)
-        c.execute("""
-        SELECT strategy, market_regime, outcome, net_pnl, final_pnl, timestamp
-        FROM historical_signals
-        WHERE outcome IN ('WIN', 'WIN_FULL', 'WIN_PARTIAL', 'LOSS', 'CLOSED_EOD_SQUAREOFF', 'CLOSED_MANUAL', 'CLOSED_STALE_SESSION')
-        """)
+        if as_of_ts is not None:
+            if hasattr(as_of_ts, 'timestamp'):
+                as_of_num = as_of_ts.timestamp()
+            else:
+                try:
+                    import pandas as pd
+                    as_of_num = pd.to_datetime(as_of_ts).timestamp()
+                except Exception:
+                    as_of_num = float(as_of_ts)
+            c.execute("""
+            SELECT strategy, market_regime, outcome, net_pnl, final_pnl, timestamp, closed_at
+            FROM historical_signals
+            WHERE outcome IN ('WIN', 'WIN_FULL', 'WIN_PARTIAL', 'LOSS', 'CLOSED_EOD_SQUAREOFF', 'CLOSED_MANUAL', 'CLOSED_STALE_SESSION')
+              AND closed_at IS NOT NULL
+              AND closed_at <= ?
+            """, (as_of_num,))
+        else:
+            c.execute("""
+            SELECT strategy, market_regime, outcome, net_pnl, final_pnl, timestamp, closed_at
+            FROM historical_signals
+            WHERE outcome IN ('WIN', 'WIN_FULL', 'WIN_PARTIAL', 'LOSS', 'CLOSED_EOD_SQUAREOFF', 'CLOSED_MANUAL', 'CLOSED_STALE_SESSION')
+              AND closed_at IS NOT NULL
+            """)
         trades = c.fetchall()
 
         if not trades:

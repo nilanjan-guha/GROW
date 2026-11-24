@@ -37,6 +37,42 @@ class MarketValidator:
     """
 
     @staticmethod
+    def validate_3way_alignment(stock_df, nifty_df=None, sector_df=None):
+        """
+        Validates strict point-in-time completed candle timestamp equality across:
+        1. Stock completed candle
+        2. NIFTY benchmark completed candle
+        3. Sector index completed candle
+        If any required benchmark is missing, unaligned, or stale, marks that benchmark
+        explicitly UNAVAILABLE rather than silently using stale data or misaligned bars.
+        """
+        if stock_df is None or stock_df.empty:
+            return {"is_aligned": False, "stock_ts": None, "nifty_aligned": False, "sector_aligned": False}
+
+        stock_ts = stock_df.index[-1]
+        
+        nifty_aligned = False
+        nifty_ts = None
+        if nifty_df is not None and not nifty_df.empty:
+            nifty_ts = nifty_df.index[-1]
+            nifty_aligned = (stock_ts == nifty_ts)
+
+        sector_aligned = False
+        sector_ts = None
+        if sector_df is not None and not sector_df.empty:
+            sector_ts = sector_df.index[-1]
+            sector_aligned = (stock_ts == sector_ts)
+
+        return {
+            "stock_ts": stock_ts,
+            "nifty_ts": nifty_ts,
+            "sector_ts": sector_ts,
+            "nifty_aligned": nifty_aligned,
+            "sector_aligned": sector_aligned,
+            "is_aligned": nifty_aligned and (sector_df is None or sector_aligned)
+        }
+
+    @staticmethod
     def get_ist_now():
         ist = pytz.timezone('Asia/Kolkata')
         return datetime.datetime.now(ist)
