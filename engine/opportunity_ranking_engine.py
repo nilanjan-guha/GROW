@@ -368,8 +368,19 @@ class OpportunityRankingEngine:
                 today_first_open = float(today_df['Open'].iloc[0])
                 if prev_day_close > 0:
                     open_gap_pct = round(((today_first_open - prev_day_close) / prev_day_close) * 100, 2)
-                    # Detect exhausted gap: if stock opened with massive gap (> 2.5% or < -2.5%), retail chases, move already done
-                    if abs(open_gap_pct) >= 2.50:
+                    # Sophisticated Large Gap Classification:
+                    # Distinguish genuine gap continuation vs runaway exhaustion.
+                    # If gap >= 2.5%, stock is NOT automatically discarded if it establishes an intraday base,
+                    # holds above the opening candle (gap continuation), or exhibits low-risk consolidation.
+                    # It is only rejected as an exhausted gap if price is extended far beyond ORH (> 3.5% gap without consolidation)
+                    # or failing back through opening range (gap trap).
+                    is_large_gap = (abs(open_gap_pct) >= 2.50)
+                    is_holding_gap_base = (open_gap_pct > 0 and curr_c >= today_first_open) or (open_gap_pct < 0 and curr_c <= today_first_open)
+                    
+                    if abs(open_gap_pct) >= 4.0:
+                        is_exhausted_gap = True
+                    elif is_large_gap and not is_holding_gap_base:
+                        # Gapped and failed back into range (gap trap / fade)
                         is_exhausted_gap = True
 
                     is_gap_up = (open_gap_pct >= 0.60)

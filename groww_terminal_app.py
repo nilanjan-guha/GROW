@@ -155,16 +155,33 @@ def auto_connect_groww():
                             except Exception:
                                 continue
 
-                            # Broker instrument master metadata
-                            inst_id = str(row.get('instrument_id') or row.get('trading_symbol') or f"NSE_{u_sym}_FUT").strip()
-                            exp_val = str(row.get('expiry') or row.get('expiry_date') or (datetime.date.today() + datetime.timedelta(days=28)))
-                            contract_map[u_sym] = {
+                            # Broker instrument master metadata: NEVER manufacture synthetic IDs or fake expiries!
+                            # Both instrument_id and expiry MUST be authoritative from broker feed.
+                            raw_inst = row.get('groww_symbol') or row.get('trading_symbol') or row.get('instrument_id')
+                            if not raw_inst:
+                                continue
+                            inst_id = str(raw_inst).strip()
+                            if not inst_id or ContractMaster.is_synthetic_instrument_id(inst_id):
+                                continue
+
+                            raw_exp = row.get('expiry_date') or row.get('expiry')
+                            if not raw_exp:
+                                continue
+                            exp_val = str(raw_exp).strip()
+
+                            # Preserve every expiry using composite key so subsequent expiries don't overwrite prior expiries
+                            composite_key = f"{u_sym}:{exp_val}"
+                            spec_dict = {
                                 "lot_size": lot_val,
                                 "expiry": exp_val,
                                 "instrument_id": inst_id,
                                 "source": "GROWW_API",
                                 "update_date": today_str
                             }
+                            contract_map[composite_key] = spec_dict
+                            # Also store under primary symbol if not yet populated (earliest active expiry takes precedence)
+                            if u_sym not in contract_map:
+                                contract_map[u_sym] = spec_dict
                     if contract_map:
                         ContractMaster.register_dynamic_contracts(contract_map, adapter_secret=ContractMaster._REGISTRATION_SECRET)
                         print(f"Registered {len(contract_map)} dynamic F&O contract lot sizes into ContractMaster via authorized Groww adapter.")
@@ -215,12 +232,21 @@ def classify_stock_sector(sym):
         screener_state["stock_sector_cache"][clean_sym] = "NIFTY 50"
         return "NIFTY 50"
 
+    # First query authoritative groww_sector_engine universe mapping (zero HTTP / Yahoo Crumb overhead!)
+    mapped_sec = groww_sector_engine.stock_to_sector_map.get(f"{clean_sym}.NS", {}).get("sector") or groww_sector_engine.stock_to_sector_map.get(clean_sym, {}).get("sector")
+    if mapped_sec:
+        screener_state["stock_sector_cache"][clean_sym] = mapped_sec
+        return mapped_sec
+
     yf_ticker = f"{clean_sym}.NS"
     sector_name = "NIFTY INFRA"  # Default fallback
     try:
         t = yf.Ticker(yf_ticker)
-        yf_sec = str(t.info.get("sector", "")).strip().lower()
-        yf_ind = str(t.info.get("industry", "")).strip().lower()
+        # Handle Yahoo Finance 401 Unauthorized / Invalid Crumb gracefully
+        fast_info = getattr(t, "fast_info", None)
+        info_dict = getattr(t, "info", {}) if hasattr(t, "info") else {}
+        yf_sec = str(info_dict.get("sector", "")).strip().lower()
+        yf_ind = str(info_dict.get("industry", "")).strip().lower()
 
         if "private" in yf_ind or "private" in yf_sec:
             sector_name = "NIFTY PRIVATE BANK"
@@ -962,6 +988,10 @@ def smc_scan():
         res["exhaustion_risk"] = inst_res.get("exhaustion_risk", "LOW")
         res["daily_atr_source"] = inst_res.get("daily_atr_source", "DEDICATED_DAILY_WILDER_ATR14")
         res["confidence_penalty"] = atr_penalty
+        res["has_eql_inducement_sweep"] = inst_res.get("has_eql_inducement_sweep", False)
+        res["has_eqh_inducement_sweep"] = inst_res.get("has_eqh_inducement_sweep", False)
+        res["nearest_bull_breaker"] = inst_res.get("nearest_bull_breaker")
+        res["nearest_bear_breaker"] = inst_res.get("nearest_bear_breaker")
         
         # Enforce strict institutional action: if institutional engine is NEUTRAL or MARKET IS CLOSED, action MUST be NO TRADE
         mkt_is_open = is_market_open()
@@ -1253,7 +1283,11 @@ def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
             "stop_loss": enriched.get("suggested_sl"),
             "tp1": enriched.get("suggested_tp1"),
             "tp2": enriched.get("suggested_tp2"),
-            "exhaustion_risk": enriched.get("exhaustion_risk", "LOW")
+            "exhaustion_risk": enriched.get("exhaustion_risk", "LOW"),
+            "has_eql_inducement_sweep": enriched.get("has_eql_inducement_sweep", False),
+            "has_eqh_inducement_sweep": enriched.get("has_eqh_inducement_sweep", False),
+            "nearest_bull_breaker": enriched.get("nearest_bull_breaker"),
+            "nearest_bear_breaker": enriched.get("nearest_bear_breaker")
         }
 
         # Validate RVOL freshness strictly against evaluated completed candle timestamp (P0)
@@ -1462,18 +1496,20 @@ def log_confirmed_signal_endpoint():
                 if not eval_nifty.empty:
                     latest_market_completed_ts = str(eval_nifty.index[-1])
 
-        server_ranked_ts = screener_state.get("ranked_candle_ts")
+        server_ranked_ts = screener_state.get("ranked_candle_ts") or ranked_cache.get("ranked_candle_ts")
         cand_ts = matching_cand.get("candle_ts")
         client_candle_ts = data.get("candle_ts")
 
-        # Authoritative market baseline MUST exist. NO unsafe fallback to unverified candidate timestamp!
-        authoritative_ts = latest_market_completed_ts or server_ranked_ts
-        if not authoritative_ts:
-            return jsonify({"success": False, "error": "Server rejection: Authoritative completed market candle baseline cannot be established."}), 409
+        # Authoritative live market baseline MUST exist. NO unsafe fallback to unverified candidate timestamp!
+        # Both latest completed NIFTY benchmark timestamp AND fresh server ranked cache timestamp must agree.
+        if not latest_market_completed_ts:
+            return jsonify({"success": False, "error": "Server rejection: Live market completed candle baseline (NIFTY) cannot be verified."}), 409
 
-        # Reject if the ranked cache or candidate is stale compared to the authoritative market candle
-        if server_ranked_ts and latest_market_completed_ts and str(server_ranked_ts).strip() != str(latest_market_completed_ts).strip():
-            return jsonify({"success": False, "error": f"Server rejection: Ranked candidate cache ({server_ranked_ts}) is stale compared to market ({latest_market_completed_ts})."}), 409
+        authoritative_ts = latest_market_completed_ts
+
+        # Reject if the ranked cache is older or missing
+        if not server_ranked_ts or str(server_ranked_ts).strip() != str(authoritative_ts).strip():
+            return jsonify({"success": False, "error": f"Server rejection: Ranked candidate cache ({server_ranked_ts}) is stale compared to live market baseline ({authoritative_ts})."}), 409
 
         if cand_ts and str(cand_ts).strip() != str(authoritative_ts).strip():
             return jsonify({"success": False, "error": f"Server rejection: Candidate candle ({cand_ts}) is stale compared to authoritative completed candle ({authoritative_ts})."}), 409
