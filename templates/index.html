@@ -65,17 +65,14 @@
             </div>
             <div class="panel-body">
 
-                <!-- Rotating 3D Sector Hologram Wheel & Active Sector Analysis Indicator -->
-                <div class="sector-wheel-container">
-                    <div class="wheel-indicator">
-                        <div class="wheel-ring"></div>
-                        <span id="activeSectorSweepText">AUTONOMOUS SECTOR SCANNER: ACTIVE</span>
+                <!-- Live Market Status Bar -->
+                <div style="display:flex; justify-content:space-between; align-items:center; background:#0c121e; border:1px solid #1e293b; border-radius:6px; padding:6px 12px; margin-bottom:10px;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#10b981; box-shadow:0 0 8px #10b981;"></span>
+                        <span id="activeSectorSweepText" style="font-size:0.75rem; font-weight:700; color:#e2e8f0; font-family:'Inter', sans-serif;">SECTOR ENGINE: ACTIVE LIVE FEED</span>
                     </div>
-                    <div class="sector-radar-telemetry">
-                        <span class="radar-ping-dot"></span>
-                        <div class="hologram-coords-text" id="hologramCoords">
-                            HOLO-ENGINE: 60 FPS // LATENCY &lt; 15MS
-                        </div>
+                    <div style="font-family:'JetBrains Mono', monospace; font-size:0.68rem; color:#64748b;" id="hologramCoords">
+                        EXECUTION: 5-MIN CANDLE ENGINE // 0 SLIPPAGE GATE
                     </div>
                 </div>
 
@@ -842,19 +839,17 @@
                     card.style.padding = '9px 12px';
                     card.onclick = () => selectStock(sym);
                     card.innerHTML = `
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:5px; gap:6px;">
-                            <div style="display:flex; align-items:center; gap:4px; min-width:0; flex:1; overflow:hidden;">
-                                <span style="font-size:0.84rem; font-weight:800; color:#ffffff; letter-spacing:0.3px; text-shadow:0 1px 3px rgba(0,0,0,0.8); white-space:nowrap; flex-shrink:0;">#${idx + 1} ${sym.replace('.NS', '')}</span>
-                                <span class="active-radar-badge">▶ ACTIVE</span>
-                                <span class="scanning-badge">● SCANNING</span>
-                                <span class="breaking-news-badge">🔥 BREAKING</span>
-                                <span class="news-catalyst-badge">📰 CATALYST</span>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; gap:8px;">
+                            <div style="display:flex; align-items:center; gap:5px; min-width:0; flex:1; overflow:hidden;">
+                                <span style="font-size:0.86rem; font-weight:800; color:#ffffff; letter-spacing:0.3px; white-space:nowrap; flex-shrink:0;">#${idx + 1} ${sym.replace('.NS', '')}</span>
+                                <span class="entry-call-badge">⚡ BUY TRIGGER</span>
+                                <span class="active-radar-badge">RADAR</span>
                             </div>
-                            <span style="color:#00ffaa; font-size:0.80rem; font-weight:800; font-family:'JetBrains Mono', monospace; background:rgba(0,255,170,0.18); padding:2px 6px; border-radius:4px; border:1px solid rgba(0,255,170,0.45); text-shadow:0 0 6px rgba(0,255,170,0.3); white-space:nowrap; flex-shrink:0;">+${stk.change.toFixed(1)}%</span>
+                            <span style="color:#10b981; font-size:0.80rem; font-weight:800; font-family:'JetBrains Mono', monospace; background:rgba(16,185,129,0.14); padding:2px 7px; border-radius:4px; border:1px solid rgba(16,185,129,0.4); white-space:nowrap; flex-shrink:0;">+${stk.change.toFixed(1)}%</span>
                         </div>
-                        <div style="font-size:0.72rem; color:#a0b3cc; display:flex; justify-content:space-between; align-items:center;">
-                            <span style="display:flex; align-items:center; gap:4px; font-weight:500;">Mom Vel: <b style="color:#00f0ff; font-family:'JetBrains Mono', monospace; font-size:0.76rem; font-weight:700;">${Number(stk.velocity || 1.2).toFixed(1)}x</b></span>
-                            <span style="color:#00ffc4; font-weight:800; font-size:0.68rem; background:rgba(0,255,196,0.14); padding:2px 7px; border-radius:3px; border:1px solid rgba(0,255,196,0.35); letter-spacing:0.3px; white-space:nowrap;">CALL MOVER</span>
+                        <div style="font-size:0.70rem; color:#94a3b8; display:flex; justify-content:space-between; align-items:center;">
+                            <span style="display:flex; align-items:center; gap:4px;">Mom Vol: <b style="color:#38bdf8; font-family:'JetBrains Mono', monospace; font-size:0.75rem; font-weight:700;">${Number(stk.velocity || 1.2).toFixed(1)}x</b></span>
+                            <span style="color:#10b981; font-weight:700; font-size:0.66rem; background:rgba(16,185,129,0.1); padding:2px 6px; border-radius:3px; letter-spacing:0.3px; white-space:nowrap;">CALL / BULL</span>
                         </div>
                     `;
                     const cachedNews = stockNewsCache[sym.replace('.NS', '').toUpperCase()];
@@ -883,19 +878,17 @@
                     card.style.padding = '9px 12px';
                     card.onclick = () => selectStock(sym);
                     card.innerHTML = `
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:5px; gap:6px;">
-                            <div style="display:flex; align-items:center; gap:4px; min-width:0; flex:1; overflow:hidden;">
-                                <span style="font-size:0.84rem; font-weight:800; color:#ffffff; letter-spacing:0.3px; text-shadow:0 1px 3px rgba(0,0,0,0.8); white-space:nowrap; flex-shrink:0;">#${idx + 1} ${sym.replace('.NS', '')}</span>
-                                <span class="active-radar-badge">▶ ACTIVE</span>
-                                <span class="scanning-badge">● SCANNING</span>
-                                <span class="breaking-news-badge">🔥 BREAKING</span>
-                                <span class="news-catalyst-badge">📰 CATALYST</span>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; gap:8px;">
+                            <div style="display:flex; align-items:center; gap:5px; min-width:0; flex:1; overflow:hidden;">
+                                <span style="font-size:0.86rem; font-weight:800; color:#ffffff; letter-spacing:0.3px; white-space:nowrap; flex-shrink:0;">#${idx + 1} ${sym.replace('.NS', '')}</span>
+                                <span class="entry-put-badge">⚡ SELL TRIGGER</span>
+                                <span class="active-radar-badge">RADAR</span>
                             </div>
-                            <span style="color:#ff3366; font-size:0.80rem; font-weight:800; font-family:'JetBrains Mono', monospace; background:rgba(255,51,102,0.18); padding:2px 6px; border-radius:4px; border:1px solid rgba(255,51,102,0.45); text-shadow:0 0 6px rgba(255,51,102,0.3); white-space:nowrap; flex-shrink:0;">${stk.change.toFixed(1)}%</span>
+                            <span style="color:#ef4444; font-size:0.80rem; font-weight:800; font-family:'JetBrains Mono', monospace; background:rgba(239,68,68,0.14); padding:2px 7px; border-radius:4px; border:1px solid rgba(239,68,68,0.4); white-space:nowrap; flex-shrink:0;">${stk.change.toFixed(1)}%</span>
                         </div>
-                        <div style="font-size:0.72rem; color:#a0b3cc; display:flex; justify-content:space-between; align-items:center;">
-                            <span style="display:flex; align-items:center; gap:4px; font-weight:500;">Mom Vel: <b style="color:#ffb703; font-family:'JetBrains Mono', monospace; font-size:0.76rem; font-weight:700;">${Number(stk.velocity || 1.2).toFixed(1)}x</b></span>
-                            <span style="color:#ff4d79; font-weight:800; font-size:0.68rem; background:rgba(255,77,121,0.14); padding:2px 7px; border-radius:3px; border:1px solid rgba(255,77,121,0.35); letter-spacing:0.3px; white-space:nowrap;">PUT MOVER</span>
+                        <div style="font-size:0.70rem; color:#94a3b8; display:flex; justify-content:space-between; align-items:center;">
+                            <span style="display:flex; align-items:center; gap:4px;">Mom Vol: <b style="color:#f59e0b; font-family:'JetBrains Mono', monospace; font-size:0.75rem; font-weight:700;">${Number(stk.velocity || 1.2).toFixed(1)}x</b></span>
+                            <span style="color:#ef4444; font-weight:700; font-size:0.66rem; background:rgba(239,68,68,0.1); padding:2px 6px; border-radius:3px; letter-spacing:0.3px; white-space:nowrap;">PUT / BEAR</span>
                         </div>
                     `;
                     const cachedNews = stockNewsCache[sym.replace('.NS', '').toUpperCase()];
@@ -1650,9 +1643,9 @@
             watchlistIndex = (watchlistIndex + 1) % activeWatchlist.length;
             const target = activeWatchlist[watchlistIndex];
             const cleanSym = target.symbol.replace('.NS', '').toUpperCase();
-            document.getElementById('cycleStatus').innerText = `CYCLE: AI SCANNING ${cleanSym} [${watchlistIndex + 1}/${activeWatchlist.length}]`;
+            document.getElementById('cycleStatus').innerText = `SCANNING: ${cleanSym} [${watchlistIndex + 1}/${activeWatchlist.length}]`;
 
-            // Update .scanning glow across mover cards
+            // Update .scanning yellow glow across mover cards
             document.querySelectorAll('.sector-card').forEach(c => {
                 const cardSym = (c.dataset && c.dataset.symbol) ? c.dataset.symbol.replace('.NS', '').toUpperCase() : '';
                 if (cardSym === cleanSym) {
@@ -1662,10 +1655,10 @@
                 }
             });
 
-            // Pre-fetch news for the scanned stock in background so catalyst badges and breaking glow appear automatically
-            fetchStockNews(cleanSym);
+            // Immediately load the scanned stock's live news into the top news ticker!
+            loadStockCatalystNews(target.symbol);
 
-            // If user has not locked onto a manual stock, let radar and catalyst news seamlessly follow the autonomous scan
+            // If user has not manually clicked a stock, follow autonomous scan in the radar
             if (!isUserManualSelection) {
                 selectStock(target.symbol, false);
             }
@@ -1681,7 +1674,29 @@
                         renderConfirmedBanner();
                     }
 
-                    // Cycle loop is strictly for observation / price syncing; it NEVER automatically opens new trades from watchlists!
+                    // Check if entry trigger is met on scanned stock: apply Green or Red trade entry glow!
+                    const isTradeAction = smc.action && (smc.action.includes('BUY') || smc.action.includes('SELL'));
+                    const isEntryConfirmed = isTradeAction && smc.is_actionable && smc.signal_status && smc.signal_status.includes('CONFIRMED');
+
+                    document.querySelectorAll('.sector-card').forEach(c => {
+                        const cardSym = (c.dataset && c.dataset.symbol) ? c.dataset.symbol.replace('.NS', '').toUpperCase() : '';
+                        if (cardSym === cleanSym) {
+                            if (isEntryConfirmed) {
+                                if (smc.action.includes('BUY')) {
+                                    c.classList.add('trade-entry-bull');
+                                    c.classList.remove('trade-entry-bear');
+                                } else {
+                                    c.classList.add('trade-entry-bear');
+                                    c.classList.remove('trade-entry-bull');
+                                }
+                            } else {
+                                c.classList.remove('trade-entry-bull');
+                                c.classList.remove('trade-entry-bear');
+                            }
+                        }
+                    });
+
+                    // Update radar if current stock
                     if (target.symbol === currentStockSymbol) {
                         renderRadarData(target.symbol, smc);
                     }

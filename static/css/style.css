@@ -1,28 +1,29 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 
 :root {
-    --bg-deep: #02040a;
-    --bg-space: radial-gradient(circle at 50% 20%, #0a1128 0%, #030714 55%, #010206 100%);
-    --panel-glass: rgba(10, 18, 36, 0.72);
-    --card-glass: rgba(13, 24, 48, 0.65);
-    --border-glow: rgba(56, 189, 248, 0.28);
-    --border-subtle: rgba(255, 255, 255, 0.08);
-    --text-primary: #f0f6fc;
-    --text-muted: #8b9bb4;
+    /* Professional Institutional Bloomberg / Webull Dark Terminal Palette */
+    --bg-deep: #07090e;
+    --bg-space: #07090e;
+    --panel-glass: #0c1017;
+    --card-glass: #111722;
+    --border-glow: #1e293b;
+    --border-subtle: #1e2638;
+    --text-primary: #f1f5f9;
+    --text-muted: #64748b;
 
-    /* Cyber & Sci-Fi Accents */
-    --neon-cyan: #00f0ff;
-    --neon-blue: #0088ff;
-    --neon-green: #00ffaa;
-    --neon-magenta: #ff007f;
-    --neon-red: #ff3366;
-    --neon-amber: #ffaa00;
+    /* Clean Pro Trading Accents */
+    --neon-cyan: #38bdf8;
+    --neon-blue: #3b82f6;
+    --neon-green: #10b981;
+    --neon-magenta: #ec4899;
+    --neon-red: #ef4444;
+    --neon-amber: #f59e0b;
 
-    /* Glow filters */
-    --glow-cyan: 0 0 15px rgba(0, 240, 255, 0.45);
-    --glow-green: 0 0 15px rgba(0, 255, 170, 0.45);
-    --glow-red: 0 0 15px rgba(255, 51, 102, 0.45);
-    --glow-amber: 0 0 15px rgba(255, 170, 0, 0.45);
+    /* Glow accents */
+    --glow-cyan: 0 0 12px rgba(56, 189, 248, 0.35);
+    --glow-green: 0 0 14px rgba(16, 185, 129, 0.45);
+    --glow-red: 0 0 14px rgba(239, 68, 68, 0.45);
+    --glow-amber: 0 0 14px rgba(245, 158, 11, 0.45);
 }
 
 * {
@@ -35,10 +36,9 @@
 }
 
 body {
-    background: var(--bg-space);
     background-color: var(--bg-deep);
     color: var(--text-primary);
-    padding: 10px 14px;
+    padding: 8px 12px;
     height: 100vh;
     display: flex;
     flex-direction: column;
@@ -46,7 +46,7 @@ body {
     position: relative;
 }
 
-/* Background Animated Canvas & Holographic HUD Grid */
+/* Background Animated Canvas & Subtle Matrix Grid */
 #threeCanvas {
     position: fixed;
     top: 0;
@@ -55,7 +55,7 @@ body {
     height: 100vh;
     z-index: 0;
     pointer-events: none;
-    opacity: 0.85;
+    opacity: 0.35;
 }
 
 .hud-grid-overlay {
@@ -65,44 +65,15 @@ body {
     width: 100vw;
     height: 100vh;
     background-image:
-        linear-gradient(rgba(0, 240, 255, 0.03) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(0, 240, 255, 0.03) 1px, transparent 1px);
-    background-size: 40px 40px;
+        linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
+    background-size: 32px 32px;
     z-index: 1;
     pointer-events: none;
 }
 
 .scan-laser-line {
-    position: fixed;
-    top: -100px;
-    left: 0;
-    width: 100vw;
-    height: 3px;
-    background: linear-gradient(90deg, transparent, rgba(0, 240, 255, 0.8), rgba(0, 255, 170, 0.8), transparent);
-    box-shadow: 0 0 20px rgba(0, 240, 255, 0.7);
-    z-index: 2;
-    pointer-events: none;
-    animation: scanVertical 8s linear infinite;
-}
-
-@keyframes scanVertical {
-    0% {
-        top: -10px;
-        opacity: 0;
-    }
-
-    5% {
-        opacity: 1;
-    }
-
-    95% {
-        opacity: 1;
-    }
-
-    100% {
-        top: 102vh;
-        opacity: 0;
-    }
+    display: none;
 }
 
 /* Header: Command Center HUD Top Bar */
@@ -306,203 +277,131 @@ header {
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
-.sector-card::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: -100%;
-    width: 60%;
-    height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(0, 240, 255, 0.15), transparent);
-    transform: skewX(-25deg);
-    transition: none;
-    pointer-events: none;
-}
-
-.sector-card:hover::before {
-    left: 200%;
-    transition: all 0.8s ease-in-out;
+.sector-card {
+    background: #0f1522;
+    border: 1px solid #1e293b;
+    border-radius: 6px;
+    padding: 8px 11px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    position: relative;
+    overflow: hidden;
 }
 
 .sector-card:hover {
-    transform: translateY(-2px);
-    border-color: var(--neon-cyan);
-    background: rgba(18, 32, 64, 0.95);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6), 0 0 14px rgba(0, 240, 255, 0.3);
+    border-color: #3b82f6;
+    background: #141d2e;
 }
 
 .sector-card.selected {
-    border-color: #00f0ff;
-    border-width: 1.5px;
-    background: rgba(0, 240, 255, 0.16);
-    box-shadow: 0 0 20px rgba(0, 240, 255, 0.55), inset 0 0 10px rgba(0, 240, 255, 0.2);
-    transform: translateX(4px);
+    border-color: #38bdf8;
+    background: #132238;
 }
 
-/* AI Scanning Pulse Glow on Mover Card (Cyan Laser Glow) */
+/* 1. When a stock is being scanned: Light Yellow Glow (no text badge, pure clean glow) */
 .sector-card.scanning {
-    border-color: #00f0ff !important;
-    background: rgba(0, 240, 255, 0.16) !important;
-    box-shadow: 0 0 18px rgba(0, 240, 255, 0.75), inset 0 0 10px rgba(0, 240, 255, 0.3) !important;
-    animation: scanningPulse 1.2s infinite ease-in-out;
+    border-color: #facc15 !important;
+    background: rgba(250, 204, 21, 0.08) !important;
+    box-shadow: 0 0 14px rgba(250, 204, 21, 0.65), inset 0 0 6px rgba(250, 204, 21, 0.2) !important;
+    animation: scanningYellowGlow 1.2s infinite ease-in-out;
 }
 
-@keyframes scanningPulse {
-
-    0%,
-    100% {
-        box-shadow: 0 0 10px rgba(0, 240, 255, 0.4), inset 0 0 6px rgba(0, 240, 255, 0.2);
-        border-color: rgba(0, 240, 255, 0.7);
+@keyframes scanningYellowGlow {
+    0%, 100% {
+        box-shadow: 0 0 8px rgba(250, 204, 21, 0.4), inset 0 0 4px rgba(250, 204, 21, 0.15);
+        border-color: rgba(250, 204, 21, 0.65);
     }
-
     50% {
-        box-shadow: 0 0 24px rgba(0, 240, 255, 0.9), inset 0 0 14px rgba(0, 240, 255, 0.45);
-        border-color: #00f0ff;
+        box-shadow: 0 0 18px rgba(250, 204, 21, 0.9), inset 0 0 10px rgba(250, 204, 21, 0.35);
+        border-color: #facc15;
     }
 }
 
-/* News Catalyst Glow on Mover Card (Gold/Amber Glow) */
-.sector-card.has-news-catalyst {
-    border-color: #ffb703 !important;
-    box-shadow: 0 0 18px rgba(255, 183, 3, 0.65), inset 0 0 8px rgba(255, 183, 3, 0.25) !important;
-    animation: newsAmberGlow 2s infinite ease-in-out;
+/* 2. When a trade entry is triggered: Green glow for Bull / CE, Red glow for Bear / PE */
+.sector-card.trade-entry-bull {
+    border-color: #10b981 !important;
+    background: rgba(16, 185, 129, 0.12) !important;
+    box-shadow: 0 0 18px rgba(16, 185, 129, 0.85), inset 0 0 8px rgba(16, 185, 129, 0.3) !important;
+    animation: tradeBullGlow 1.2s infinite ease-in-out;
 }
 
-/* Breaking/Fresh High-Impact News Glow on Mover Card (Magenta/Hot Pink Laser Glow) */
-.sector-card.has-breaking-news {
-    border-color: #ff007f !important;
-    background: rgba(255, 0, 127, 0.15) !important;
-    box-shadow: 0 0 22px rgba(255, 0, 127, 0.8), inset 0 0 12px rgba(255, 0, 127, 0.35) !important;
-    animation: newsHotPinkGlow 1.4s infinite ease-in-out;
-}
-
-@keyframes newsHotPinkGlow {
-
-    0%,
-    100% {
-        box-shadow: 0 0 12px rgba(255, 0, 127, 0.5), inset 0 0 8px rgba(255, 0, 127, 0.2);
-        border-color: rgba(255, 0, 127, 0.7);
+@keyframes tradeBullGlow {
+    0%, 100% {
+        box-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
+        border-color: rgba(16, 185, 129, 0.7);
     }
-
     50% {
-        box-shadow: 0 0 26px rgba(255, 0, 127, 0.95), inset 0 0 16px rgba(255, 0, 127, 0.5);
-        border-color: #ff007f;
+        box-shadow: 0 0 22px rgba(16, 185, 129, 0.95);
+        border-color: #10b981;
     }
 }
 
-@keyframes newsAmberGlow {
+.sector-card.trade-entry-bear {
+    border-color: #ef4444 !important;
+    background: rgba(239, 68, 68, 0.12) !important;
+    box-shadow: 0 0 18px rgba(239, 68, 68, 0.85), inset 0 0 8px rgba(239, 68, 68, 0.3) !important;
+    animation: tradeBearGlow 1.2s infinite ease-in-out;
+}
 
-    0%,
-    100% {
-        box-shadow: 0 0 10px rgba(255, 183, 3, 0.4), inset 0 0 6px rgba(255, 183, 3, 0.15);
-        border-color: rgba(255, 183, 3, 0.6);
+@keyframes tradeBearGlow {
+    0%, 100% {
+        box-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
+        border-color: rgba(239, 68, 68, 0.7);
     }
-
     50% {
-        box-shadow: 0 0 22px rgba(255, 183, 3, 0.85), inset 0 0 12px rgba(255, 183, 3, 0.35);
-        border-color: #ffb703;
+        box-shadow: 0 0 22px rgba(239, 68, 68, 0.95);
+        border-color: #ef4444;
     }
 }
 
-.sector-card .scanning-badge {
+/* Trade Entry Action Badges */
+.sector-card .entry-call-badge {
     display: none;
-    font-size: 0.54rem;
+    font-size: 0.56rem;
     font-weight: 800;
-    color: #00f0ff;
-    background: rgba(0, 240, 255, 0.22);
-    border: 1px solid #00f0ff;
-    padding: 1px 4px;
+    color: #10b981;
+    background: rgba(16, 185, 129, 0.18);
+    border: 1px solid #10b981;
+    padding: 1px 5px;
     border-radius: 3px;
-    margin-left: 3px;
+    margin-left: 4px;
     white-space: nowrap;
-    line-height: 1.1;
-    animation: scanningTextPulse 1s infinite alternate;
 }
 
-@keyframes scanningTextPulse {
-    from {
-        opacity: 0.7;
-    }
-
-    to {
-        opacity: 1;
-    }
-}
-
-.sector-card.scanning .scanning-badge {
+.sector-card.trade-entry-bull .entry-call-badge {
     display: inline-flex;
     align-items: center;
 }
 
-.sector-card .news-catalyst-badge {
+.sector-card .entry-put-badge {
     display: none;
-    font-size: 0.54rem;
+    font-size: 0.56rem;
     font-weight: 800;
-    color: #ffb703;
-    background: rgba(255, 183, 3, 0.2);
-    border: 1px solid #ffb703;
-    padding: 1px 4px;
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.18);
+    border: 1px solid #ef4444;
+    padding: 1px 5px;
     border-radius: 3px;
-    margin-left: 3px;
+    margin-left: 4px;
     white-space: nowrap;
-    line-height: 1.1;
 }
 
-.sector-card.has-news-catalyst:not(.has-breaking-news) .news-catalyst-badge {
-    display: inline-flex;
-    align-items: center;
-}
-
-.sector-card .breaking-news-badge {
-    display: none;
-    font-size: 0.54rem;
-    font-weight: 800;
-    color: #ff007f;
-    background: rgba(255, 0, 127, 0.25);
-    border: 1px solid #ff007f;
-    padding: 1px 4px;
-    border-radius: 3px;
-    margin-left: 3px;
-    white-space: nowrap;
-    line-height: 1.1;
-    animation: scanningTextPulse 0.8s infinite alternate;
-}
-
-.sector-card.has-breaking-news .breaking-news-badge {
+.sector-card.trade-entry-bear .entry-put-badge {
     display: inline-flex;
     align-items: center;
 }
 
 .sector-card .active-radar-badge {
     display: none;
-    font-size: 0.54rem;
+    font-size: 0.55rem;
     font-weight: 800;
-    color: #00f0ff;
-    letter-spacing: 0.4px;
-    background: rgba(0, 240, 255, 0.2);
-    border: 1px solid rgba(0, 240, 255, 0.7);
-    padding: 1px 4px;
+    color: #38bdf8;
+    background: rgba(56, 189, 248, 0.18);
+    border: 1px solid rgba(56, 189, 248, 0.6);
+    padding: 1px 5px;
     border-radius: 3px;
-    margin-left: 3px;
+    margin-left: 4px;
     white-space: nowrap;
-    line-height: 1.1;
-    text-shadow: 0 0 6px rgba(0, 240, 255, 0.5);
-    animation: radarPulse 2s infinite ease-in-out;
-}
-
-@keyframes radarPulse {
-
-    0%,
-    100% {
-        opacity: 0.85;
-        border-color: rgba(0, 240, 255, 0.6);
-    }
-
-    50% {
-        opacity: 1;
-        border-color: #00f0ff;
-        box-shadow: 0 0 8px rgba(0, 240, 255, 0.6);
-    }
 }
 
 .sector-card.selected .active-radar-badge {
@@ -510,8 +409,10 @@ header {
     align-items: center;
 }
 
-/* When a card is actively scanning, hide the redundant active badge so badges never overlap */
-.sector-card.selected.scanning .active-radar-badge {
+/* Hide active radar badge if entry is triggered or scanning */
+.sector-card.trade-entry-bull .active-radar-badge,
+.sector-card.trade-entry-bear .active-radar-badge,
+.sector-card.scanning .active-radar-badge {
     display: none !important;
 }
 
