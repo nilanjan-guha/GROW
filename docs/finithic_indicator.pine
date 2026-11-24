@@ -1121,10 +1121,9 @@ institutBearScore := institutBearScore + (isInKillzone ? 1 : 0)
 institutBearScore := institutBearScore + (isNegativeDelta ? 1 : 0)
 institutBearScore := institutBearScore + (parentBearConfirmed ? 1 : 0)
 
-// Maximum possible score = 19.
-// Calibrated threshold: 5 allows earlier smart entries at origins (Sweeps, OTE, SMT, Early Breakouts)
-// Higher scores (7+) represent mature confirmations which often arrive too late!
-minInstitScore = input.int(5, 'Minimum Institutional Confluence Score (5 = Early Snipers, 7 = Late Confirmed)', minval = 3, maxval = 12, group = INSTIT_GROUP)
+// High Win-Rate Institutional Selectivity:
+// Minimum score calibrated to 7. Firing on weak confluences (<= 5) takes chop trades!
+minInstitScore = input.int(7, 'Minimum Institutional Confluence Score (7+ = Ultra High Quality Only)', minval = 5, maxval = 14, group = INSTIT_GROUP)
 isHighQualityBull = institutBullScore >= minInstitScore and hasPremiumExpansion and not isOverextendedLong
 isHighQualityBear = institutBearScore >= minInstitScore and hasPremiumExpansion and not isOverextendedShort
 
@@ -1169,8 +1168,8 @@ optionIndexFilter = isCallOption ? parentBullConfirmed : (isPutOption ? parentBe
 callRelayEntry = isCallOption and recentIdxBuySignal and (close > open or lowerWickLen >= candleSpread * 0.3) and not isOverextendedLong
 putRelayEntry  = isPutOption  and recentIdxSellSignal and (close > open or lowerWickLen >= candleSpread * 0.3) and not isOverextendedLong
 
-// Master Option Sync Trigger
-optionDirectSyncTrigger = (callRelayEntry or putRelayEntry) and hasPremiumExpansion and isInKillzone
+// Master Option Sync Trigger: Requires true institutional alignment (not just a green bar during consolidation)
+optionDirectSyncTrigger = (callRelayEntry or putRelayEntry) and hasPremiumExpansion and isInKillzone and (isPositiveDelta or bullishAbsorption or bullCvdDivergence) and (institutBullScore >= 6)
 
 // Institutional Buy Trigger: ALL of the below must align
 sniperBuyTrigger =
@@ -1226,8 +1225,8 @@ if enableSniperEngine and not inTrade and (bar_index - lastExitBar >= cooldownBa
         // OTE-based SL: Place SL at 100% retracement (below OTE swing low origin)
         if bullOteHit and not na(oteSwingLow)
             structLow := math.min(structLow, oteSwingLow)
-        // Breathing room: 0.40 ATR on options to prevent 1-min wick hunting
-        slBuffer = isOption ? (atr14 * 0.40) : (atr14 * 0.15)
+        // Dynamic Institutional Buffer: 0.75 ATR on Options to completely eliminate 1-minute market-maker wick hunting
+        slBuffer = isOption ? math.max(atr14 * 0.75, 4.0) : math.max(atr14 * 0.25, 5.0)
         calcSL    = math.min(structLow, low) - slBuffer
         calcEntry = close
         riskDist  = calcEntry - calcSL
@@ -1268,7 +1267,8 @@ if enableSniperEngine and not inTrade and (bar_index - lastExitBar >= cooldownBa
             structHigh := swingHigh.currentLevel
         if bearOteHit and not na(oteSwingHigh)
             structHigh := math.max(structHigh, oteSwingHigh)
-        slBuffer = isOption ? (atr14 * 0.40) : (atr14 * 0.15)
+        // Dynamic Institutional Buffer: 0.75 ATR on Options to completely eliminate 1-minute market-maker wick hunting
+        slBuffer = isOption ? math.max(atr14 * 0.75, 4.0) : math.max(atr14 * 0.25, 5.0)
         calcSL    = math.max(structHigh, high) + slBuffer
         calcEntry = close
         riskDist  = calcSL - calcEntry
