@@ -537,5 +537,70 @@ class TestIntradayScreenerCore(unittest.TestCase):
         self.assertAlmostEqual(r_mult, 1.96, places=1)
         self.assertLess(r_mult, 2.5) # Confirms it is not distorted to ~9.8R
 
+    def test_contract_master_input_validation(self):
+        from core.contract_master import ContractMaster
+        # 1. Unknown symbol
+        self.assertIsNone(ContractMaster.get_contract_spec("UNKNOWN_STOCK"))
+        self.assertIsNone(ContractMaster.get_contract_spec(None))
+        self.assertIsNone(ContractMaster.get_contract_spec(12345))
+        
+        # 2. Date before earliest contract inception (e.g. year 2010)
+        self.assertIsNone(ContractMaster.get_contract_spec("RELIANCE", as_of_date=datetime.date(2010, 1, 1)))
+        
+        # 3. Valid date string
+        spec_str = ContractMaster.get_contract_spec("RELIANCE", as_of_date="2024-06-01")
+        self.assertIsNotNone(spec_str)
+        self.assertEqual(spec_str["lot_size"], 250)
+        self.assertIn("circular_ref", spec_str)
+        self.assertIn("estimated_margin_pct", spec_str)
+        
+        # 4. Invalid date format string
+        self.assertIsNone(ContractMaster.get_contract_spec("RELIANCE", as_of_date="not-a-date"))
+        
+        # 5. Date after contract change (2025)
+        spec_after = ContractMaster.get_contract_spec("RELIANCE", as_of_date=datetime.date(2025, 1, 1))
+        self.assertIsNotNone(spec_after)
+        self.assertEqual(spec_after["effective_date"], datetime.date(2024, 11, 29))
+
+    def test_futures_replay_rupee_r_multiple_execution_integration(self):
+        # Integration test verifying that the replay logic computes rupee-based R-multiple correctly:
+        # Given:
+        actual_entry = 2500.0
+        sl = 2475.0  # Risk = 25 Rs/share
+        exit_price_actual = 2550.0  # Gross gain = 50 Rs/share (+2R before friction)
+        trade_qty = 250
+        actual_allocated_margin_rs = 125000.0 # 20% margin
+        contract_notional_total = actual_entry * trade_qty # ₹6,25,000
+        direction = "BULLISH"
+        
+        entry_turnover_rs = actual_entry * trade_qty
+        exit_turnover_rs = exit_price_actual * trade_qty
+        total_turnover_rs = entry_turnover_rs + exit_turnover_rs
+
+        brokerage_rs = min(20.0, entry_turnover_rs * 0.0003) + min(20.0, exit_turnover_rs * 0.0003)
+        stt_rs = exit_turnover_rs * 0.000125
+        exch_turnover_fee_rs = total_turnover_rs * 0.000019
+        stamp_duty_rs = entry_turnover_rs * 0.00002
+        sebi_charges_rs = total_turnover_rs * 0.000001
+        gst_rs = (brokerage_rs + exch_turnover_fee_rs + sebi_charges_rs) * 0.18
+        total_friction_rs = brokerage_rs + stt_rs + exch_turnover_fee_rs + sebi_charges_rs + gst_rs + stamp_duty_rs
+
+        gross_realized_rs = (exit_price_actual - actual_entry) * trade_qty
+        net_realized_rs = gross_realized_rs - total_friction_rs
+
+        net_pnl_margin = (net_realized_rs / actual_allocated_margin_rs) * 100.0
+        return_on_notional = (net_realized_rs / contract_notional_total) * 100.0
+        
+        rupee_risk = (actual_entry - sl) * trade_qty # 25 * 250 = ₹6,250
+        r_mult = round(net_realized_rs / rupee_risk, 2)
+
+        # Net profit ~ ₹12,500 - friction (~₹160) = ~₹12,340
+        # Rupee risk = ₹6,250
+        # R-multiple must be approximately 1.97R (close to 2R)
+        self.assertAlmostEqual(r_mult, 1.97, places=1)
+        # Margin return is ~9.8%, Notional return is ~1.97%
+        self.assertGreater(net_pnl_margin, return_on_notional)
+        self.assertAlmostEqual(return_on_notional, 1.97, places=1)
+
 if __name__ == '__main__':
     unittest.main()

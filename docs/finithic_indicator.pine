@@ -832,6 +832,12 @@ sweepLow  = sweepIntLow or sweepSwingLow
 bullTrend = not trendFilterEma or (close > ema200 and ema50 >= ema200)
 bearTrend = not trendFilterEma or (close < ema200 and ema50 <= ema200)
 
+// Absolute Macro Trend Gate:
+// On Index & Non-Option charts: Absolutely NO BUY trades allowed if price is trading below EMA 200!
+// On Index & Non-Option charts: Absolutely NO SELL trades allowed if price is trading above EMA 200!
+macroTrendAllowBuy  = isOption ? true : (not trendFilterEma or close >= ema200)
+macroTrendAllowSell = isOption ? false : (not trendFilterEma or close <= ema200)
+
 // Multi-Entry Opportunities:
 // 1. Demand/Supply Order Block Pullback Touch
 obDemandTouch = not na(internalLow.currentLevel) and (low <= internalLow.currentLevel + (atr14 * 0.6)) and (close > open)
@@ -1173,29 +1179,33 @@ optionDirectSyncTrigger = (callRelayEntry or putRelayEntry) and hasPremiumExpans
 
 // Institutional Buy Trigger: ALL of the below must align
 sniperBuyTrigger =
-     optionDirectSyncTrigger or     // 1. Direct High-Accuracy Index-To-Option Synchronized Relay!
+     macroTrendAllowBuy and         // Strict Trend Lock: NEVER buy index when below EMA 200 downtrend!
      (
-         isHighQualityBull and      // 2. High Quality SMC / Institutional Setup
-         optionIndexFilter and      // Parent Index must be aligned with option direction
-         orderFlowBullConfirmed and // Order Flow / Volume Delta / Absorption confirmed
-         isInKillzone and           // Active in institutional killzone (avoid chop)
+         optionDirectSyncTrigger or // 1. Direct High-Accuracy Index-To-Option Synchronized Relay!
          (
-             isEarlyBullShift or    // Early MSS / CHoCH at the turn
-             sweepSpringBull or     // Early SSL Sweep + Spring / Absorption (Pre-move entry!)
-             bullOteHit or          // OTE Golden Pocket 62%-79% retracement
-             bullIFVGRetest or      // Inverted FVG demand zone
-             bprBullRetest or       // Balanced Price Range demand zone
-             judasSwingBull or      // Judas Swing manipulation reversal
-             po3DistBull or         // Power of 3: Distribution phase confirmed
-             bullSMTDiv or          // SMT Divergence (Nifty vs BankNifty)
-             (bullTrend and (bullBreakoutRetest or (sweepLow and close > open) or obDemandTouch or fvgDemandRetest)) or
-             htfMajorBuy            // 15M HTF Sweep + Discount Zone confirmation
+             isHighQualityBull and      // 2. High Quality SMC / Institutional Setup
+             optionIndexFilter and      // Parent Index must be aligned with option direction
+             orderFlowBullConfirmed and // Order Flow / Volume Delta / Absorption confirmed
+             isInKillzone and           // Active in institutional killzone (avoid chop)
+             (
+                 isEarlyBullShift or    // Early MSS / CHoCH at the turn
+                 sweepSpringBull or     // Early SSL Sweep + Spring / Absorption (Pre-move entry!)
+                 bullOteHit or          // OTE Golden Pocket 62%-79% retracement
+                 bullIFVGRetest or      // Inverted FVG demand zone
+                 bprBullRetest or       // Balanced Price Range demand zone
+                 judasSwingBull or      // Judas Swing manipulation reversal
+                 po3DistBull or         // Power of 3: Distribution phase confirmed
+                 bullSMTDiv or          // SMT Divergence (Nifty vs BankNifty)
+                 (bullTrend and (bullBreakoutRetest or (sweepLow and close > open) or obDemandTouch or fvgDemandRetest)) or
+                 htfMajorBuy            // 15M HTF Sweep + Discount Zone confirmation
+             )
          )
      )
 
 // Institutional Sell Trigger: Only on Index/Spot charts, never direct sell on option premium charts
 sniperSellTrigger =
      not isOption and               // Options are always "BUY" direction (CE or PE)
+     macroTrendAllowSell and        // Strict Trend Lock: NEVER sell index when above EMA 200 uptrend!
      isHighQualityBear and          // Must meet institutional score & NOT exhausted/overextended
      orderFlowBearConfirmed and     // Order Flow / Volume Delta / Absorption confirmed
      isInKillzone and               // Active in institutional killzone
