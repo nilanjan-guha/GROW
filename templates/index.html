@@ -906,9 +906,11 @@
                 document.getElementById('activeSectorSweepText').innerText = `ANALYZING: ${foundSector} [${foundSecData.is_bullish ? '+' : ''}${foundSecData.change.toFixed(2)}%]`;
             }
 
-            // Highlight selected stock card in both bullish and bearish mover lists
+            // Highlight selected stock card in both bullish and bearish mover lists (normalize .NS suffix)
+            const cleanTarget = stk.replace('.NS', '').toUpperCase();
             document.querySelectorAll('.sector-card').forEach(c => {
-                if (c.dataset && c.dataset.symbol === stk) {
+                const cardSym = (c.dataset && c.dataset.symbol) ? c.dataset.symbol.replace('.NS', '').toUpperCase() : '';
+                if (cardSym === cleanTarget) {
                     c.classList.add('selected');
                 } else {
                     c.classList.remove('selected');
@@ -1427,11 +1429,16 @@
         }
 
         function renderRadarData(symbol, smc) {
-            document.getElementById('valPrice').innerText = `₹${Number(smc.current_price).toFixed(1)} (VWAP: ₹${smc.vwap})`;
+            const vwapStr = smc.vwap !== undefined && smc.vwap !== null ? `₹${Number(smc.vwap).toFixed(1)}` : '--';
+            document.getElementById('valPrice').innerText = `₹${Number(smc.current_price || 0).toFixed(1)} (VWAP: ${vwapStr})`;
             
             const rvolVal = Number(smc.vol_multiplier || 1.0).toFixed(2);
-            document.getElementById('valRsi').innerHTML = `<span>RSI: <b style="color:#fff;">${smc.rsi}</b></span> <span style="color:#64748b;">|</span> <span>VOL: <b style="color:var(--neon-green);">${rvolVal}x</b></span>`;
-            document.getElementById('valEma').innerText = `EMA9: ${smc.ema9} | EMA21: ${smc.ema21}`;
+            const rsiStr = smc.rsi !== undefined && smc.rsi !== null ? smc.rsi : '--';
+            document.getElementById('valRsi').innerHTML = `<span>RSI: <b style="color:#fff;">${rsiStr}</b></span> <span style="color:#64748b;">|</span> <span>VOL: <b style="color:var(--neon-green);">${rvolVal}x</b></span>`;
+            
+            const ema9Str = smc.ema9 !== undefined && smc.ema9 !== null ? smc.ema9 : '--';
+            const ema21Str = smc.ema21 !== undefined && smc.ema21 !== null ? smc.ema21 : '--';
+            document.getElementById('valEma').innerText = `EMA9: ${ema9Str} | EMA21: ${ema21Str}`;
 
             // Demand & Supply Order Blocks
             const demEl = document.getElementById('valDemandOb');
@@ -1502,8 +1509,14 @@
             }
 
             const score = smc.composite_score || 0;
-            const prob = smc.probability_pct || 50;
-            document.getElementById('valQuantScore').innerText = `${score}/100 (${prob}% WIN)`;
+            const prob = smc.probability_pct;
+            if (prob && prob > 0 && score > 0) {
+                document.getElementById('valQuantScore').innerText = `${score}/100 (${prob}% WIN)`;
+            } else if (score > 0) {
+                document.getElementById('valQuantScore').innerText = `${score}/100`;
+            } else {
+                document.getElementById('valQuantScore').innerText = `0/100 (NEUTRAL)`;
+            }
             
             const stage = smc.pre_momentum_stage || 'INACTIVE';
             const reasonTxt = document.getElementById('decisionReasonText');

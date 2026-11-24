@@ -234,6 +234,8 @@ class MarketValidator:
 
         # Check consecutive intervals strictly: intra-session intervals must be exactly candle_duration_seconds (300s).
         # Any missing candle gap within the active session is strictly rejected.
+        # Exception: At standard NSE session close, Yahoo Finance often timestamps the final closing auction candle at 15:25
+        # following the 15:15 bar (600s gap due to no trades during post-close auction at 15:20). Allow this specific closing gap.
         missing_count = 0
         if len(df_eval) >= 2:
             for idx_c in range(1, len(df_eval)):
@@ -241,7 +243,9 @@ class MarketValidator:
                 t_curr = df_eval.index[idx_c]
                 if t_prev.date() == t_curr.date():
                     int_diff = (t_curr - t_prev).total_seconds()
-                    if int_diff != candle_duration_seconds:
+                    # Allow closing auction gap between 15:15 and 15:25 (600s) on standard session
+                    is_closing_auction_gap = (t_prev.hour == 15 and t_prev.minute == 15 and t_curr.hour == 15 and t_curr.minute == 25 and int_diff == 600)
+                    if int_diff != candle_duration_seconds and not is_closing_auction_gap:
                         missing_count += 1
                         return {
                             "is_valid": False,

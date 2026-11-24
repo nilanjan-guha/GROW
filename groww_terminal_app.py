@@ -734,16 +734,21 @@ def smc_scan():
         # Stricter freshness: Max delay of 300 seconds (5m) during live market hours
         feed_val = MarketValidator.validate_feed_freshness(df, max_delay_seconds=300, candle_duration_seconds=300)
         if not feed_val["is_valid"]:
+            # Even when feed is rejected for active signal generation, populate basic technicals for the UI
+            reject_smc = res.copy() if res else {}
+            reject_smc.update({
+                "action": "WAIT FOR ENTRY (NO TRADE)",
+                "verdict": f"FEED REJECTED: {feed_val['status']}",
+                "reasoning": feed_val["reason"],
+                "current_price": float(df['Close'].iloc[-1]),
+                "signal_status": "NEUTRAL",
+                "signal_id": None,
+                "composite_score": 0,
+                "probability_pct": 0
+            })
             return jsonify({
                 "success": True,
-                "smc": {
-                    "action": "WAIT FOR ENTRY (NO TRADE)",
-                    "verdict": f"FEED REJECTED: {feed_val['status']}",
-                    "reasoning": feed_val["reason"],
-                    "current_price": float(df['Close'].iloc[-1]),
-                    "signal_status": "NEUTRAL",
-                    "signal_id": None
-                }
+                "smc": reject_smc
             })
 
         is_completed_candle = feed_val["is_completed_candle"]
