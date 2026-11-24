@@ -904,39 +904,44 @@ strictIndexAlignment = input.bool(true, 'Require Parent Index Bias to Buy Option
 minOptionMomentumAtr = input.float(1.0, 'Minimum Premium Momentum/Expansion (ATR Multiplier)', minval=0.5, step=0.1, group = INDEX_SYNC_GROUP)
 
 // Resolve the parent index or underlying futures symbol
-// 1. Dhan / TV Index Options (NIFTY, BANKNIFTY, SENSEX, FINNIFTY)
-// 2. MCX Commodity Options (e.g. GOLDM, SILVERM, CRUDEOIL -> Parent Futures contract)
-// 3. Stock Options (e.g. RELIANCE, TCS -> Parent Equity / Cash ticker)
+// Handles Dhan platform formats (e.g. MCX:GOLDM or GOLDM DEC FUT, INDEX:NIFTY) and TradingView formats (MCX:GOLDM1!, NSE:NIFTY)
 dhanPrefix          = (syminfo.prefix == "INDEX" or str.contains(syminfo.prefix, "IDX")) ? "INDEX:" : "NSE:"
 detectedIndexTicker = str.contains(tickerUpper, "BANKNIFTY") ? (dhanPrefix + "BANKNIFTY") : 
                       str.contains(tickerUpper, "FINNIFTY") ? (dhanPrefix + "FINNIFTY") : 
                       str.contains(tickerUpper, "MIDCPNIFTY") ? (dhanPrefix + "MIDCPNIFTY") : 
                       str.contains(tickerUpper, "SENSEX") ? "BSE:SENSEX" : 
-                      str.contains(tickerUpper, "GOLDM") ? "MCX:GOLDM1!" : 
-                      str.contains(tickerUpper, "GOLD") ? "MCX:GOLD1!" : 
-                      str.contains(tickerUpper, "SILVERM") ? "MCX:SILVERM1!" : 
-                      str.contains(tickerUpper, "SILVER") ? "MCX:SILVER1!" : 
-                      str.contains(tickerUpper, "CRUDE") ? "MCX:CRUDEOIL1!" : 
+                      str.contains(tickerUpper, "GOLDM") ? (syminfo.prefix == "MCX" ? "MCX:GOLDM" : "MCX:GOLDM1!") : 
+                      str.contains(tickerUpper, "GOLD") ? (syminfo.prefix == "MCX" ? "MCX:GOLD" : "MCX:GOLD1!") : 
+                      str.contains(tickerUpper, "SILVERM") ? (syminfo.prefix == "MCX" ? "MCX:SILVERM" : "MCX:SILVERM1!") : 
+                      str.contains(tickerUpper, "SILVER") ? (syminfo.prefix == "MCX" ? "MCX:SILVER" : "MCX:SILVER1!") : 
+                      str.contains(tickerUpper, "CRUDE") ? (syminfo.prefix == "MCX" ? "MCX:CRUDEOIL" : "MCX:CRUDEOIL1!") : 
                       str.contains(tickerUpper, "RELIANCE") ? "NSE:RELIANCE" : 
                       (dhanPrefix + "NIFTY")
 
 parentIndexTicker   = (not autoIndexSymbol and manualIndexSymbol != "") ? manualIndexSymbol : detectedIndexTicker
 
 // Automatic Index Sync Active for ALL options (Index, Commodity, and Stock Options):
-// When an option has a parent underlying (Futures or Spot), synchronizing them gives PERFECT execution!
 indexSyncActive = useIndexSync and isOption
 
-// Fetch Parent Index Price Action & Market Structure (Only active when viewing an Option Chart)
-// Uses current bar security to guarantee zero delay between index moves and option triggers
+// Fetch Parent Index / Futures Price Action (Only active when viewing an Option Chart)
+// Uses current bar security to guarantee zero delay between index/futures moves and option triggers
 [idxOpenRaw, idxHighRaw, idxLowRaw, idxCloseRaw, idxEma50Raw, idxEma200Raw] = request.security(parentIndexTicker, timeframe.period, [open, high, low, close, ta.ema(close, 50), ta.ema(close, 200)], gaps=barmerge.gaps_off)
 
-// Robust Fallback: If Dhan/Exchange prefix caused NaN, fallback to standard NSE ticker
-idxClose = not na(idxCloseRaw) ? idxCloseRaw : request.security("NSE:NIFTY", timeframe.period, close, gaps=barmerge.gaps_off)
-idxOpen  = not na(idxOpenRaw) ? idxOpenRaw : request.security("NSE:NIFTY", timeframe.period, open, gaps=barmerge.gaps_off)
-idxHigh  = not na(idxHighRaw) ? idxHighRaw : request.security("NSE:NIFTY", timeframe.period, high, gaps=barmerge.gaps_off)
-idxLow   = not na(idxLowRaw) ? idxLowRaw : request.security("NSE:NIFTY", timeframe.period, low, gaps=barmerge.gaps_off)
-idxEma50 = not na(idxEma50Raw) ? idxEma50Raw : request.security("NSE:NIFTY", timeframe.period, ta.ema(close, 50), gaps=barmerge.gaps_off)
-idxEma200= not na(idxEma200Raw) ? idxEma200Raw : request.security("NSE:NIFTY", timeframe.period, ta.ema(close, 200), gaps=barmerge.gaps_off)
+// Secondary Fallback for MCX commodities if 1! ticker returned na on broker feeds
+mcxFallbackTicker = str.contains(tickerUpper, "GOLDM") ? "MCX:GOLDM1!" : (str.contains(tickerUpper, "GOLD") ? "MCX:GOLD1!" : (str.contains(tickerUpper, "CRUDE") ? "MCX:CRUDEOIL1!" : "NSE:NIFTY"))
+idxCloseSec = na(idxCloseRaw) and isMcxAsset ? request.security(mcxFallbackTicker, timeframe.period, close, gaps=barmerge.gaps_off) : na
+idxOpenSec  = na(idxOpenRaw) and isMcxAsset ? request.security(mcxFallbackTicker, timeframe.period, open, gaps=barmerge.gaps_off) : na
+idxHighSec  = na(idxHighRaw) and isMcxAsset ? request.security(mcxFallbackTicker, timeframe.period, high, gaps=barmerge.gaps_off) : na
+idxLowSec   = na(idxLowRaw) and isMcxAsset ? request.security(mcxFallbackTicker, timeframe.period, low, gaps=barmerge.gaps_off) : na
+idxEma50Sec = na(idxEma50Raw) and isMcxAsset ? request.security(mcxFallbackTicker, timeframe.period, ta.ema(close, 50), gaps=barmerge.gaps_off) : na
+idxEma200Sec= na(idxEma200Raw) and isMcxAsset ? request.security(mcxFallbackTicker, timeframe.period, ta.ema(close, 200), gaps=barmerge.gaps_off) : na
+
+idxClose = not na(idxCloseRaw) ? idxCloseRaw : (not na(idxCloseSec) ? idxCloseSec : request.security("NSE:NIFTY", timeframe.period, close, gaps=barmerge.gaps_off))
+idxOpen  = not na(idxOpenRaw) ? idxOpenRaw : (not na(idxOpenSec) ? idxOpenSec : request.security("NSE:NIFTY", timeframe.period, open, gaps=barmerge.gaps_off))
+idxHigh  = not na(idxHighRaw) ? idxHighRaw : (not na(idxHighSec) ? idxHighSec : request.security("NSE:NIFTY", timeframe.period, high, gaps=barmerge.gaps_off))
+idxLow   = not na(idxLowRaw) ? idxLowRaw : (not na(idxLowSec) ? idxLowSec : request.security("NSE:NIFTY", timeframe.period, low, gaps=barmerge.gaps_off))
+idxEma50 = not na(idxEma50Raw) ? idxEma50Raw : (not na(idxEma50Sec) ? idxEma50Sec : request.security("NSE:NIFTY", timeframe.period, ta.ema(close, 50), gaps=barmerge.gaps_off))
+idxEma200= not na(idxEma200Raw) ? idxEma200Raw : (not na(idxEma200Sec) ? idxEma200Sec : request.security("NSE:NIFTY", timeframe.period, ta.ema(close, 200), gaps=barmerge.gaps_off))
 
 // Parent Index Trend & Structural Shift Metrics:
 // 1. Index Trend Alignment (EMA 50 & 200 or close vs EMA 50)
