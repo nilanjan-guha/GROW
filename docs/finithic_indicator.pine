@@ -732,10 +732,10 @@ colPendingShort = color.new(#e91e63, 85)
 // Automatic Asset Class Identification (Index Spot vs Option Contract vs MCX Commodity)
 tickerUpper  = str.upper(syminfo.ticker)
 isMcxAsset   = syminfo.prefix == "MCX" or str.contains(tickerUpper, "GOLD") or str.contains(tickerUpper, "SILVER") or str.contains(tickerUpper, "CRUDE") or str.contains(tickerUpper, "NATURALGAS")
-isOption     = syminfo.type == 'option' or str.contains(tickerUpper, "CALL") or str.contains(tickerUpper, "PUT") or str.endswith(tickerUpper, "CE") or str.endswith(tickerUpper, "PE")
-isCallOption = isOption and (str.endswith(tickerUpper, "CE") or str.contains(tickerUpper, "CALL"))
-isPutOption  = isOption and (str.endswith(tickerUpper, "PE") or str.contains(tickerUpper, "PUT"))
-isIndex      = str.contains(tickerUpper, "NIFTY") or str.contains(tickerUpper, "BANKNIFTY") or str.contains(tickerUpper, "SENSEX") or str.contains(tickerUpper, "FINNIFTY") or str.contains(tickerUpper, "MIDCPNIFTY") or syminfo.type == "index"
+isOption     = syminfo.type == 'option' or str.contains(tickerUpper, "CALL") or str.contains(tickerUpper, "PUT") or str.endswith(tickerUpper, "CE") or str.endswith(tickerUpper, "PE") or str.endswith(tickerUpper, "-CE") or str.endswith(tickerUpper, "-PE") or str.contains(tickerUpper, " CE") or str.contains(tickerUpper, " PE")
+isCallOption = isOption and (str.endswith(tickerUpper, "CE") or str.contains(tickerUpper, "CALL") or str.contains(tickerUpper, "-CE") or str.contains(tickerUpper, " CE"))
+isPutOption  = isOption and (str.endswith(tickerUpper, "PE") or str.contains(tickerUpper, "PUT") or str.contains(tickerUpper, "-PE") or str.contains(tickerUpper, " PE"))
+isIndex      = not isMcxAsset and not isOption and (str.contains(tickerUpper, "NIFTY") or str.contains(tickerUpper, "BANKNIFTY") or str.contains(tickerUpper, "SENSEX") or str.contains(tickerUpper, "FINNIFTY") or str.contains(tickerUpper, "MIDCPNIFTY") or syminfo.type == "index")
 
 // Institutional Session Killzones
 // For Equity/Indices (09:15-11:45 & 13:15-15:15 IST)
@@ -862,8 +862,8 @@ bearTrend = not trendFilterEma or (close < ema200 and ema50 <= ema200)
 
 // Multi-Entry Opportunities:
 // 1. Demand/Supply Order Block Pullback Touch
-obDemandTouch = not na(internalLow.currentLevel) and (low <= internalLow.currentLevel + (atr14 * 0.6)) and (close > open)
-obSupplyTouch = not na(internalHigh.currentLevel) and (high >= internalHigh.currentLevel - (atr14 * 0.6)) and (close < open)
+obDemandTouch = not na(internalLow.currentLevel) and (low <= internalLow.currentLevel + (atr14 * 0.8)) and (close > open)
+obSupplyTouch = not na(internalHigh.currentLevel) and (high >= internalHigh.currentLevel - (atr14 * 0.8)) and (close < open)
 
 // 2. FVG 50% Consequent Encroachment / Mitigation Entry:
 // Detect recently formed fresh FVG touch
@@ -874,8 +874,8 @@ if currentAlerts.bullishFairValueGap
 if currentAlerts.bearishFairValueGap
     lastBearFvgMid := (high[0] + low[2]) * 0.5
 
-fvgDemandRetest = not na(lastBullFvgMid) and low <= lastBullFvgMid and close >= lastBullFvgMid and close > open
-fvgSupplyRetest = not na(lastBearFvgMid) and high >= lastBearFvgMid and close <= lastBearFvgMid and close < open
+fvgDemandRetest = not na(lastBullFvgMid) and low <= lastBullFvgMid + (atr14 * 0.3) and close >= lastBullFvgMid and close > open
+fvgSupplyRetest = not na(lastBearFvgMid) and high >= lastBearFvgMid - (atr14 * 0.3) and close <= lastBearFvgMid and close < open
 
 // Major HTF 15M Reversal override: When price sweeps 15M low or hits 15M discount demand with bullish candle
 htfMajorBuy  = useHtfConfluence and (htfSweepLow or (htfInDiscount and sweepLow)) and (close > open)
@@ -896,11 +896,11 @@ minOptionMomentumAtr = input.float(1.0, 'Minimum Premium Momentum/Expansion (ATR
 
 // Resolve the parent index symbol - Handles Dhan platform format (e.g. INDEX:NIFTY or NIFTY) and TradingView format (NSE:NIFTY)
 dhanPrefix          = (syminfo.prefix == "INDEX" or str.contains(syminfo.prefix, "IDX")) ? "INDEX:" : "NSE:"
-detectedIndexTicker = isMcxAsset ? (syminfo.prefix + ":" + syminfo.root + "1!") : (str.contains(tickerUpper, "BANKNIFTY") ? (dhanPrefix + "BANKNIFTY") : str.contains(tickerUpper, "FINNIFTY") ? (dhanPrefix + "FINNIFTY") : str.contains(tickerUpper, "MIDCPNIFTY") ? (dhanPrefix + "MIDCPNIFTY") : str.contains(tickerUpper, "SENSEX") ? "BSE:SENSEX" : (dhanPrefix + "NIFTY"))
+detectedIndexTicker = str.contains(tickerUpper, "BANKNIFTY") ? (dhanPrefix + "BANKNIFTY") : str.contains(tickerUpper, "FINNIFTY") ? (dhanPrefix + "FINNIFTY") : str.contains(tickerUpper, "MIDCPNIFTY") ? (dhanPrefix + "MIDCPNIFTY") : str.contains(tickerUpper, "SENSEX") ? "BSE:SENSEX" : (dhanPrefix + "NIFTY")
 parentIndexTicker   = (not autoIndexSymbol and manualIndexSymbol != "") ? manualIndexSymbol : detectedIndexTicker
 
 // Automatic Index Sync Bypass for Commodities or Standalone Assets:
-// If on MCX or standalone asset, do not block option if an NSE Index is irrelevant!
+// Commodities (GOLD, SILVER, CRUDE) trade on their own independent order flow & structure!
 indexSyncActive = useIndexSync and not isMcxAsset
 
 // Fetch Parent Index Price Action & Market Structure (Only active when viewing an Option Chart)
