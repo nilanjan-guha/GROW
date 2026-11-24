@@ -216,12 +216,24 @@ def get_active_signal_symbols():
     except Exception:
         return set()
 
-def evaluate_candle_transition(direction, entry, orig_sl, sl, tp1, tp2, tp1_hit_prior, c_open, c_high, c_low, c_ts, est_costs):
+def evaluate_candle_transition(direction, entry, orig_sl, sl, tp1, tp2, tp1_hit_prior, c_open, c_high, c_low, c_ts, est_costs, cost_calc_fn=None):
     """
     Consolidated pure function for 5-minute single-candle outcome evaluation.
     Used identically across both DataFrame and Dictionary evaluation paths.
-    Enforces strict chronological sequencing and conservative same-candle stop-first ambiguity rules.
+    Enforces strict chronological sequencing, conservative same-candle stop-first ambiguity rules,
+    and dynamically recalculates transaction friction at actual exit prices when cost_calc_fn is provided.
     """
+    # Normalize direction to BUY or SELL
+    norm_dir = {"BUY": "BUY", "BULLISH": "BUY", "SELL": "SELL", "BEARISH": "SELL"}.get(str(direction).upper())
+    if not norm_dir:
+        # Unrecognized direction: fail closed, do not execute
+        return {
+            "outcome": "ACTIVE", "final_pnl": 0.0, "net_pnl": 0.0, "brokerage_costs": est_costs,
+            "tp1_hit": 1 if tp1_hit_prior else 0, "tp1_hit_time": None, "tp2_hit": 0, "tp2_hit_time": None,
+            "sl": sl, "should_break": False
+        }
+
+    direction = norm_dir
     outcome = "ACTIVE"
     final_pnl = 0.0
     brokerage_costs = est_costs
@@ -233,13 +245,27 @@ def evaluate_candle_transition(direction, entry, orig_sl, sl, tp1, tp2, tp1_hit_
     updated_sl = sl
     should_break = False
 
+    def compute_net(pnl_val, exit_p1, exit_p2=None, is_partial=False):
+        if cost_calc_fn:
+            try:
+                if is_partial and exit_p2 is not None:
+                    c1 = cost_calc_fn(exit_p1, fraction=0.5)
+                    c2 = cost_calc_fn(exit_p2, fraction=0.5)
+                    tot_cost = c1 + c2
+                else:
+                    tot_cost = cost_calc_fn(exit_p1, fraction=1.0)
+                return round(tot_cost, 2), round(pnl_val - tot_cost, 2)
+            except Exception:
+                pass
+        return est_costs, round(pnl_val - est_costs, 2)
+
     if direction == "BUY":
         # 1. Position entered this candle with TP1 already confirmed in a previous candle:
         if tp1_hit_prior:
             if c_open < sl:
                 outcome = "WIN_PARTIAL"
                 final_pnl = round(0.5 * (tp1 - entry) + 0.5 * (c_open - entry), 2)
-                net_pnl = round(final_pnl - brokerage_costs, 2)
+                brokerage_costs, net_pnl = compute_net(final_pnl, tp1, c_open, is_partial=True)
                 should_break = True
             else:
                 hit_tp2_now = tp2 and (c_high >= tp2)
@@ -247,19 +273,19 @@ def evaluate_candle_transition(direction, entry, orig_sl, sl, tp1, tp2, tp1_hit_
                 if hit_tp2_now and hit_be_sl_now:
                     outcome = "WIN_PARTIAL"
                     final_pnl = round(0.5 * (tp1 - entry) + 0.5 * (sl - entry), 2)
-                    net_pnl = round(final_pnl - brokerage_costs, 2)
+                    brokerage_costs, net_pnl = compute_net(final_pnl, tp1, sl, is_partial=True)
                     should_break = True
                 elif hit_tp2_now:
                     tp2_hit = 1
                     tp2_hit_time = c_ts
                     outcome = "WIN_FULL"
                     final_pnl = round(0.5 * (tp1 - entry) + 0.5 * (tp2 - entry), 2)
-                    net_pnl = round(final_pnl - brokerage_costs, 2)
+                    brokerage_costs, net_pnl = compute_net(final_pnl, tp1, tp2, is_partial=True)
                     should_break = True
                 elif hit_be_sl_now:
                     outcome = "WIN_PARTIAL"
                     final_pnl = round(0.5 * (tp1 - entry) + 0.5 * (sl - entry), 2)
-                    net_pnl = round(final_pnl - brokerage_costs, 2)
+                    brokerage_costs, net_pnl = compute_net(final_pnl, tp1, sl, is_partial=True)
                     should_break = True
 
         # 2. Position entered this candle with TP1 not yet hit:
@@ -267,7 +293,7 @@ def evaluate_candle_transition(direction, entry, orig_sl, sl, tp1, tp2, tp1_hit_
             if c_open <= orig_sl:
                 outcome = "LOSS"
                 final_pnl = round(c_open - entry, 2)
-                net_pnl = round(final_pnl - brokerage_costs, 2)
+                brokerage_costs, net_pnl = compute_net(final_pnl, c_open, is_partial=False)
                 should_break = True
             else:
                 hit_tp1_now = c_high >= tp1
@@ -275,12 +301,12 @@ def evaluate_candle_transition(direction, entry, orig_sl, sl, tp1, tp2, tp1_hit_
                 if hit_tp1_now and hit_orig_sl_now:
                     outcome = "LOSS"
                     final_pnl = round(orig_sl - entry, 2)
-                    net_pnl = round(final_pnl - brokerage_costs, 2)
+                    brokerage_costs, net_pnl = compute_net(final_pnl, orig_sl, is_partial=False)
                     should_break = True
                 elif hit_orig_sl_now:
                     outcome = "LOSS"
                     final_pnl = round(orig_sl - entry, 2)
-                    net_pnl = round(final_pnl - brokerage_costs, 2)
+                    brokerage_costs, net_pnl = compute_net(final_pnl, orig_sl, is_partial=False)
                     should_break = True
                 elif hit_tp1_now:
                     tp1_hit = 1
@@ -293,19 +319,19 @@ def evaluate_candle_transition(direction, entry, orig_sl, sl, tp1, tp2, tp1_hit_
                         # Ambiguous same-candle sequence: conservative stop-first
                         outcome = "WIN_PARTIAL"
                         final_pnl = round(0.5 * (tp1 - entry) + 0.5 * (updated_sl - entry), 2)
-                        net_pnl = round(final_pnl - brokerage_costs, 2)
+                        brokerage_costs, net_pnl = compute_net(final_pnl, tp1, updated_sl, is_partial=True)
                         should_break = True
                     elif hit_be_same:
                         outcome = "WIN_PARTIAL"
                         final_pnl = round(0.5 * (tp1 - entry) + 0.5 * (updated_sl - entry), 2)
-                        net_pnl = round(final_pnl - brokerage_costs, 2)
+                        brokerage_costs, net_pnl = compute_net(final_pnl, tp1, updated_sl, is_partial=True)
                         should_break = True
                     elif hit_tp2_same:
                         tp2_hit = 1
                         tp2_hit_time = c_ts
                         outcome = "WIN_FULL"
                         final_pnl = round(0.5 * (tp1 - entry) + 0.5 * (tp2 - entry), 2)
-                        net_pnl = round(final_pnl - brokerage_costs, 2)
+                        brokerage_costs, net_pnl = compute_net(final_pnl, tp1, tp2, is_partial=True)
                         should_break = True
 
     elif direction == "SELL":
@@ -314,7 +340,7 @@ def evaluate_candle_transition(direction, entry, orig_sl, sl, tp1, tp2, tp1_hit_
             if c_open > sl:
                 outcome = "WIN_PARTIAL"
                 final_pnl = round(0.5 * (entry - tp1) + 0.5 * (entry - c_open), 2)
-                net_pnl = round(final_pnl - brokerage_costs, 2)
+                brokerage_costs, net_pnl = compute_net(final_pnl, tp1, c_open, is_partial=True)
                 should_break = True
             else:
                 hit_tp2_now = tp2 and (c_low <= tp2)
@@ -322,19 +348,19 @@ def evaluate_candle_transition(direction, entry, orig_sl, sl, tp1, tp2, tp1_hit_
                 if hit_tp2_now and hit_be_sl_now:
                     outcome = "WIN_PARTIAL"
                     final_pnl = round(0.5 * (entry - tp1) + 0.5 * (entry - sl), 2)
-                    net_pnl = round(final_pnl - brokerage_costs, 2)
+                    brokerage_costs, net_pnl = compute_net(final_pnl, tp1, sl, is_partial=True)
                     should_break = True
                 elif hit_tp2_now:
                     tp2_hit = 1
                     tp2_hit_time = c_ts
                     outcome = "WIN_FULL"
                     final_pnl = round(0.5 * (entry - tp1) + 0.5 * (entry - tp2), 2)
-                    net_pnl = round(final_pnl - brokerage_costs, 2)
+                    brokerage_costs, net_pnl = compute_net(final_pnl, tp1, tp2, is_partial=True)
                     should_break = True
                 elif hit_be_sl_now:
                     outcome = "WIN_PARTIAL"
                     final_pnl = round(0.5 * (entry - tp1) + 0.5 * (entry - sl), 2)
-                    net_pnl = round(final_pnl - brokerage_costs, 2)
+                    brokerage_costs, net_pnl = compute_net(final_pnl, tp1, sl, is_partial=True)
                     should_break = True
 
         # 2. Position entered this candle with TP1 not yet hit:
@@ -342,7 +368,7 @@ def evaluate_candle_transition(direction, entry, orig_sl, sl, tp1, tp2, tp1_hit_
             if c_open >= orig_sl:
                 outcome = "LOSS"
                 final_pnl = round(entry - c_open, 2)
-                net_pnl = round(final_pnl - brokerage_costs, 2)
+                brokerage_costs, net_pnl = compute_net(final_pnl, c_open, is_partial=False)
                 should_break = True
             else:
                 hit_tp1_now = c_low <= tp1
@@ -350,12 +376,12 @@ def evaluate_candle_transition(direction, entry, orig_sl, sl, tp1, tp2, tp1_hit_
                 if hit_tp1_now and hit_orig_sl_now:
                     outcome = "LOSS"
                     final_pnl = round(entry - orig_sl, 2)
-                    net_pnl = round(final_pnl - brokerage_costs, 2)
+                    brokerage_costs, net_pnl = compute_net(final_pnl, orig_sl, is_partial=False)
                     should_break = True
                 elif hit_orig_sl_now:
                     outcome = "LOSS"
                     final_pnl = round(entry - orig_sl, 2)
-                    net_pnl = round(final_pnl - brokerage_costs, 2)
+                    brokerage_costs, net_pnl = compute_net(final_pnl, orig_sl, is_partial=False)
                     should_break = True
                 elif hit_tp1_now:
                     tp1_hit = 1
@@ -367,19 +393,19 @@ def evaluate_candle_transition(direction, entry, orig_sl, sl, tp1, tp2, tp1_hit_
                     if hit_tp2_same and hit_be_same:
                         outcome = "WIN_PARTIAL"
                         final_pnl = round(0.5 * (entry - tp1) + 0.5 * (entry - updated_sl), 2)
-                        net_pnl = round(final_pnl - brokerage_costs, 2)
+                        brokerage_costs, net_pnl = compute_net(final_pnl, tp1, updated_sl, is_partial=True)
                         should_break = True
                     elif hit_be_same:
                         outcome = "WIN_PARTIAL"
                         final_pnl = round(0.5 * (entry - tp1) + 0.5 * (entry - updated_sl), 2)
-                        net_pnl = round(final_pnl - brokerage_costs, 2)
+                        brokerage_costs, net_pnl = compute_net(final_pnl, tp1, updated_sl, is_partial=True)
                         should_break = True
                     elif hit_tp2_same:
                         tp2_hit = 1
                         tp2_hit_time = c_ts
                         outcome = "WIN_FULL"
                         final_pnl = round(0.5 * (entry - tp1) + 0.5 * (entry - tp2), 2)
-                        net_pnl = round(final_pnl - brokerage_costs, 2)
+                        brokerage_costs, net_pnl = compute_net(final_pnl, tp1, tp2, is_partial=True)
                         should_break = True
 
     return {
@@ -451,7 +477,15 @@ def evaluate_open_outcomes(data_map, force_eod=False):
             # For 5-minute candles where index represents candle START (e.g. 09:20 start completes at 09:25),
             # if sig_candle_close is recorded as 09:20:00 (epoch), the first executable candle starting at 09:20:00 is evaluated!
             # If not recorded, fallback: c_ts > last_candle_time and (c_ts >= sig_time - 300 if c_ts is candle start)
-            eval_min_time = sig_candle_close if sig_candle_close > 0 else (sig_time - 300)
+            # Threshold: candle must be formed strictly after signal candle close time.
+            # If signal_candle_close_time is missing, fail-closed for that signal (do not guess sig_time - 300)
+            if sig_candle_close > 0:
+                eval_min_time = sig_candle_close
+            elif sig_time > 0:
+                eval_min_time = sig_time
+            else:
+                continue
+
             mfe = float(sig["mfe"] or 0.0)
             mae = float(sig["mae"] or 0.0)
 
@@ -470,6 +504,15 @@ def evaluate_open_outcomes(data_map, force_eod=False):
             inst_type = sig["instrument_type"] or "EQUITY_INTRADAY"
             default_costs = IndianMarketCosts.calculate_intraday_costs(entry, entry, quantity=qty, instrument_type=inst_type)
             est_costs = default_costs["cost_per_share"]
+
+            def make_cost_calc(entry_p, quantity, inst):
+                def _calc(exit_p, fraction=1.0):
+                    sub_qty = max(1, int(round(quantity * fraction)))
+                    c = IndianMarketCosts.calculate_intraday_costs(entry_p, exit_p, quantity=sub_qty, instrument_type=inst)
+                    return c["cost_per_share"] * fraction
+                return _calc
+
+            cost_calc_fn = make_cost_calc(entry, qty, inst_type)
 
             # 0. Intraday Session Close Auto-Squareoff:
             # Applies when signal is from an older calendar day or when called with force_eod=True
@@ -539,7 +582,7 @@ def evaluate_open_outcomes(data_map, force_eod=False):
                         direction=direction, entry=entry, orig_sl=orig_sl, sl=sl,
                         tp1=tp1, tp2=tp2, tp1_hit_prior=tp1_hit_prior,
                         c_open=c_open, c_high=c_high, c_low=c_low, c_ts=c_ts,
-                        est_costs=est_costs
+                        est_costs=est_costs, cost_calc_fn=cost_calc_fn
                     )
 
                     outcome = res["outcome"]
@@ -579,7 +622,7 @@ def evaluate_open_outcomes(data_map, force_eod=False):
                         direction=direction, entry=entry, orig_sl=orig_sl, sl=sl,
                         tp1=tp1, tp2=tp2, tp1_hit_prior=tp1_hit_prior,
                         c_open=c_open, c_high=c_high, c_low=c_low, c_ts=c_ts,
-                        est_costs=est_costs
+                        est_costs=est_costs, cost_calc_fn=cost_calc_fn
                     )
 
                     outcome = res["outcome"]

@@ -976,32 +976,53 @@ def smc_scan():
                 sig_close_price = inst_res["current_price"]
                 # For 5-minute intraday execution, expected entry at next candle open incorporates conservative slippage
                 slippage_pct = 0.0005  # 0.05% slippage
-                exp_entry = round(sig_close_price * (1.0 + slippage_pct) if inst_res["direction"] == "BUY" else sig_close_price * (1.0 - slippage_pct), 2)
-                
-                signal_id = log_signal({
-                    "symbol": symbol,
-                    "direction": inst_res["direction"],
-                    "strategy": inst_res["primary_strategy"],
-                    "entry_price": exp_entry,
-                    "stop_loss": inst_res["suggested_sl"],
-                    "target_1": inst_res["suggested_tp1"],
-                    "target_2": inst_res["suggested_tp2"],
-                    "score": inst_res["composite_score"],
-                    "confidence": f"{inst_res['probability_pct']}%",
-                    "catalyst": news_headline or "Institutional Order Flow",
-                    "features": {"rvol": inst_res["rvol"], "rsi": inst_res["rsi"], "vwap": inst_res["vwap"]},
-                    "all_triggered": inst_res["triggered_strategies"],
-                    "signal_price": sig_close_price,
-                    "expected_entry_price": exp_entry,
-                    "actual_entry_price": None,
-                    "entry_timestamp": None,
-                    "execution_status": "SIGNAL_GENERATED"
-                })
-                res["signal_id"] = signal_id
-                # Instantly cache to active_signals_map
-                screener_state.setdefault("active_signals_map", {})[symbol] = signal_id
-                screener_state["active_signals_map"][clean_sym] = signal_id
-                screener_state["active_signals_map"][f"{clean_sym}.NS"] = signal_id
+                norm_dir = {"BULLISH": "BUY", "BEARISH": "SELL", "BUY": "BUY", "SELL": "SELL"}.get(str(inst_res["direction"]).upper())
+                if not norm_dir:
+                    print(f"[SIGNAL GENERATION ERROR] Unknown direction {inst_res['direction']} for {symbol}")
+                    res["signal_id"] = None
+                else:
+                    exp_entry = round(sig_close_price * (1.0 + slippage_pct) if norm_dir == "BUY" else sig_close_price * (1.0 - slippage_pct), 2)
+                    
+                    # Compute candle start and close timestamps from validated feed
+                    # In 5-minute market feeds, latest_candle_ts is the candle start timestamp
+                    c_start_ts = float(latest_candle_ts)
+                    c_close_ts = c_start_ts + 300.0  # Completed 5m candle close timestamp
+                    
+                    # Fetch contract lot size if F&O equity futures
+                    from core.contract_master import ContractMaster
+                    contract_spec = ContractMaster.get_contract_spec(clean_sym)
+                    intended_qty = contract_spec["lot_size"] if contract_spec else 100
+                    intended_inst = "FUTURES" if contract_spec else "EQUITY_INTRADAY"
+                    
+                    signal_id = log_signal({
+                        "symbol": symbol,
+                        "direction": norm_dir,
+                        "strategy": inst_res["primary_strategy"],
+                        "entry_price": exp_entry,
+                        "stop_loss": inst_res["suggested_sl"],
+                        "target_1": inst_res["suggested_tp1"],
+                        "target_2": inst_res["suggested_tp2"],
+                        "score": inst_res["composite_score"],
+                        "confidence": f"{inst_res['probability_pct']}%",
+                        "catalyst": news_headline or "Institutional Order Flow",
+                        "features": {"rvol": inst_res["rvol"], "rsi": inst_res["rsi"], "vwap": inst_res["vwap"]},
+                        "all_triggered": inst_res["triggered_strategies"],
+                        "signal_price": sig_close_price,
+                        "expected_entry_price": exp_entry,
+                        "actual_entry_price": None,
+                        "entry_timestamp": None,
+                        "execution_status": "SIGNAL_GENERATED",
+                        "signal_candle_start": c_start_ts,
+                        "signal_candle_close_time": c_close_ts,
+                        "signal_generated_at": now,
+                        "quantity": intended_qty,
+                        "instrument_type": intended_inst
+                    })
+                    res["signal_id"] = signal_id
+                    # Instantly cache to active_signals_map
+                    screener_state.setdefault("active_signals_map", {})[symbol] = signal_id
+                    screener_state["active_signals_map"][clean_sym] = signal_id
+                    screener_state["active_signals_map"][f"{clean_sym}.NS"] = signal_id
             else:
                 res["signal_id"] = None
         else:
@@ -1501,11 +1522,53 @@ def log_confirmed_signal_endpoint():
             return jsonify({"success": False, "error": f"Server rejection: Minimum risk/reward threshold not met (RR 1:{rr_ratio:.2f} < 1:1.20)."}), 400
 
         slippage_pct = 0.0005
-        exp_entry = round(entry_val * (1.0 + slippage_pct) if server_direction == "BUY" else entry_val * (1.0 - slippage_pct), 2)
+        normalized_direction = {
+            "BULLISH": "BUY",
+            "BEARISH": "SELL",
+            "BUY": "BUY",
+            "SELL": "SELL"
+        }.get(server_direction.upper())
+        if not normalized_direction:
+            return jsonify({"success": False, "error": f"Server rejection: Direction '{server_direction}' cannot be normalized to BUY or SELL."}), 400
+
+        exp_entry = round(entry_val * (1.0 + slippage_pct) if normalized_direction == "BUY" else entry_val * (1.0 - slippage_pct), 2)
+
+        # Derive authoritative candle timestamps
+        # authoritative_ts is the start timestamp of the completed 5m candle
+        try:
+            if hasattr(authoritative_ts, 'timestamp'):
+                c_start_ts = float(authoritative_ts.timestamp())
+            elif isinstance(authoritative_ts, str) and authoritative_ts.replace('.', '', 1).isdigit():
+                c_start_ts = float(authoritative_ts)
+            else:
+                c_start_ts = float(pd.to_datetime(authoritative_ts).timestamp())
+        except Exception:
+            c_start_ts = time.time() - 300.0
+
+        c_close_ts = c_start_ts + 300.0
+
+        # Determine intended quantity and instrument type from contract master or client request
+        from core.contract_master import ContractMaster
+        clean_cand_sym = sym.replace(".NS", "").upper()
+        contract_spec = ContractMaster.get_contract_spec(clean_cand_sym)
+        
+        req_inst = (data.get("instrument_type") or "").upper()
+        if req_inst in ("FUTURES", "OPTIONS", "EQUITY_INTRADAY"):
+            intended_inst = req_inst
+        else:
+            intended_inst = "FUTURES" if contract_spec else "EQUITY_INTRADAY"
+
+        req_qty = data.get("quantity")
+        if req_qty and int(req_qty) > 0:
+            intended_qty = int(req_qty)
+        elif contract_spec:
+            intended_qty = contract_spec["lot_size"]
+        else:
+            intended_qty = 100
 
         sig_id = log_signal({
             "symbol": sym,
-            "direction": server_direction,
+            "direction": normalized_direction,
             "strategy": matching_cand.get("stage_desc") or "SMC Structure",
             "entry_price": exp_entry,
             "stop_loss": sl_val,
@@ -1520,7 +1583,12 @@ def log_confirmed_signal_endpoint():
             "expected_entry_price": exp_entry,
             "actual_entry_price": exp_entry,
             "entry_timestamp": time.time(),
-            "execution_status": "PAPER_FILLED"
+            "execution_status": "PAPER_FILLED",
+            "signal_candle_start": c_start_ts,
+            "signal_candle_close_time": c_close_ts,
+            "signal_generated_at": time.time(),
+            "quantity": intended_qty,
+            "instrument_type": intended_inst
         })
 
         # Cache in memory

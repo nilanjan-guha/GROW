@@ -992,19 +992,33 @@ class TestIntradayScreenerCore(unittest.TestCase):
 
     def test_quantity_and_instrument_type_cost_scaling(self):
         # Verify that different quantities scale brokerage and statutory fees properly
+        from engine.cost_engine import IndianMarketCosts
+        one_hour_ago = time.time() - 3600
         sig_100_id = storage.log_signal({
             "symbol": "COST_100.NS", "direction": "BUY", "strategy": "TEST_STRAT",
-            "entry_price": 1000.0, "stop_loss": 990.0, "target_1": 1020.0, "quantity": 100
+            "entry_price": 1000.0, "stop_loss": 990.0, "target_1": 1020.0, "target_2": 1020.0, "quantity": 100,
+            "instrument_type": "EQUITY_INTRADAY",
+            "signal_candle_start": one_hour_ago - 300,
+            "signal_candle_close_time": one_hour_ago
         })
         sig_1000_id = storage.log_signal({
             "symbol": "COST_1000.NS", "direction": "BUY", "strategy": "TEST_STRAT",
-            "entry_price": 1000.0, "stop_loss": 990.0, "target_1": 1020.0, "quantity": 1000
+            "entry_price": 1000.0, "stop_loss": 990.0, "target_1": 1020.0, "target_2": 1020.0, "quantity": 1000,
+            "instrument_type": "EQUITY_INTRADAY",
+            "signal_candle_start": one_hour_ago - 300,
+            "signal_candle_close_time": one_hour_ago
+        })
+        sig_fut_id = storage.log_signal({
+            "symbol": "COST_FUT.NS", "direction": "BUY", "strategy": "TEST_STRAT",
+            "entry_price": 1000.0, "stop_loss": 990.0, "target_1": 1020.0, "target_2": 1020.0, "quantity": 250,
+            "instrument_type": "FUTURES",
+            "signal_candle_start": one_hour_ago - 300,
+            "signal_candle_close_time": one_hour_ago
         })
 
         conn = storage.get_db_connection()
         c = conn.cursor()
-        one_hour_ago = time.time() - 3600
-        c.execute("UPDATE historical_signals SET timestamp = ?, last_candle_time = 0 WHERE id IN (?, ?)", (one_hour_ago, sig_100_id, sig_1000_id))
+        c.execute("UPDATE historical_signals SET timestamp = ?, last_candle_time = 0 WHERE id IN (?, ?, ?)", (one_hour_ago, sig_100_id, sig_1000_id, sig_fut_id))
         conn.commit()
         conn.close()
 
@@ -1013,18 +1027,153 @@ class TestIntradayScreenerCore(unittest.TestCase):
             "Open": [1000.0], "High": [1025.0], "Low": [1001.0], "Close": [1022.0], "Volume": [20000]
         }, index=pd.DatetimeIndex([c_time]))
 
-        storage.evaluate_open_outcomes({"COST_100.NS": df_win, "COST_1000.NS": df_win})
+        storage.evaluate_open_outcomes({"COST_100.NS": df_win, "COST_1000.NS": df_win, "COST_FUT.NS": df_win})
 
         conn = storage.get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT id, brokerage_costs, net_pnl, quantity FROM historical_signals WHERE id IN (?, ?)", (sig_100_id, sig_1000_id))
+        cursor.execute("SELECT id, brokerage_costs, final_pnl, net_pnl, quantity, instrument_type FROM historical_signals WHERE id IN (?, ?, ?)", (sig_100_id, sig_1000_id, sig_fut_id))
         rows = {r["id"]: dict(r) for r in cursor.fetchall()}
         conn.close()
 
         self.assertIn(sig_100_id, rows)
         self.assertIn(sig_1000_id, rows)
+        self.assertIn(sig_fut_id, rows)
+
+        # 1. Quantity assertions
         self.assertEqual(rows[sig_100_id]["quantity"], 100)
         self.assertEqual(rows[sig_1000_id]["quantity"], 1000)
+        self.assertEqual(rows[sig_fut_id]["quantity"], 250)
+
+        # 2. Numerical cost assertions:
+        # Brokerage + statutory cost per share for 100 shares is higher due to minimum order brokerage floor
+        cost_100 = rows[sig_100_id]["brokerage_costs"]
+        cost_1000 = rows[sig_1000_id]["brokerage_costs"]
+        cost_fut = rows[sig_fut_id]["brokerage_costs"]
+
+        self.assertGreater(cost_100, 0.0)
+        self.assertGreater(cost_1000, 0.0)
+        self.assertGreater(cost_fut, 0.0)
+
+        # Total transaction friction scales with quantity, so per-share cost decreases as fixed brokerage is amortized
+        self.assertGreater(cost_100, cost_1000)
+
+        # Net PnL must be strictly final_pnl - brokerage_costs
+        self.assertAlmostEqual(rows[sig_100_id]["net_pnl"], rows[sig_100_id]["final_pnl"] - cost_100, places=2)
+        self.assertAlmostEqual(rows[sig_1000_id]["net_pnl"], rows[sig_1000_id]["final_pnl"] - cost_1000, places=2)
+        self.assertAlmostEqual(rows[sig_fut_id]["net_pnl"], rows[sig_fut_id]["final_pnl"] - cost_fut, places=2)
+
+    def test_smc_confirmation_endpoint_normalizes_direction_and_evaluates(self):
+        # Integration test verifying manual SMC confirmation endpoint normalizes BULLISH/BEARISH
+        import groww_terminal_app as gta
+        from flask import json
+        client = gta.app.test_client()
+
+        # Seed screener_state so candidate passes stage check
+        test_sym = "RELIANCE.NS"
+        auth_ts = str(self.df_5m.index[-1])
+        cand = {
+            "symbol": test_sym,
+            "direction": "BULLISH",
+            "current_price": 2500.0,
+            "suggested_sl": 2475.0,
+            "suggested_tp1": 2550.0,
+            "suggested_tp2": 2600.0,
+            "is_actionable": True,
+            "stage": "ENTRY READY",
+            "candle_ts": auth_ts,
+            "conviction_score": 85,
+            "confirmation_score": 90
+        }
+        gta.screener_state["ranked_opportunities"] = {
+            "entry_ready": [cand],
+            "ranked_candle_ts": auth_ts
+        }
+        gta.screener_state["raw_market_cache"] = {
+            "^NSEI": {
+                "timestamp": time.time(),
+                "df": self.df_5m
+            }
+        }
+
+        # Send request with action="BULLISH" to /api/signals/log-confirmed
+        # Mock MarketValidator.is_market_open to return True and get_ist_now to align with synthetic candle timestamps
+        from unittest.mock import patch
+        mock_now = self.df_5m.index[-1] + pd.Timedelta(seconds=300)
+        with patch("engine.market_validator.MarketValidator.is_market_open", return_value=True), \
+             patch("engine.market_validator.MarketValidator.get_ist_now", return_value=mock_now):
+            resp = client.post("/api/signals/log-confirmed", data=json.dumps({
+                "symbol": test_sym,
+                "action": "BULLISH",
+                "candle_ts": auth_ts,
+                "entry_price": 2500.0,
+                "sl": 2475.0,
+                "tp1": 2550.0,
+                "tp2": 2600.0
+            }), content_type="application/json")
+
+        self.assertEqual(resp.status_code, 200)
+        res_data = json.loads(resp.data)
+        self.assertTrue(res_data.get("success"))
+        sig_id = res_data.get("signal_id")
+        self.assertIsNotNone(sig_id)
+
+        # Verify stored signal has normalized BUY direction and valid candle close timestamp
+        conn = storage.get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT direction, signal_candle_close_time, quantity, instrument_type FROM historical_signals WHERE id = ?", (sig_id,))
+        saved = c.fetchone()
+        conn.close()
+
+        self.assertEqual(saved["direction"], "BUY")
+        self.assertGreater(saved["signal_candle_close_time"], 0.0)
+        self.assertEqual(saved["instrument_type"], "FUTURES")
+        self.assertEqual(saved["quantity"], 250)
+
+    def test_evaluate_candle_transition_adverse_gaps_and_direction_normalization(self):
+        from core.storage import evaluate_candle_transition
+
+        # 1. BUY gap below original SL -> Exits at adverse open
+        res_buy_gap = evaluate_candle_transition(
+            direction="BUY", entry=1000.0, orig_sl=990.0, sl=990.0, tp1=1020.0, tp2=1040.0,
+            tp1_hit_prior=False, c_open=982.0, c_high=988.0, c_low=978.0, c_ts=1700000000.0, est_costs=1.5
+        )
+        self.assertEqual(res_buy_gap["outcome"], "LOSS")
+        self.assertEqual(res_buy_gap["final_pnl"], -18.0)  # 982 - 1000 = -18 (not capped at 990)
+        self.assertTrue(res_buy_gap["should_break"])
+
+        # 2. SELL gap above original SL -> Exits at adverse open
+        res_sell_gap = evaluate_candle_transition(
+            direction="SELL", entry=1000.0, orig_sl=1010.0, sl=1010.0, tp1=980.0, tp2=960.0,
+            tp1_hit_prior=False, c_open=1018.0, c_high=1022.0, c_low=1015.0, c_ts=1700000000.0, est_costs=1.5
+        )
+        self.assertEqual(res_sell_gap["outcome"], "LOSS")
+        self.assertEqual(res_sell_gap["final_pnl"], -18.0)  # 1000 - 1018 = -18 (not capped at 1010)
+        self.assertTrue(res_sell_gap["should_break"])
+
+        # 3. SELL after TP1, gap above breakeven -> Partial win using adverse open
+        res_sell_be_gap = evaluate_candle_transition(
+            direction="SELL", entry=1000.0, orig_sl=1010.0, sl=1000.0, tp1=980.0, tp2=960.0,
+            tp1_hit_prior=True, c_open=1005.0, c_high=1008.0, c_low=995.0, c_ts=1700000000.0, est_costs=1.5
+        )
+        self.assertEqual(res_sell_be_gap["outcome"], "WIN_PARTIAL")
+        # 0.5 * (1000 - 980) + 0.5 * (1000 - 1005) = 10.0 - 2.5 = 7.5
+        self.assertEqual(res_sell_be_gap["final_pnl"], 7.5)
+        self.assertTrue(res_sell_be_gap["should_break"])
+
+        # 4. BULLISH string normalized to BUY
+        res_norm = evaluate_candle_transition(
+            direction="BULLISH", entry=1000.0, orig_sl=990.0, sl=990.0, tp1=1020.0, tp2=1040.0,
+            tp1_hit_prior=False, c_open=1000.0, c_high=1025.0, c_low=1000.0, c_ts=1700000000.0, est_costs=1.5
+        )
+        self.assertEqual(res_norm["tp1_hit"], 1)
+
+        # 5. Invalid direction -> Fails closed, returns ACTIVE without false execution
+        res_invalid = evaluate_candle_transition(
+            direction="INVALID_DIR", entry=1000.0, orig_sl=990.0, sl=990.0, tp1=1020.0, tp2=1040.0,
+            tp1_hit_prior=False, c_open=1000.0, c_high=1025.0, c_low=1000.0, c_ts=1700000000.0, est_costs=1.5
+        )
+        self.assertEqual(res_invalid["outcome"], "ACTIVE")
+        self.assertFalse(res_invalid["should_break"])
 
     def test_nifty_benchmark_fail_closed_gate(self):
         # Verify that compute_and_update_ranked_opportunities fails-closed when NIFTY feed is corrupted
