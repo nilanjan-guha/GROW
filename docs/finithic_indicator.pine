@@ -729,10 +729,17 @@ colSLBox        = color.new(#f23645, 75)
 colPendingLong  = color.new(#00bcd4, 85)
 colPendingShort = color.new(#e91e63, 85)
 
+// Automatic Asset Class Identification (Index Spot vs Option Contract vs MCX Commodity)
+tickerUpper  = str.upper(syminfo.ticker)
+isMcxAsset   = syminfo.prefix == "MCX" or str.contains(tickerUpper, "GOLD") or str.contains(tickerUpper, "SILVER") or str.contains(tickerUpper, "CRUDE") or str.contains(tickerUpper, "NATURALGAS")
+isOption     = syminfo.type == 'option' or str.contains(tickerUpper, "CALL") or str.contains(tickerUpper, "PUT") or str.endswith(tickerUpper, "CE") or str.endswith(tickerUpper, "PE")
+isCallOption = isOption and (str.endswith(tickerUpper, "CE") or str.contains(tickerUpper, "CALL"))
+isPutOption  = isOption and (str.endswith(tickerUpper, "PE") or str.contains(tickerUpper, "PUT"))
+isIndex      = str.contains(tickerUpper, "NIFTY") or str.contains(tickerUpper, "BANKNIFTY") or str.contains(tickerUpper, "SENSEX") or str.contains(tickerUpper, "FINNIFTY") or str.contains(tickerUpper, "MIDCPNIFTY") or syminfo.type == "index"
+
 // Institutional Session Killzones
 // For Equity/Indices (09:15-11:45 & 13:15-15:15 IST)
 // For MCX Commodities (GOLD, SILVER, CRUDEOIL, NATURALGAS - trades 09:00 to 23:30 / 23:55 IST!)
-isMcxAsset    = syminfo.prefix == "MCX" or str.contains(tickerUpper, "GOLD") or str.contains(tickerUpper, "SILVER") or str.contains(tickerUpper, "CRUDE") or str.contains(tickerUpper, "NATURALGAS")
 barHourMinute = hour * 100 + minute
 isInKillzone  = not useKillzones or (isMcxAsset ? (barHourMinute >= 900 and barHourMinute <= 2330) : ((barHourMinute >= 915 and barHourMinute <= 1145) or (barHourMinute >= 1315 and barHourMinute <= 1515)))
 
@@ -873,13 +880,6 @@ fvgSupplyRetest = not na(lastBearFvgMid) and high >= lastBearFvgMid and close <=
 // Major HTF 15M Reversal override: When price sweeps 15M low or hits 15M discount demand with bullish candle
 htfMajorBuy  = useHtfConfluence and (htfSweepLow or (htfInDiscount and sweepLow)) and (close > open)
 htfMajorSell = useHtfConfluence and (htfSweepHigh or (not htfInDiscount and sweepHigh)) and (close < open)
-
-// Automatic Asset Class Identification (Index Spot vs Option Contract)
-tickerUpper  = str.upper(syminfo.ticker)
-isOption     = syminfo.type == 'option' or str.contains(tickerUpper, "CALL") or str.contains(tickerUpper, "PUT") or str.endswith(tickerUpper, "CE") or str.endswith(tickerUpper, "PE")
-isCallOption = isOption and (str.endswith(tickerUpper, "CE") or str.contains(tickerUpper, "CALL"))
-isPutOption  = isOption and (str.endswith(tickerUpper, "PE") or str.contains(tickerUpper, "PUT"))
-isIndex      = str.contains(tickerUpper, "NIFTY") or str.contains(tickerUpper, "BANKNIFTY") or str.contains(tickerUpper, "SENSEX") or str.contains(tickerUpper, "FINNIFTY") or str.contains(tickerUpper, "MIDCPNIFTY") or syminfo.type == "index"
 
 // Absolute Macro Trend Gate:
 // On Index & Non-Option charts: Absolutely NO BUY trades allowed if price is trading below EMA 200!

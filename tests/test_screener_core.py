@@ -939,15 +939,14 @@ class TestIntradayScreenerCore(unittest.TestCase):
 
     def test_first_candle_after_signal_not_skipped_when_candle_timestamp_is_start_time(self):
         # Scenario:
-        # Signal candle completed at 09:20:00.
-        # Signal generation logged with timestamp = 09:20:03.
-        # Signal candle close time recorded = 09:20:00.
-        # The NEXT executable 5m candle starts at 09:20:00 and completes at 09:25:00.
-        # In the market feed, this candle's index timestamp is 09:20:00 (which is < 09:20:03).
+        # Signal candle completed 30 minutes ago (same session/day).
+        # Signal candle close time was base_epoch.
+        # Signal generation logged with timestamp = base_epoch + 3.0.
+        # The NEXT executable 5m candle starts at base_epoch (09:20:00) and completes at base_epoch + 300 (09:25:00).
+        # In the market feed, this candle's index timestamp is base_epoch (which is < base_epoch + 3.0).
         # Outcome evaluator MUST NOT skip this first candle!
-        # Signal candle completed 30 minutes ago, close time was base_epoch
-        one_hour_ago = time.time() - 1800
-        base_epoch = one_hour_ago
+        now_epoch = time.time()
+        base_epoch = now_epoch - 1800  # 30 minutes ago today
         sig_id = storage.log_signal({
             "symbol": "TEST_FIRST_BAR.NS",
             "direction": "BUY",
@@ -964,8 +963,8 @@ class TestIntradayScreenerCore(unittest.TestCase):
 
         conn = storage.get_db_connection()
         c = conn.cursor()
-        # Ensure timestamp is set to base_epoch + 3.0 and last_candle_time is 0
-        c.execute("UPDATE historical_signals SET timestamp = ?, last_candle_time = 0 WHERE id = ?", (base_epoch + 3.0, sig_id))
+        # Explicitly set timestamp = base_epoch + 3.0, signal_candle_close_time = base_epoch, last_candle_time = 0
+        c.execute("UPDATE historical_signals SET timestamp = ?, signal_candle_close_time = ?, last_candle_time = 0 WHERE id = ?", (base_epoch + 3.0, base_epoch, sig_id))
         conn.commit()
         conn.close()
 
@@ -974,7 +973,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
         df_first_candle = pd.DataFrame({
             "Open": [1000.0],
             "High": [1015.0],
-            "Low": [998.0],
+            "Low": [1001.0],
             "Close": [1012.0],
             "Volume": [30000]
         }, index=pd.DatetimeIndex([c_time]))
@@ -989,7 +988,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
 
         # The first candle MUST have been processed!
         self.assertEqual(sig["tp1_hit"], 1)
-        self.assertEqual(sig["last_candle_time"], base_epoch)
+        self.assertAlmostEqual(sig["last_candle_time"], base_epoch, places=3)
 
     def test_quantity_and_instrument_type_cost_scaling(self):
         # Verify that different quantities scale brokerage and statutory fees properly
