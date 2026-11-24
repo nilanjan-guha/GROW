@@ -211,10 +211,23 @@ header {
     position: relative;
     z-index: 10;
     display: grid;
-    grid-template-columns: 340px 1fr 340px;
+    grid-template-columns: minmax(280px, 320px) 1fr minmax(280px, 320px);
     gap: 12px;
     flex: 1;
     min-height: 0;
+}
+
+@media (max-width: 1400px) {
+    .workspace-grid {
+        grid-template-columns: minmax(240px, 280px) 1fr minmax(240px, 280px);
+        gap: 8px;
+    }
+}
+
+@media (max-width: 1100px) {
+    .workspace-grid {
+        grid-template-columns: 1fr;
+    }
 }
 
 .panel {
@@ -507,7 +520,9 @@ header {
 .trade-decision-banner {
     display: flex;
     justify-content: space-between;
-    align-items: center;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 8px;
     background: rgba(2, 6, 16, 0.85);
     padding: 10px 14px;
     border-radius: 6px;
@@ -518,10 +533,11 @@ header {
 
 .decision-action {
     font-family: 'Inter', -apple-system, sans-serif;
-    font-size: 1.15rem;
+    font-size: 1.05rem;
     font-weight: 900;
     letter-spacing: 0.5px;
     text-shadow: 0 0 10px rgba(0, 240, 255, 0.5);
+    word-break: break-word;
 }
 
 .decision-setup {
@@ -529,6 +545,8 @@ header {
     font-size: 0.78rem;
     font-weight: 700;
     color: #cbd5e1;
+    word-break: break-word;
+    max-width: 480px;
 }
 
 .decision-reason {
@@ -537,6 +555,7 @@ header {
     color: #94a3b8;
     margin-top: 4px;
     line-height: 1.4;
+    word-break: break-word;
 }
 
 .radar-metrics {
