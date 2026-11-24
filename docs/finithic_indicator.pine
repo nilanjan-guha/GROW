@@ -791,6 +791,24 @@ cvdHighest5 = ta.highest(sessionCvd, 5)
 priceHighest5 = ta.highest(high, 5)
 bearCvdDivergence = (high >= priceHighest5) and (sessionCvd < cvdHighest5[1])
 
+// Session VWAP & StDev Bands (True Institutional Benchmark)
+sessionVwap = ta.vwap(hlc3)
+vwapStDev   = ta.stdev(hlc3, 20)
+vwapLower2  = sessionVwap - (vwapStDev * 1.5)
+vwapUpper2  = sessionVwap + (vwapStDev * 1.5)
+atVwapDiscount = close <= vwapLower2 or (low <= sessionVwap and close > sessionVwap)
+atVwapPremium  = close >= vwapUpper2 or (high >= sessionVwap and close < sessionVwap)
+
+// 1. SFP (Swing Failure Pattern) – Catches reversals before any BOS exists
+// Bar pierces prior swing low/high but closes back inside range in the same bar
+sfpBull = not na(internalLow.currentLevel) and low < internalLow.currentLevel and close > internalLow.currentLevel and close > open
+sfpBear = not na(internalHigh.currentLevel) and high > internalHigh.currentLevel and close < internalHigh.currentLevel and close < open
+
+// 2. Trapped Traders / Fake Breakout Stop-Cascade
+// Prior bar broke high/low, current bar immediately engulfs/rejects opposite side
+trappedSellers = low[1] < ta.lowest(low, 5)[2] and close > open and close > high[1] and (barDelta > 0 or bullishAbsorption)
+trappedBuyers  = high[1] > ta.highest(high, 5)[2] and close < open and close < low[1] and (barDelta < 0 or bearishAbsorption)
+
 // Volume Expansion & Institutional Displacement Filters
 volEma20          = ta.ema(volume, 20)
 isVolumeExpanded  = not useVolumeDisplace or (volume >= volEma20 * volMultInput)
@@ -1093,12 +1111,15 @@ hasBearDOL = useDOLTargets and not na(dolBearTarget) and dolBearTarget < close -
 var int lastInstitScoreBar = -999
 var int lastInstitScore = 0
 
-institutBullScore = 0
+institutBullScore := 0
 institutBullScore := institutBullScore + (triggeredBullShift ? 2 : 0)                 // CHoCH/BOS MSS       (+2)
 institutBullScore := institutBullScore + (sweepLow ? 2 : 0)                            // Liquidity SSL Sweep  (+2)
+institutBullScore := institutBullScore + (sfpBull ? 2 : 0)                             // SFP Swing Failure    (+2)
+institutBullScore := institutBullScore + (trappedSellers ? 2 : 0)                      // Trapped Traders Turn (+2)
 institutBullScore := institutBullScore + (bullishAbsorption ? 2 : 0)                   // Order Flow Absorption(+2)
 institutBullScore := institutBullScore + (bullOteHit ? 2 : 0)                          // OTE Golden Pocket    (+2)
 institutBullScore := institutBullScore + (bullSMTDiv ? 2 : 0)                          // SMT Divergence       (+2)
+institutBullScore := institutBullScore + (atVwapDiscount ? 1 : 0)                      // VWAP Discount Level  (+1)
 institutBullScore := institutBullScore + (judasSwingBull ? 1 : 0)                      // Judas Swing          (+1)
 institutBullScore := institutBullScore + (po3ManipBull or po3DistBull ? 1 : 0)         // PO3 Phase            (+1)
 institutBullScore := institutBullScore + (bullIFVGRetest ? 1 : 0)                      // IFVG Demand          (+1)
@@ -1110,12 +1131,15 @@ institutBullScore := institutBullScore + (isInKillzone ? 1 : 0)                 
 institutBullScore := institutBullScore + (isPositiveDelta ? 1 : 0)                     // Order Flow Delta     (+1)
 institutBullScore := institutBullScore + (parentBullConfirmed ? 1 : 0)                 // Index Sync           (+1)
 
-institutBearScore = 0
+institutBearScore := 0
 institutBearScore := institutBearScore + (triggeredBearShift ? 2 : 0)
 institutBearScore := institutBearScore + (sweepHigh ? 2 : 0)
+institutBearScore := institutBearScore + (sfpBear ? 2 : 0)
+institutBearScore := institutBearScore + (trappedBuyers ? 2 : 0)
 institutBearScore := institutBearScore + (bearishAbsorption ? 2 : 0)
 institutBearScore := institutBearScore + (bearOteHit ? 2 : 0)
 institutBearScore := institutBearScore + (bearSMTDiv ? 2 : 0)
+institutBearScore := institutBearScore + (atVwapPremium ? 1 : 0)
 institutBearScore := institutBearScore + (judasSwingBear ? 1 : 0)
 institutBearScore := institutBearScore + (po3ManipBear or po3DistBear ? 1 : 0)
 institutBearScore := institutBearScore + (bearIFVGRetest ? 1 : 0)
@@ -1127,9 +1151,9 @@ institutBearScore := institutBearScore + (isInKillzone ? 1 : 0)
 institutBearScore := institutBearScore + (isNegativeDelta ? 1 : 0)
 institutBearScore := institutBearScore + (parentBearConfirmed ? 1 : 0)
 
-// High Win-Rate Institutional Selectivity:
-// Minimum score calibrated to 7. Firing on weak confluences (<= 5) takes chop trades!
-minInstitScore = input.int(7, 'Minimum Institutional Confluence Score (7+ = Ultra High Quality Only)', minval = 5, maxval = 14, group = INSTIT_GROUP)
+// High Win-Rate Balanced Intraday Selectivity:
+// 6+ gives 1-3 crisp high-quality setups per session without missing explosive trend starts or spamming chop
+minInstitScore = input.int(6, 'Minimum Institutional Confluence Score (6 = Balanced Sniper Entries)', minval = 4, maxval = 14, group = INSTIT_GROUP)
 isHighQualityBull = institutBullScore >= minInstitScore and hasPremiumExpansion and not isOverextendedLong
 isHighQualityBear = institutBearScore >= minInstitScore and hasPremiumExpansion and not isOverextendedShort
 
@@ -1158,6 +1182,12 @@ isEarlyBearShift = triggeredBearShift and close < open and (isDisplacement or be
 // 2. Pure Liquidity Sweep & Spring/Upthrust Reversal (Enter at the very origin before market takes off!)
 sweepSpringBull = sweepLow and close > open and (bullishAbsorption or barDelta > 0 or bullCvdDivergence)
 sweepUpthrustBear = sweepHigh and close < open and (bearishAbsorption or barDelta < 0 or bearCvdDivergence)
+
+// 3. Precision SFP & Trapped Trader Origins (Fires before any retail breakout confirmation!)
+sfpTurnBull = sfpBull and (bullishAbsorption or barDelta > 0 or atVwapDiscount)
+sfpTurnBear = sfpBear and (bearishAbsorption or barDelta < 0 or atVwapPremium)
+trappedBreakoutBull = trappedSellers and (barDelta > 0 or isPositiveDelta)
+trappedBreakoutBear = trappedBuyers  and (barDelta < 0 or isNegativeDelta)
 
 // ═══════════════════════════════════════════════════════════════════════
 // INSTITUTIONAL ENTRY MASTER TRIGGER
@@ -1188,6 +1218,8 @@ sniperBuyTrigger =
              orderFlowBullConfirmed and // Order Flow / Volume Delta / Absorption confirmed
              isInKillzone and           // Active in institutional killzone (avoid chop)
              (
+                 sfpTurnBull or         // SFP: Catches exact bottom before BOS
+                 trappedBreakoutBull or // Trapped sellers liquidation rocket
                  isEarlyBullShift or    // Early MSS / CHoCH at the turn
                  sweepSpringBull or     // Early SSL Sweep + Spring / Absorption (Pre-move entry!)
                  bullOteHit or          // OTE Golden Pocket 62%-79% retracement
@@ -1210,6 +1242,8 @@ sniperSellTrigger =
      orderFlowBearConfirmed and     // Order Flow / Volume Delta / Absorption confirmed
      isInKillzone and               // Active in institutional killzone
      (
+         sfpTurnBear or
+         trappedBreakoutBear or
          isEarlyBearShift or        // Early MSS / CHoCH at the turn
          sweepUpthrustBear or       // Early BSL Sweep + Upthrust / Absorption (Pre-move entry!)
          bearOteHit or
