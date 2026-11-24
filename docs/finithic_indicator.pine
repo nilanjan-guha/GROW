@@ -890,10 +890,12 @@ fvgSupplyRetest = not na(lastBearFvgMid) and high >= lastBearFvgMid - (atr14 * 0
 htfMajorBuy  = useHtfConfluence and (htfSweepLow or (htfInDiscount and sweepLow)) and (close > open)
 htfMajorSell = useHtfConfluence and (htfSweepHigh or (not htfInDiscount and sweepHigh)) and (close < open)
 
-// Absolute Macro Trend Gate:
-// On Index & Non-Option charts: Absolutely NO BUY trades allowed if price is trading below EMA 200!
-// On Index & Non-Option charts: Absolutely NO SELL trades allowed if price is trading above EMA 200!
-macroTrendAllowBuy  = isOption ? true : (not trendFilterEma or close >= ema200)
+// Absolute Macro Trend Gate & Strict Option Anti-Decay Filter:
+// 1. NEVER buy a decaying option that is sinking below its 50 EMA and 200 EMA!
+// 2. On Index/Spot: Absolutely NO BUY trades allowed if price is trading below EMA 200!
+// 3. On Index/Spot: Absolutely NO SELL trades allowed if price is trading above EMA 200!
+optionDowntrendDecay = isOption and (close < ema50 and ema50 <= ema200 and close < open)
+macroTrendAllowBuy  = isOption ? (not optionDowntrendDecay and (close >= ema50 or close >= ta.ema(close, 20))) : (not trendFilterEma or close >= ema200)
 macroTrendAllowSell = isOption ? false : (not trendFilterEma or close <= ema200)
 
 // Multi-Chart Parent Index & Option Synchronization Engine
