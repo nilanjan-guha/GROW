@@ -53,6 +53,7 @@ def run_screener_replay(sample_symbols=None, days="1mo", instrument_type="EQUITY
         "total_pnl_pct": 0.0,
         "trade_net_pnls": [],
         "trade_gross_pnls": [],
+        "trade_notional_pnls": [],
         "trade_r_multiples": [],
         "equity_curve": [100.0],
         "mfes": [],
@@ -402,25 +403,26 @@ def run_screener_replay(sample_symbols=None, days="1mo", instrument_type="EQUITY
                 stats["watch_only_candidates"] += 1
                 continue
 
-            # Official NSE F&O Lot Sizes (verified contract master)
-            NSE_FNO_LOT_SIZES = {
-                "RELIANCE": 250, "TCS": 175, "HDFCBANK": 550, "INFY": 400, "ICICIBANK": 700,
-                "SBIN": 750, "BHARTIARTL": 475, "ITC": 1600, "LT": 150, "AXISBANK": 625,
-                "KOTAKBANK": 400, "HINDUNILVR": 300, "BAJFINANCE": 125, "MARUTI": 50
-            }
+            # Dated NSE F&O Contract Master & Margin Engine (Core Contract Master)
+            from core.contract_master import ContractMaster
+            
             clean_sym = sym.replace(".NS", "").upper()
+            candle_date = current_ts.date() if hasattr(current_ts, 'date') else None
             
             # Sizing & Capital Allocation:
-            # For FUTURES, exchange SPAN+Exposure margin is modeled at ~20% of contract notional.
+            # For FUTURES, dynamic exchange SPAN+Exposure baseline margin is retrieved from dated contract master.
             # If available capital cannot afford even 1 lot, the trade is strictly rejected (NEVER force max(1,...)).
             if instrument_type.upper() == "FUTURES":
-                lot_size = NSE_FNO_LOT_SIZES.get(clean_sym)
-                if not lot_size:
-                    # Non-F&O symbol or unverified lot size: reject in FUTURES mode
+                spec = ContractMaster.get_contract_spec(clean_sym, as_of_date=candle_date)
+                if not spec:
+                    # Non-F&O symbol or unverified lot size on this date: reject in FUTURES mode
                     stats["rejected_no_risk"] += 1
                     continue
+                
+                lot_size = spec["lot_size"]
+                margin_rate = spec["margin_pct"]  # Dynamic baseline SPAN+Exposure rate
                 contract_notional = actual_entry * lot_size
-                required_margin_per_lot = contract_notional * 0.20  # 20% margin
+                required_margin_per_lot = contract_notional * margin_rate
                 
                 # Check how many lots the available allocated cash can afford
                 num_lots = int(available_alloc_rs / required_margin_per_lot)
@@ -431,11 +433,13 @@ def run_screener_replay(sample_symbols=None, days="1mo", instrument_type="EQUITY
                 
                 trade_qty = num_lots * lot_size
                 actual_allocated_rs = num_lots * required_margin_per_lot
+                contract_notional_total = actual_entry * trade_qty
             else:
                 trade_qty = int(available_alloc_rs / actual_entry)
                 if trade_qty <= 0:
                     continue
                 actual_allocated_rs = trade_qty * actual_entry
+                contract_notional_total = actual_allocated_rs
 
             # Calculate Trade Outcome Forward
             forward_candles = df.iloc[idx:min(idx + max_holding_candles, len(df))]
@@ -562,17 +566,23 @@ def run_screener_replay(sample_symbols=None, days="1mo", instrument_type="EQUITY
             sebi_charges_rs = total_turnover_rs * 0.000001
             gst_rs = (brokerage_rs + exch_turnover_fee_rs + sebi_charges_rs) * 0.18
             total_friction_rs = brokerage_rs + stt_rs + exch_turnover_fee_rs + sebi_charges_rs + gst_rs + stamp_duty_rs
-            
-            gst_rs = (brokerage_rs + exch_turnover_fee_rs + sebi_charges_rs) * 0.18
-            total_friction_rs = brokerage_rs + stt_rs + exch_turnover_fee_rs + sebi_charges_rs + gst_rs + stamp_duty_rs
 
             gross_realized_rs = (exit_price_actual - actual_entry) * trade_qty if direction == "BULLISH" else (actual_entry - exit_price_actual) * trade_qty
             net_realized_rs = gross_realized_rs - total_friction_rs
 
-            gross_diff = (gross_realized_rs / actual_allocated_rs) * 100.0
+            # Distinct Return on Margin vs Return on Notional:
+            # - Return on Capital Allocated / Margin (%):
             net_pnl = (net_realized_rs / actual_allocated_rs) * 100.0
-            risk_pct = (risk / actual_entry) * 100
-            r_mult = net_pnl / risk_pct if risk_pct > 0 else (1.0 if net_pnl > 0 else -1.0)
+            gross_diff = (gross_realized_rs / actual_allocated_rs) * 100.0
+            
+            # - Return on Total Contract Notional (%):
+            return_on_notional_pct = (net_realized_rs / contract_notional_total) * 100.0 if contract_notional_total > 0 else 0.0
+
+            # Correct Rupee-Based R-Multiple (P1 Fix):
+            # R = Net Realized PnL (Rs) / (Entry-to-SL Price Risk per share * total quantity)
+            # Both numerator and denominator are in actual Rupees, eliminating margin leverage distortion!
+            rupee_risk = risk * trade_qty
+            r_mult = round(net_realized_rs / rupee_risk, 2) if rupee_risk > 0 else (1.0 if net_realized_rs > 0 else -1.0)
             
             exit_idx = idx + exit_offset
             exit_ts = df.index[min(exit_idx, len(df) - 1)]
@@ -588,6 +598,7 @@ def run_screener_replay(sample_symbols=None, days="1mo", instrument_type="EQUITY
                 stats["trades_executed"] += 1
                 stats["trade_net_pnls"].append(net_pnl)
                 stats["trade_gross_pnls"].append(gross_diff)
+                stats["trade_notional_pnls"].append(return_on_notional_pct)
                 stats["total_pnl_pct"] += net_pnl
                 stats["gross_pnl_pct"] += gross_diff
                 stats["trade_r_multiples"].append(r_mult)
@@ -617,6 +628,7 @@ def run_screener_replay(sample_symbols=None, days="1mo", instrument_type="EQUITY
                     "net_realized_rs": net_realized_rs,
                     "net_pnl_pct": net_pnl,
                     "gross_pnl_pct": gross_diff,
+                    "notional_pnl_pct": return_on_notional_pct,
                     "r_mult": r_mult,
                     "mfe": max_fav,
                     "mae": max_adv,
@@ -629,6 +641,7 @@ def run_screener_replay(sample_symbols=None, days="1mo", instrument_type="EQUITY
         stats["trades_executed"] += 1
         stats["trade_net_pnls"].append(pos["net_pnl_pct"])
         stats["trade_gross_pnls"].append(pos["gross_pnl_pct"])
+        stats["trade_notional_pnls"].append(pos.get("notional_pnl_pct", pos["net_pnl_pct"]))
         stats["total_pnl_pct"] += pos["net_pnl_pct"]
         stats["gross_pnl_pct"] += pos["gross_pnl_pct"]
         stats["trade_r_multiples"].append(pos["r_mult"])
@@ -776,7 +789,10 @@ def run_screener_replay(sample_symbols=None, days="1mo", instrument_type="EQUITY
         print(f"Average MFE (In-Trade):      +{avg_mfe}%")
         print(f"Average MAE (In-Trade):      -{avg_mae}%")
         print(f"Trade-Level Gross PnL (Sum): {round(stats['gross_pnl_pct'], 2)}%")
-        print(f"Trade-Level Net PnL (Sum):   {round(stats['total_pnl_pct'], 2)}%")
+        print(f"Trade-Level Net PnL (Margin):{round(stats['total_pnl_pct'], 2)}%")
+        if instrument_type.upper() == "FUTURES" and stats["trade_notional_pnls"]:
+            avg_notional_pnl = round(float(np.mean(stats["trade_notional_pnls"])), 2)
+            print(f"Return on Contract Notional:  {avg_notional_pnl}% avg per trade")
         print(f"Portfolio Net Cash Return:   {stats['portfolio_net_return_pct']}% (Final Cash: ₹{stats['final_cash_rs']:,.2f})")
         print(f"Maximum Portfolio Drawdown:  {max_drawdown_pct}%")
         print(f"Profit Factor:               {profit_factor}")

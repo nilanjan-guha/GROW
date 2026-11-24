@@ -113,14 +113,14 @@ class MarketValidator:
         return 555 <= minute <= 930
 
     @staticmethod
-    def validate_feed_freshness(df, max_delay_seconds=900, max_allowed_missing_gaps=2, candle_duration_seconds=300, now_dt=None):
+    def validate_feed_freshness(df, max_delay_seconds=900, candle_duration_seconds=300, now_dt=None):
         """
         Validates OHLCV DataFrame integrity and freshness as single source of truth:
         - Rejects empty feeds or feeds with insufficient candle history (< 5 candles).
         - Enforces candle completion (`now >= last_ts + candle_duration_seconds`).
         - Rejects stale previous session feeds during active market hours.
         - Rejects stalled feeds (> max_delay_seconds delay).
-        - Rejects feeds with excessive missing candle gaps (> max_allowed_missing_gaps).
+        - Strictly rejects intra-session gaps or non-300s candles (strict continuity required).
         - Supports now_dt override for deterministic historical/test validation.
         """
         if df is None or df.empty:
@@ -233,31 +233,13 @@ class MarketValidator:
                     "reason": f"Feed delayed by {delay_m} minutes (> {int(max_delay_seconds/60)}m allowed)"
                 }
 
-        # Check for gap / missing candles in current session
-        missing_count = 0
-        if len(df_eval) >= 2:
-            df_today = df_eval[df_eval.index.date == last_dt.date()] if hasattr(last_dt, 'date') else df_eval
-            if len(df_today) >= 2:
-                diffs = (df_today.index[1:] - df_today.index[:-1]).total_seconds()
-                gaps = [d for d in diffs if d > 360]  # Greater than 6 minutes interval
-                missing_count = len(gaps)
-
-        # Feed integrity gate: reject feeds with severe missing candle gaps (> 2 gaps)
-        if missing_count > max_allowed_missing_gaps:
-            return {
-                "is_valid": False,
-                "status": "CORRUPT_FEED_GAPS",
-                "missing_candle_gaps": missing_count,
-                "reason": f"Feed integrity compromised: detected {missing_count} missing candle gaps during session."
-            }
-
         return {
             "is_valid": True,
             "status": "FRESH",
             "is_completed_candle": is_completed,
             "latest_candle_ts": last_ts,
             "candle_end_ts": candle_end,
-            "missing_candle_gaps": missing_count
+            "missing_candle_gaps": 0
         }
 
     @staticmethod

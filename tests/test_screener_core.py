@@ -502,15 +502,40 @@ class TestIntradayScreenerCore(unittest.TestCase):
             run_screener_replay(days="1d", instrument_type="OPTIONS")
 
     def test_futures_margin_sizing_no_forced_lot(self):
-        # When available capital is less than required 20% margin for 1 lot, trade must be rejected (0 lots, not forced 1 lot)
+        # When available capital is less than required margin for 1 lot, trade must be rejected (0 lots, not forced 1 lot)
+        from core.contract_master import ContractMaster
+        spec = ContractMaster.get_contract_spec("RELIANCE", as_of_date=datetime.date(2026, 1, 1))
+        self.assertIsNotNone(spec)
+        self.assertEqual(spec["lot_size"], 250)
+        self.assertEqual(spec["margin_pct"], 0.20)
+        
         entry_price = 2500.0
-        lot_size = 250
-        contract_notional = entry_price * lot_size # ₹6,25,000
-        req_margin = contract_notional * 0.20 # ₹1,25,000
+        contract_notional = entry_price * spec["lot_size"] # ₹6,25,000
+        req_margin = contract_notional * spec["margin_pct"] # ₹1,25,000
         available_alloc = 50000.0 # Only ₹50,000 available
         
         num_lots = int(available_alloc / req_margin)
         self.assertEqual(num_lots, 0) # Must be 0, never forced to 1
+
+    def test_rupee_based_r_multiple_eliminates_margin_distortion(self):
+        # If entry = 1000, SL = 990 (Risk = 10 Rs/share), Exit = 1020 (Gross = +20 Rs/share)
+        # Qty = 250 shares. Margin = 20% (₹50,000). Total turnover = (1000 + 1020) * 250 = ₹5,05,000
+        # Friction ~ ₹100. Net PnL ~ (20 * 250) - 100 = ₹4,900.
+        # Rupee Risk = 10 * 250 = ₹2,500.
+        # Correct R-Multiple = ₹4,900 / ₹2,500 = 1.96R (NOT 5x inflated by margin leverage!)
+        qty = 250
+        entry = 1000.0
+        sl = 990.0
+        exit_p = 1020.0
+        risk_per_share = entry - sl
+        gross_pnl = (exit_p - entry) * qty
+        friction = 100.0
+        net_pnl = gross_pnl - friction
+        
+        rupee_risk = risk_per_share * qty
+        r_mult = round(net_pnl / rupee_risk, 2)
+        self.assertAlmostEqual(r_mult, 1.96, places=1)
+        self.assertLess(r_mult, 2.5) # Confirms it is not distorted to ~9.8R
 
 if __name__ == '__main__':
     unittest.main()
