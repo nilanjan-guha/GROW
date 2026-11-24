@@ -769,6 +769,7 @@
                     const isSelected = (sym === currentStockSymbol);
                     const card = document.createElement('div');
                     card.className = `sector-card ${isSelected ? 'selected' : ''}`;
+                    card.dataset.symbol = sym;
                     card.style.padding = '8px 12px';
                     card.onclick = () => selectStock(sym);
                     card.innerHTML = `
@@ -794,6 +795,7 @@
                     const isSelected = (sym === currentStockSymbol);
                     const card = document.createElement('div');
                     card.className = `sector-card ${isSelected ? 'selected' : ''}`;
+                    card.dataset.symbol = sym;
                     card.style.padding = '8px 12px';
                     card.onclick = () => selectStock(sym);
                     card.innerHTML = `
@@ -902,10 +904,16 @@
                 currentSectorName = foundSector;
                 document.getElementById('selectedSectorTitle').innerText = `${foundSector} (${foundSecData.is_bullish ? '+' : ''}${foundSecData.change.toFixed(2)}%)`;
                 document.getElementById('activeSectorSweepText').innerText = `ANALYZING: ${foundSector} [${foundSecData.is_bullish ? '+' : ''}${foundSecData.change.toFixed(2)}%]`;
-                
-                // Highlight sector card
-                document.querySelectorAll('.sector-card').forEach(c => c.classList.remove('selected'));
             }
+
+            // Highlight selected stock card in both bullish and bearish mover lists
+            document.querySelectorAll('.sector-card').forEach(c => {
+                if (c.dataset && c.dataset.symbol === stk) {
+                    c.classList.add('selected');
+                } else {
+                    c.classList.remove('selected');
+                }
+            });
 
             renderStockChips();
             scanStock(stk);
