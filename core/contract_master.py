@@ -101,43 +101,58 @@ class ContractMaster:
         """
         Retrieves the exact dated lot size and estimated baseline margin percentage for a symbol as of a specific date.
         
-        Args:
-            symbol (str): Equity or Futures symbol (e.g. "RELIANCE.NS" or "RELIANCE")
-            as_of_date (str, datetime.date, pd.Timestamp, optional): Evaluation date.
-        
-        Returns:
-            dict or None: Contract specification dictionary containing:
-                - symbol: Normalized uppercase ticker
-                - lot_size: int
-                - estimated_margin_pct: float (explicitly labeled as estimate)
-                - margin_pct: float (alias for backward compatibility)
-                - effective_date: datetime.date
-                - circular_ref: str
-            Returns None if symbol is invalid, unknown, or date precedes earliest contract inception.
+        Clear Source-of-Truth Precedence Policy:
+        1. When evaluating for the CURRENT trading date (as_of_date is None or today's date):
+           - Ingested dynamic live broker instrument master (_DYNAMIC_LOT_SIZES) takes precedence.
+           - Falls back to the latest entry in the historical circular table.
+        2. When evaluating for a HISTORICAL date (as_of_date < today's date):
+           - Strict historical circular table (NSE_CONTRACT_SPECS_HISTORY) on or before as_of_date is the sole source of truth.
+           - Dynamic live values are NOT applied to past historical dates to prevent forward-looking data leakage.
+        3. Returns None if neither source can establish a valid contract specification.
         """
         if not symbol or not isinstance(symbol, str):
             return None
 
         clean_sym = symbol.replace(".NS", "").strip().upper()
         history = NSE_CONTRACT_SPECS_HISTORY.get(clean_sym)
+        dyn = cls._DYNAMIC_LOT_SIZES.get(clean_sym)
+
+        # Parse and normalize as_of_date
+        today = datetime.date.today()
+        parsed_date = None
+        if as_of_date is not None:
+            if isinstance(as_of_date, datetime.date) and not isinstance(as_of_date, datetime.datetime):
+                parsed_date = as_of_date
+            elif isinstance(as_of_date, (datetime.datetime, pd.Timestamp)):
+                parsed_date = as_of_date.date()
+            elif isinstance(as_of_date, str):
+                try:
+                    parsed_date = pd.to_datetime(as_of_date).date()
+                except Exception:
+                    return None
+            else:
+                return None
+
+        is_current_date = (parsed_date is None or parsed_date >= today)
+
+        # 1. Current trading session: Dynamic live broker table takes precedence if present
+        if is_current_date and dyn:
+            return {
+                "symbol": clean_sym,
+                "lot_size": dyn["lot_size"],
+                "estimated_margin_pct": dyn["estimated_margin_pct"],
+                "margin_pct": dyn["estimated_margin_pct"],
+                "effective_date": today,
+                "circular_ref": dyn.get("circular_ref", "NSE/FAOP/LIVE")
+            }
+
+        # 2. Historical replay or fallback to circular table
         if not history:
-            # Check dynamic live ingested contracts if available
-            dyn = cls._DYNAMIC_LOT_SIZES.get(clean_sym)
-            if dyn:
-                return {
-                    "symbol": clean_sym,
-                    "lot_size": dyn["lot_size"],
-                    "estimated_margin_pct": dyn["estimated_margin_pct"],
-                    "margin_pct": dyn["estimated_margin_pct"],
-                    "effective_date": datetime.date.today(),
-                    "circular_ref": dyn.get("circular_ref", "NSE/FAOP/LIVE")
-                }
             return None
 
-        # Sort history strictly by effective_date to guard against unordered entries
         sorted_history = sorted(history, key=lambda x: x["effective_date"])
 
-        if as_of_date is None:
+        if parsed_date is None:
             latest = sorted_history[-1]
             return {
                 "symbol": clean_sym,
@@ -148,24 +163,9 @@ class ContractMaster:
                 "circular_ref": latest.get("circular_ref", "NSE/FAOP/STANDARD")
             }
 
-        # Safe date normalization
-        parsed_date = None
-        if isinstance(as_of_date, datetime.date) and not isinstance(as_of_date, datetime.datetime):
-            parsed_date = as_of_date
-        elif isinstance(as_of_date, (datetime.datetime, pd.Timestamp)):
-            parsed_date = as_of_date.date()
-        elif isinstance(as_of_date, str):
-            try:
-                parsed_date = pd.to_datetime(as_of_date).date()
-            except Exception:
-                return None
-        else:
-            return None
-
-        # Find the latest effective circular specification on or before parsed_date
+        # Find latest effective circular specification on or before parsed_date
         valid_specs = [spec for spec in sorted_history if spec["effective_date"] <= parsed_date]
         if not valid_specs:
-            # Date precedes earliest verified NSE contract inception
             return None
 
         chosen = valid_specs[-1]

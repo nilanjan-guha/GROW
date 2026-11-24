@@ -973,7 +973,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
         df_first_candle = pd.DataFrame({
             "Open": [1000.0],
             "High": [1015.0],
-            "Low": [1001.0],
+            "Low": [998.0],
             "Close": [1012.0],
             "Volume": [30000]
         }, index=pd.DatetimeIndex([c_time]))
@@ -1024,7 +1024,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
 
         c_time = pd.to_datetime(one_hour_ago + 300, unit='s', utc=True).tz_convert('Asia/Kolkata')
         df_win = pd.DataFrame({
-            "Open": [1000.0], "High": [1025.0], "Low": [1001.0], "Close": [1022.0], "Volume": [20000]
+            "Open": [1000.0], "High": [1025.0], "Low": [995.0], "Close": [1022.0], "Volume": [20000]
         }, index=pd.DatetimeIndex([c_time]))
 
         storage.evaluate_open_outcomes({"COST_100.NS": df_win, "COST_1000.NS": df_win, "COST_FUT.NS": df_win})
@@ -1340,6 +1340,160 @@ class TestIntradayScreenerCore(unittest.TestCase):
         self.assertEqual(len(result.get("top_bullish", [])), 0)
         self.assertEqual(len(result.get("top_bearish", [])), 0)
         self.assertIsNone(ts)
+
+    def test_invalid_ohlc_low_greater_than_open_and_corrupt_candles(self):
+        # Verify strict Low <= Open <= High structural validation
+        # 1. Low > Open (e.g. Open 100, High 110, Low 105) must be rejected
+        res_bad_low = storage.evaluate_candle_transition(
+            direction="BUY", entry=100.0, orig_sl=95.0, sl=95.0, tp1=108.0, tp2=115.0,
+            tp1_hit_prior=False, c_open=100.0, c_high=110.0, c_low=105.0, c_ts=1700000000.0, est_costs=0.5
+        )
+        self.assertEqual(res_bad_low["outcome"], "ACTIVE")
+        self.assertFalse(res_bad_low["should_break"])
+
+        # 2. Open > High (e.g. Open 112, High 110, Low 95) must be rejected
+        res_bad_open_high = storage.evaluate_candle_transition(
+            direction="BUY", entry=100.0, orig_sl=95.0, sl=95.0, tp1=108.0, tp2=115.0,
+            tp1_hit_prior=False, c_open=112.0, c_high=110.0, c_low=95.0, c_ts=1700000000.0, est_costs=0.5
+        )
+        self.assertEqual(res_bad_open_high["outcome"], "ACTIVE")
+        self.assertFalse(res_bad_open_high["should_break"])
+
+        # 3. High < Low (e.g. High 90, Low 95) must be rejected
+        res_inverted = storage.evaluate_candle_transition(
+            direction="BUY", entry=100.0, orig_sl=95.0, sl=95.0, tp1=108.0, tp2=115.0,
+            tp1_hit_prior=False, c_open=92.0, c_high=90.0, c_low=95.0, c_ts=1700000000.0, est_costs=0.5
+        )
+        self.assertEqual(res_inverted["outcome"], "ACTIVE")
+        self.assertFalse(res_inverted["should_break"])
+
+        # 4. Valid candle satisfying Low <= Open <= High (e.g. Open 100, High 110, Low 97 > SL 95) reaches TP1
+        res_valid = storage.evaluate_candle_transition(
+            direction="BUY", entry=100.0, orig_sl=95.0, sl=95.0, tp1=108.0, tp2=115.0,
+            tp1_hit_prior=False, c_open=100.0, c_high=110.0, c_low=97.0, c_ts=1700000000.0, est_costs=0.5
+        )
+        self.assertEqual(res_valid["tp1_hit"], 1)
+
+    def test_corrupted_candle_does_not_interrupt_other_signals(self):
+        # Verify that one symbol with a corrupted/malformed feed does not halt evaluation of other signals
+        sym1 = "CORRUPT_FEED.NS"
+        sym2 = "CLEAN_FEED.NS"
+
+        sig1 = storage.log_signal({
+            "symbol": sym1, "direction": "BUY", "strategy": "Gap-and-Go",
+            "entry_price": 500.0, "stop_loss": 490.0, "target_1": 510.0, "target_2": 520.0
+        })
+        sig2 = storage.log_signal({
+            "symbol": sym2, "direction": "BUY", "strategy": "Gap-and-Go",
+            "entry_price": 1000.0, "stop_loss": 980.0, "target_1": 1020.0, "target_2": 1040.0
+        })
+
+        conn = storage.get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT timestamp FROM historical_signals WHERE id = ?", (sig1,))
+        ts1 = float(c.fetchone()["timestamp"])
+
+        # Feed map: sym1 has corrupted string OHLC, sym2 has valid TP1-hitting candle
+        data_map = {
+            sym1: {"open": "corrupted", "high": "invalid", "low": None, "timestamp": ts1 + 300, "is_completed": True},
+            sym2: {"open": 1000.0, "high": 1025.0, "low": 995.0, "timestamp": ts1 + 300, "is_completed": True}
+        }
+
+        # Must execute cleanly without unhandled exception aborting sym2
+        storage.evaluate_open_outcomes(data_map)
+
+        c.execute("SELECT outcome, tp1_hit FROM historical_signals WHERE id = ?", (sig1,))
+        row1 = c.fetchone()
+        c.execute("SELECT outcome, tp1_hit FROM historical_signals WHERE id = ?", (sig2,))
+        row2 = c.fetchone()
+        conn.close()
+
+        # sig1 remains ACTIVE and unaffected
+        self.assertEqual(row1["outcome"], "ACTIVE")
+        self.assertEqual(row1["tp1_hit"], 0)
+        # sig2 successfully processed and registered TP1 hit!
+        self.assertEqual(row2["tp1_hit"], 1)
+
+    def test_multi_exit_cost_validation_and_numerical_accuracy(self):
+        # Verify multi-exit cost quantity validation and numerical exactness
+        from engine.cost_engine import IndianMarketCosts
+
+        # 1. Rejects empty exit list
+        with self.assertRaises(ValueError):
+            IndianMarketCosts.calculate_multi_exit_costs(100.0, exits=[], total_quantity=100)
+
+        # 2. Rejects zero or negative exit quantity
+        with self.assertRaises(ValueError):
+            IndianMarketCosts.calculate_multi_exit_costs(100.0, exits=[(105.0, 0)], total_quantity=100)
+        with self.assertRaises(ValueError):
+            IndianMarketCosts.calculate_multi_exit_costs(100.0, exits=[(105.0, -50)], total_quantity=100)
+
+        # 3. Rejects exit quantities exceeding total position quantity
+        with self.assertRaises(ValueError):
+            IndianMarketCosts.calculate_multi_exit_costs(100.0, exits=[(105.0, 70), (108.0, 50)], total_quantity=100)
+
+        # 4. Partial exit correctly tracks remaining_quantity
+        partial_res = IndianMarketCosts.calculate_multi_exit_costs(
+            entry_price=100.0, exits=[(105.0, 40)], total_quantity=100, instrument_type="EQUITY_INTRADAY"
+        )
+        self.assertEqual(partial_res["exited_quantity"], 40)
+        self.assertEqual(partial_res["remaining_quantity"], 60)
+
+        # 5. Numerical accuracy on Futures contracts
+        fut_res = IndianMarketCosts.calculate_futures_costs(entry_price=2000.0, exit_price=2040.0, lot_size=250, include_slippage=False)
+        self.assertEqual(fut_res["brokerage"], 40.0) # Flat 20 buy + 20 sell
+        self.assertEqual(fut_res["stamp_duty"], 10.0) # 0.002% on 5,00,000 buy turnover
+        self.assertEqual(fut_res["stt"], 102.0) # 0.02% on 5,10,000 sell turnover
+        # Exchange charges: 0.002% on 10,10,000 = 20.20
+        self.assertAlmostEqual(fut_res["exchange_charges"], 20.20, places=2)
+
+    def test_contract_master_precedence_policy(self):
+        # Verify that dynamic broker ingestion overrides static history for CURRENT date, but NOT for HISTORICAL date
+        from core.contract_master import ContractMaster
+        sym = "RELIANCE"
+
+        # Static historical lot size is 250
+        hist_spec = ContractMaster.get_contract_spec(sym, as_of_date=datetime.date(2023, 1, 1))
+        self.assertEqual(hist_spec["lot_size"], 250)
+
+        # Register dynamic live contract with new lot size 300
+        ContractMaster.register_dynamic_contracts({sym: 300})
+
+        # For today (current session), dynamic takes precedence
+        current_spec = ContractMaster.get_contract_spec(sym, as_of_date=datetime.date.today())
+        self.assertEqual(current_spec["lot_size"], 300)
+
+        # For historical date, static circular history is preserved (no forward lookahead leakage)
+        hist_check = ContractMaster.get_contract_spec(sym, as_of_date=datetime.date(2023, 1, 1))
+        self.assertEqual(hist_check["lot_size"], 250)
+
+        # Reset dynamic contracts
+        ContractMaster._DYNAMIC_LOT_SIZES.clear()
+
+    def test_eod_squareoff_calculates_actual_exit_costs(self):
+        # Verify that EOD auto-squareoff calculates brokerage and statutory costs at actual exit price
+        sym = "TEST_EOD_COST.NS"
+        entry = 500.0
+        sig_id = storage.log_signal({
+            "symbol": sym, "direction": "BUY", "strategy": "Gap-and-Go",
+            "entry_price": entry, "stop_loss": 490.0, "target_1": 520.0, "quantity": 200
+        })
+
+        # Force EOD squareoff with closing price of 550.0 (substantial rally)
+        eod_candle = {"open": 540.0, "high": 555.0, "low": 535.0, "close": 550.0, "current_price": 550.0}
+        storage.evaluate_open_outcomes({sym: eod_candle}, force_eod=True)
+
+        conn = storage.get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT outcome, final_pnl, net_pnl, brokerage_costs FROM historical_signals WHERE id = ?", (sig_id,))
+        row = c.fetchone()
+        conn.close()
+
+        self.assertEqual(row["outcome"], "CLOSED_EOD_SQUAREOFF")
+        self.assertEqual(row["final_pnl"], 50.0) # 550.0 - 500.0
+        # Friction must be computed at actual exit turnover (550 * 200), not just entry price
+        self.assertGreater(row["brokerage_costs"], 0.0)
+        self.assertAlmostEqual(row["net_pnl"], row["final_pnl"] - row["brokerage_costs"], places=2)
 
 if __name__ == '__main__':
     unittest.main()

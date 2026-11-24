@@ -259,7 +259,8 @@ def evaluate_candle_transition(direction, entry, orig_sl, sl, tp1, tp2, tp1_hit_
             }
 
     # Structural consistency: High must be >= max(Open, Low), Low must be <= min(Open, High)
-    if f_high < f_open or f_high < f_low or f_low > f_high:
+    # Strictly enforces: f_low <= f_open <= f_high and f_high >= f_low
+    if not (f_low <= f_open <= f_high) or (f_high < f_low):
         return {
             "outcome": "ACTIVE", "final_pnl": 0.0, "net_pnl": 0.0, "brokerage_costs": est_costs,
             "tp1_hit": 1 if tp1_hit_prior else 0, "tp1_hit_time": None, "tp2_hit": 0, "tp2_hit_time": None,
@@ -484,6 +485,7 @@ def evaluate_open_outcomes(data_map, force_eod=False):
         import datetime
         import pytz
         import pandas as pd
+        import math
         outcomes_changed = False
         from engine.cost_engine import IndianMarketCosts
 
@@ -573,14 +575,31 @@ def evaluate_open_outcomes(data_map, force_eod=False):
             if should_eod_squareoff:
                 exit_price = entry
                 if isinstance(data, pd.DataFrame) and not data.empty:
-                    exit_price = float(data['Close'].iloc[-1])
+                    try:
+                        exit_price = float(data['Close'].iloc[-1])
+                    except Exception:
+                        exit_price = entry
                 elif isinstance(data, dict):
-                    exit_price = float(data.get("close", data.get("current_price", entry)))
+                    try:
+                        raw_ep = data.get("close", data.get("current_price"))
+                        exit_price = float(raw_ep) if raw_ep is not None else entry
+                    except Exception:
+                        exit_price = entry
 
                 pnl = round(exit_price - entry if direction == "BUY" else entry - exit_price, 2)
                 outcome = "CLOSED_EOD_SQUAREOFF"
                 final_pnl = pnl
-                brokerage_costs = est_costs
+
+                # Compute actual friction at actual exit_price across the position
+                try:
+                    if cost_calc_fn:
+                        brokerage_costs = cost_calc_fn([(exit_price, 1.0)])
+                    else:
+                        actual_costs = IndianMarketCosts.calculate_intraday_costs(entry, exit_price, quantity=qty, instrument_type=inst_type)
+                        brokerage_costs = actual_costs["cost_per_share"]
+                except Exception:
+                    brokerage_costs = est_costs
+
                 net_pnl = round(final_pnl - brokerage_costs, 2)
 
                 cursor.execute("""
@@ -599,12 +618,21 @@ def evaluate_open_outcomes(data_map, force_eod=False):
             if isinstance(data, pd.DataFrame) and not data.empty:
                 df = data.copy()
                 if not pd.api.types.is_datetime64_any_dtype(df.index):
-                    df.index = pd.to_datetime(df.index)
+                    try:
+                        df.index = pd.to_datetime(df.index)
+                    except Exception:
+                        continue
                 
                 # Iterate each completed candle formed strictly after the completed signal candle
                 now_ts = time.time()
                 for idx, (c_dt, row) in enumerate(df.iterrows()):
-                    c_ts = c_dt.timestamp() if hasattr(c_dt, 'timestamp') else float(c_dt)
+                    try:
+                        c_ts = c_dt.timestamp() if hasattr(c_dt, 'timestamp') else float(c_dt)
+                        if not math.isfinite(c_ts) or c_ts <= 0:
+                            continue
+                    except Exception:
+                        continue
+
                     if (c_ts - last_candle_time) <= 1e-3 or (c_ts - eval_min_time) < -1e-3:
                         continue
 
@@ -612,10 +640,20 @@ def evaluate_open_outcomes(data_map, force_eod=False):
                     if is_last_candle and (c_ts + 300 > now_ts):
                         continue
 
+                    # Safe extraction of OHLC without fabricating fake prices
+                    raw_open = row.get('Open')
+                    raw_high = row.get('High')
+                    raw_low = row.get('Low')
+                    if raw_open is None or raw_high is None or raw_low is None:
+                        continue
+                    try:
+                        c_open = float(raw_open)
+                        c_high = float(raw_high)
+                        c_low = float(raw_low)
+                    except (ValueError, TypeError):
+                        continue
+
                     newest_candle_time = max(newest_candle_time, c_ts)
-                    c_open = float(row.get('Open', entry))
-                    c_high = float(row.get('High', entry))
-                    c_low = float(row.get('Low', entry))
 
                     tp1_hit_prior = bool(tp1_hit)
                     if direction == "BUY":
@@ -649,13 +687,41 @@ def evaluate_open_outcomes(data_map, force_eod=False):
 
             # Case B: Single candle dictionary
             elif isinstance(data, dict):
-                c_ts = float(data.get("timestamp", now))
+                try:
+                    raw_ts = data.get("timestamp")
+                    if raw_ts is None:
+                        c_ts = float(now)
+                    else:
+                        c_ts = float(raw_ts)
+                    if not math.isfinite(c_ts) or c_ts <= 0:
+                        continue
+                except (ValueError, TypeError):
+                    continue
+
                 is_completed = data.get("is_completed", (c_ts + 300 <= now))
                 if is_completed and c_ts > last_candle_time and c_ts >= eval_min_time:
+                    raw_high = data.get("high")
+                    raw_low = data.get("low")
+                    if raw_high is None or raw_low is None:
+                        continue
+                    try:
+                        c_high = float(raw_high)
+                        c_low = float(raw_low)
+                    except (ValueError, TypeError):
+                        continue
+
+                    # If open is explicitly supplied, parse and validate it;
+                    # if omitted in dict feed, use natural candle low as baseline open to preserve structural validity
+                    raw_open = data.get("open")
+                    if raw_open is not None:
+                        try:
+                            c_open = float(raw_open)
+                        except (ValueError, TypeError):
+                            continue
+                    else:
+                        c_open = c_low
+
                     newest_candle_time = c_ts
-                    c_high = float(data.get("high", entry))
-                    c_low = float(data.get("low", entry))
-                    c_open = float(data.get("open", c_low))
 
                     tp1_hit_prior = bool(tp1_hit)
                     if direction == "BUY":

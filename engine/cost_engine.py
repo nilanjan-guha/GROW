@@ -196,16 +196,31 @@ class IndianMarketCosts:
         inst = instrument_type.upper()
 
         clean_exits = []
+        if not exits:
+            raise ValueError("Exits list cannot be empty in calculate_multi_exit_costs.")
+
         for e in exits:
             if isinstance(e, (list, tuple)):
-                clean_exits.append((float(e[0]), int(e[1])))
+                if len(e) < 2:
+                    raise ValueError(f"Invalid exit tuple {e}: expected (price, quantity).")
+                ep, eq = float(e[0]), int(e[1])
             elif isinstance(e, dict):
-                clean_exits.append((float(e.get("price", entry)), int(e.get("quantity", 0))))
+                if "price" not in e or "quantity" not in e:
+                    raise ValueError(f"Invalid exit dict {e}: missing price or quantity.")
+                ep, eq = float(e["price"]), int(e["quantity"])
+            else:
+                raise ValueError(f"Unsupported exit specification type: {type(e)}")
+
+            if eq <= 0:
+                raise ValueError(f"Exit quantity must be strictly positive, got {eq}.")
+            if ep <= 0:
+                raise ValueError(f"Exit price must be strictly positive, got {ep}.")
+            clean_exits.append((ep, eq))
 
         sum_exit_qty = sum(q for _, q in clean_exits)
-        if sum_exit_qty <= 0:
-            clean_exits = [(entry, tot_qty)]
-            sum_exit_qty = tot_qty
+        if sum_exit_qty > tot_qty:
+            raise ValueError(f"Total exited quantity ({sum_exit_qty}) exceeds original position ({tot_qty}).")
+        remaining_qty = tot_qty - sum_exit_qty
 
         # 1. Entry side (evaluated once)
         buy_turnover = entry * tot_qty
@@ -270,6 +285,8 @@ class IndianMarketCosts:
         return {
             "instrument": inst,
             "quantity": tot_qty,
+            "exited_quantity": sum_exit_qty,
+            "remaining_quantity": remaining_qty,
             "total_costs": total_costs,
             "cost_per_share": cost_per_share,
             "brokerage": total_brokerage,
