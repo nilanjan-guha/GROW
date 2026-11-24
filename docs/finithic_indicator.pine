@@ -814,10 +814,10 @@ atVwapPremium  = close >= vwapUpper2 or (high >= sessionVwap and close < session
 sfpBull = not na(internalLow.currentLevel) and low < internalLow.currentLevel and close > internalLow.currentLevel and close > open
 sfpBear = not na(internalHigh.currentLevel) and high > internalHigh.currentLevel and close < internalHigh.currentLevel and close < open
 
-// 2. Trapped Traders / Fake Breakout Stop-Cascade
-// Prior bar broke high/low, current bar immediately engulfs/rejects opposite side
-trappedSellers = low[1] < ta.lowest(low, 5)[2] and close > open and close > high[1] and (barDelta > 0 or bullishAbsorption)
-trappedBuyers  = high[1] > ta.highest(high, 5)[2] and close < open and close < low[1] and (barDelta < 0 or bearishAbsorption)
+// Trend Continuation Pullback Ignition (Never miss the runaway trend!):
+// When market is in a confirmed strong trend above EMA 50, buying any 1-2 bar shallow dip with green re-acceleration
+bullTrendPullback = bullTrend and (low <= low[1] or low <= ta.ema(close, 20)) and close > open and (barDelta > 0 or isPositiveDelta) and close > ta.ema(close, 20)
+bearTrendPullback = bearTrend and (high >= high[1] or high >= ta.ema(close, 20)) and close < open and (barDelta < 0 or isNegativeDelta) and close < ta.ema(close, 20)
 
 // Volume Expansion & Institutional Displacement Filters
 volEma20          = ta.ema(volume, 20)
@@ -1122,7 +1122,7 @@ institutBullScore = 0
 institutBullScore := institutBullScore + (triggeredBullShift ? 2 : 0)                 // CHoCH/BOS MSS       (+2)
 institutBullScore := institutBullScore + (sweepLow ? 2 : 0)                            // Liquidity SSL Sweep  (+2)
 institutBullScore := institutBullScore + (sfpBull ? 2 : 0)                             // SFP Swing Failure    (+2)
-institutBullScore := institutBullScore + (trappedSellers ? 2 : 0)                      // Trapped Traders Turn (+2)
+institutBullScore := institutBullScore + (bullTrendPullback ? 2 : 0)                   // Trend Dip Ignition   (+2)
 institutBullScore := institutBullScore + (bullishAbsorption ? 2 : 0)                   // Order Flow Absorption(+2)
 institutBullScore := institutBullScore + (bullOteHit ? 2 : 0)                          // OTE Golden Pocket    (+2)
 institutBullScore := institutBullScore + (bullSMTDiv ? 2 : 0)                          // SMT Divergence       (+2)
@@ -1142,7 +1142,7 @@ institutBearScore = 0
 institutBearScore := institutBearScore + (triggeredBearShift ? 2 : 0)
 institutBearScore := institutBearScore + (sweepHigh ? 2 : 0)
 institutBearScore := institutBearScore + (sfpBear ? 2 : 0)
-institutBearScore := institutBearScore + (trappedBuyers ? 2 : 0)
+institutBearScore := institutBearScore + (bearTrendPullback ? 2 : 0)
 institutBearScore := institutBearScore + (bearishAbsorption ? 2 : 0)
 institutBearScore := institutBearScore + (bearOteHit ? 2 : 0)
 institutBearScore := institutBearScore + (bearSMTDiv ? 2 : 0)
@@ -1226,7 +1226,7 @@ sniperBuyTrigger =
              isInKillzone and           // Active in institutional killzone (avoid chop)
              (
                  sfpTurnBull or         // SFP: Catches exact bottom before BOS
-                 trappedBreakoutBull or // Trapped sellers liquidation rocket
+                 bullTrendPullback or   // Trend Dip Ignition (Catches runaway trends without missing!)
                  isEarlyBullShift or    // Early MSS / CHoCH at the turn
                  sweepSpringBull or     // Early SSL Sweep + Spring / Absorption (Pre-move entry!)
                  bullOteHit or          // OTE Golden Pocket 62%-79% retracement
@@ -1250,7 +1250,7 @@ sniperSellTrigger =
      isInKillzone and               // Active in institutional killzone
      (
          sfpTurnBear or
-         trappedBreakoutBear or
+         bearTrendPullback or
          isEarlyBearShift or        // Early MSS / CHoCH at the turn
          sweepUpthrustBear or       // Early BSL Sweep + Upthrust / Absorption (Pre-move entry!)
          bearOteHit or
