@@ -113,7 +113,7 @@ class MarketValidator:
         return 555 <= minute <= 930
 
     @staticmethod
-    def validate_feed_freshness(df, max_delay_seconds=900, max_allowed_missing_gaps=2, candle_duration_seconds=300):
+    def validate_feed_freshness(df, max_delay_seconds=900, max_allowed_missing_gaps=2, candle_duration_seconds=300, now_dt=None):
         """
         Validates OHLCV DataFrame integrity and freshness as single source of truth:
         - Rejects empty feeds or feeds with insufficient candle history (< 5 candles).
@@ -121,6 +121,7 @@ class MarketValidator:
         - Rejects stale previous session feeds during active market hours.
         - Rejects stalled feeds (> max_delay_seconds delay).
         - Rejects feeds with excessive missing candle gaps (> max_allowed_missing_gaps).
+        - Supports now_dt override for deterministic historical/test validation.
         """
         if df is None or df.empty:
             return {"is_valid": False, "status": "EMPTY_FEED", "reason": "Market dataframe is empty"}
@@ -130,7 +131,14 @@ class MarketValidator:
 
         df_eval = df.copy()
         ist = pytz.timezone('Asia/Kolkata')
-        now = MarketValidator.get_ist_now()
+        if now_dt is not None:
+            now = pd.to_datetime(now_dt)
+            if now.tz is None:
+                now = now.tz_localize(ist)
+            elif str(now.tz) != 'Asia/Kolkata':
+                now = now.tz_convert(ist)
+        else:
+            now = MarketValidator.get_ist_now()
         now_ts = now.timestamp()
         
         # Check index type and ensure timezone awareness in Asia/Kolkata
