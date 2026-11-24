@@ -791,6 +791,13 @@ cvdHighest5 = ta.highest(sessionCvd, 5)
 priceHighest5 = ta.highest(high, 5)
 bearCvdDivergence = (high >= priceHighest5) and (sessionCvd < cvdHighest5[1])
 
+// Volume Expansion & Institutional Displacement Filters
+volEma20          = ta.ema(volume, 20)
+isVolumeExpanded  = not useVolumeDisplace or (volume >= volEma20 * volMultInput)
+candleRange       = math.max(high - low, syminfo.mintick)
+candleBody        = math.abs(close - open)
+isDisplacement    = not useVolumeDisplace or ((candleBody / candleRange) >= 0.45 and isVolumeExpanded)
+
 // Exhaustion Auction & Climax Detection (Blocks late entries at trend tops/bottoms)
 // Volume spike >= 2.0x 20 EMA + long rejection wick or tiny body = exhaustion / retail trapped
 volClimax = volume >= volEma20 * 2.0
@@ -805,13 +812,6 @@ isOverextendedShort = close < ema20 - (atr14 * 2.8) or bearExhaustion
 // Master Order Flow Filters for Entries:
 orderFlowBullConfirmed = not useOrderFlowFilter or (isPositiveDelta or bullishAbsorption or (requireCvdDivergence and bullCvdDivergence))
 orderFlowBearConfirmed = not useOrderFlowFilter or (isNegativeDelta or bearishAbsorption or (requireCvdDivergence and bearCvdDivergence))
-
-// Volume Expansion & Institutional Displacement Filters
-volEma20          = ta.ema(volume, 20)
-isVolumeExpanded  = not useVolumeDisplace or (volume >= volEma20 * volMultInput)
-candleRange       = math.max(high - low, syminfo.mintick)
-candleBody        = math.abs(close - open)
-isDisplacement    = not useVolumeDisplace or ((candleBody / candleRange) >= 0.45 and isVolumeExpanded)
 
 // Absorption Wicks (Institutions absorbing retail supply/demand)
 lowerWick         = math.min(open, close) - low
