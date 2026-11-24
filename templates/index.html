@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -8,6 +9,7 @@
     <!-- Three.js for 60FPS GPU 3D Starfield & Neural Matrix Mesh -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
+
 <body>
 
     <!-- Holographic 3D Background Canvas & Laser Scan Line -->
@@ -20,9 +22,11 @@
         <div class="header-title">
             <span class="pulse-circle"></span>
             <span>AI COMMAND // DYNAMIC F&O SNIPER RADAR</span>
-            <span class="badge" id="mktBadge" style="color:var(--neon-amber); border-color:var(--neon-amber);">SCANNING FEED...</span>
+            <span class="badge" id="mktBadge" style="color:var(--neon-amber); border-color:var(--neon-amber);">SCANNING
+                FEED...</span>
             <span class="badge" id="uccBadge">GROWW: ACTIVE</span>
-            <span class="badge" id="nseBadge" style="color:var(--neon-green); border-color:var(--neon-green);">NSE INDIA: LIVE FEED</span>
+            <span class="badge" id="nseBadge" style="color:var(--neon-green); border-color:var(--neon-green);">NSE
+                INDIA: LIVE FEED</span>
             <span class="badge" id="fnoBadge">FNO UNIVERSE: 219 ACTIVE</span>
             <span class="badge" id="cycleStatus" style="color:var(--neon-cyan);">CYCLE: NEURAL SWEEP</span>
         </div>
@@ -43,7 +47,8 @@
                 </span>
                 <span style="font-size:0.65rem; color:var(--text-muted);">CALL / BUY FLOW</span>
             </div>
-            <div class="panel-body" id="bullishSectors" style="display:flex; flex-direction:column; gap:6px; overflow-y:auto; max-height:calc(100vh - 120px);">
+            <div class="panel-body" id="bullishSectors"
+                style="display:flex; flex-direction:column; gap:6px; overflow-y:auto; max-height:calc(100vh - 120px);">
                 <div style="font-size:0.72rem; color:var(--text-muted); text-align:center; margin-top:30px;">
                     Filtering 219 F&O stocks for active Call/Bull momentum...
                 </div>
@@ -59,7 +64,7 @@
                 <span id="selectedSectorTitle" style="color: var(--neon-amber); font-size:0.75rem;">--</span>
             </div>
             <div class="panel-body">
-                
+
                 <!-- Rotating 3D Sector Hologram Wheel & Active Sector Analysis Indicator -->
                 <div class="sector-wheel-container">
                     <div class="wheel-indicator">
@@ -75,9 +80,12 @@
                 </div>
 
                 <!-- Confirmed Intraday Trade Alert Banner -->
-                <div id="confirmedTradeAlert" style="display:none; margin-bottom:10px; padding:10px 14px; border-radius:6px;">
+                <div id="confirmedTradeAlert"
+                    style="display:none; margin-bottom:10px; padding:10px 14px; border-radius:6px;">
                     <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <span style="font-size:0.75rem; font-weight:bold; color:var(--neon-green); letter-spacing:0.8px;">⚡ CONFIRMED INTRADAY TRADE SIGNAL</span>
+                        <span
+                            style="font-size:0.75rem; font-weight:bold; color:var(--neon-green); letter-spacing:0.8px;">⚡
+                            CONFIRMED INTRADAY TRADE SIGNAL</span>
                         <span id="alertTime" style="font-size:0.65rem; color:var(--text-muted);">READY TO EXECUTE</span>
                     </div>
                     <div id="alertDetails" style="font-size:0.82rem; font-weight:700; color:#fff; margin-top:4px;">
@@ -92,18 +100,25 @@
                 <div class="radar-box">
                     <div class="trade-decision-banner" id="decisionBanner">
                         <div>
-                            <div style="font-size:0.62rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.8px;">CONFIRMED SIGNAL & SETUP</div>
-                            <div class="decision-action" id="decisionAction" style="color:#94a3b8;">NO TRADE SETUP YET</div>
+                            <div
+                                style="font-size:0.62rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.8px;">
+                                CONFIRMED SIGNAL & SETUP</div>
+                            <div class="decision-action" id="decisionAction" style="color:#94a3b8;">NO TRADE SETUP YET
+                            </div>
                         </div>
                         <div style="text-align:right;">
-                            <div style="font-size:0.62rem; color:var(--text-muted); letter-spacing:0.8px;">EARLY STAGE STATUS</div>
+                            <div style="font-size:0.62rem; color:var(--text-muted); letter-spacing:0.8px;">EARLY STAGE
+                                STATUS</div>
                             <div class="decision-setup" id="decisionSetup">COIL / ACCUMULATION SCAN</div>
                         </div>
                     </div>
-                    
-                    <div class="decision-reason" id="decisionReason" style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; padding:6px 12px; font-size:0.75rem;">
-                        <span id="decisionReasonText" style="flex:1; line-height:1.4;">Scanning F&O order book confluence...</span>
-                        <span id="decisionPillTag" style="font-size:0.65rem; background:rgba(255,255,255,0.06); padding:2px 8px; border-radius:4px; font-weight:bold; color:var(--neon-cyan); white-space:nowrap; align-self:flex-start;">MONITORING</span>
+
+                    <div class="decision-reason" id="decisionReason"
+                        style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; padding:6px 12px; font-size:0.75rem;">
+                        <span id="decisionReasonText" style="flex:1; line-height:1.4;">Scanning F&O order book
+                            confluence...</span>
+                        <span id="decisionPillTag"
+                            style="font-size:0.65rem; background:rgba(255,255,255,0.06); padding:2px 8px; border-radius:4px; font-weight:bold; color:var(--neon-cyan); white-space:nowrap; align-self:flex-start;">MONITORING</span>
                     </div>
 
                     <div class="radar-metrics">
@@ -113,7 +128,8 @@
                         </div>
                         <div class="metric-cell">
                             <div class="m-lbl">RSI (14) & RVOL (Volume Multiplier)</div>
-                            <div class="m-val yellow" id="valRsi" style="display:flex; align-items:baseline; gap:6px; flex-wrap:wrap;">--</div>
+                            <div class="m-val yellow" id="valRsi"
+                                style="display:flex; align-items:baseline; gap:6px; flex-wrap:wrap;">--</div>
                         </div>
                         <div class="metric-cell">
                             <div class="m-lbl">EMA 9 / 21 Trend</div>
@@ -141,7 +157,9 @@
                         </div>
                         <div class="metric-cell" style="grid-column: span 2;">
                             <div class="m-lbl">Institutional Triggers & Bias</div>
-                            <div class="m-val cyan" id="valStrategies" style="font-size:0.75rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">--</div>
+                            <div class="m-val cyan" id="valStrategies"
+                                style="font-size:0.75rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                                --</div>
                         </div>
                         <div class="metric-cell" style="grid-column: span 2;">
                             <div class="m-lbl">Stop Loss & Target Potential</div>
@@ -151,86 +169,119 @@
                 </div>
 
                 <!-- NSE India Institutional Flow & Large Deals HUD -->
-                <div style="background:rgba(255,255,255,0.02); border:1px solid rgba(0,240,255,0.25); border-radius:6px; padding:8px 12px; margin-bottom:12px;">
+                <div
+                    style="background:rgba(255,255,255,0.02); border:1px solid rgba(0,240,255,0.25); border-radius:6px; padding:8px 12px; margin-bottom:12px;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                        <span style="font-family:'Inter', sans-serif; font-size:0.75rem; font-weight:bold; color:var(--neon-cyan); display:flex; align-items:center; gap:6px;">
+                        <span
+                            style="font-family:'Inter', sans-serif; font-size:0.75rem; font-weight:bold; color:var(--neon-cyan); display:flex; align-items:center; gap:6px;">
                             🏛️ NSE INDIA INSTITUTIONAL ORDER FLOW (FII / DII & LARGE DEALS)
                         </span>
-                        <span style="font-family:'JetBrains Mono', monospace; font-size:0.65rem; color:#94a3b8;" id="nseSyncTime">SYNCING NSE...</span>
+                        <span style="font-family:'JetBrains Mono', monospace; font-size:0.65rem; color:#94a3b8;"
+                            id="nseSyncTime">SYNCING NSE...</span>
                     </div>
                     <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:8px;">
-                        <div style="background:rgba(0,0,0,0.3); padding:6px 10px; border-radius:4px; border-left:3px solid var(--neon-cyan);">
-                            <div style="font-size:0.62rem; color:var(--text-muted); text-transform:uppercase;">FII / FPI Net Flow</div>
+                        <div
+                            style="background:rgba(0,0,0,0.3); padding:6px 10px; border-radius:4px; border-left:3px solid var(--neon-cyan);">
+                            <div style="font-size:0.62rem; color:var(--text-muted); text-transform:uppercase;">FII / FPI
+                                Net Flow</div>
                             <div style="font-size:0.85rem; font-weight:800;" id="nseFiiVal">--</div>
                         </div>
-                        <div style="background:rgba(0,0,0,0.3); padding:6px 10px; border-radius:4px; border-left:3px solid var(--neon-amber);">
-                            <div style="font-size:0.62rem; color:var(--text-muted); text-transform:uppercase;">DII Net Flow</div>
+                        <div
+                            style="background:rgba(0,0,0,0.3); padding:6px 10px; border-radius:4px; border-left:3px solid var(--neon-amber);">
+                            <div style="font-size:0.62rem; color:var(--text-muted); text-transform:uppercase;">DII Net
+                                Flow</div>
                             <div style="font-size:0.85rem; font-weight:800;" id="nseDiiVal">--</div>
                         </div>
-                        <div style="background:rgba(0,0,0,0.3); padding:6px 10px; border-radius:4px; border-left:3px solid var(--neon-green);">
-                            <div style="font-size:0.62rem; color:var(--text-muted); text-transform:uppercase;">Institutional Market Bias</div>
+                        <div
+                            style="background:rgba(0,0,0,0.3); padding:6px 10px; border-radius:4px; border-left:3px solid var(--neon-green);">
+                            <div style="font-size:0.62rem; color:var(--text-muted); text-transform:uppercase;">
+                                Institutional Market Bias</div>
                             <div style="font-size:0.85rem; font-weight:800;" id="nseBiasVal">--</div>
                         </div>
                     </div>
-                    <div id="nseLargeDealsRow" style="margin-top:6px; font-size:0.68rem; color:#cbd5e1; display:flex; align-items:center; gap:8px;">
+                    <div id="nseLargeDealsRow"
+                        style="margin-top:6px; font-size:0.68rem; color:#cbd5e1; display:flex; align-items:center; gap:8px;">
                         <span style="color:var(--neon-cyan); font-weight:bold;">📦 Active Stock Large Deals:</span>
                         <span id="nseStockDealsText" style="color:#94a3b8;">Scanning NSE block/bulk records...</span>
                     </div>
                 </div>
 
                 <!-- Live Stock News Catalyst Bar -->
-                <div style="background:rgba(255,255,255,0.02); border:1px solid rgba(255,170,0,0.3); border-radius:6px; padding:6px 12px; margin-bottom:12px; display:flex; align-items:center; justify-content:space-between; gap:10px;">
+                <div
+                    style="background:rgba(255,255,255,0.02); border:1px solid rgba(255,170,0,0.3); border-radius:6px; padding:6px 12px; margin-bottom:12px; display:flex; align-items:center; justify-content:space-between; gap:10px;">
                     <div style="display:flex; align-items:center; gap:8px; min-width:180px;">
                         <span style="font-size:0.85rem;">📰</span>
-                        <span style="font-size:0.68rem; font-weight:bold; color:var(--neon-amber); text-transform:uppercase;">CATALYST NEWS:</span>
+                        <span
+                            style="font-size:0.68rem; font-weight:bold; color:var(--neon-amber); text-transform:uppercase;">CATALYST
+                            NEWS:</span>
                         <span id="activeNewsStock" style="font-size:0.75rem; font-weight:800; color:#fff;">--</span>
                     </div>
-                    <div id="activeStockNewsHeadline" style="font-size:0.72rem; color:#cbd5e1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex-grow:1;">
+                    <div id="activeStockNewsHeadline"
+                        style="font-size:0.72rem; color:#cbd5e1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex-grow:1;">
                         Fetching dynamic company headlines...
                     </div>
-                    <span id="activeNewsSentiment" style="font-size:0.62rem; padding:1px 6px; border-radius:3px; background:rgba(255,255,255,0.06); font-weight:bold; color:#94a3b8;">SCANNING</span>
+                    <span id="activeNewsSentiment"
+                        style="font-size:0.62rem; padding:1px 6px; border-radius:3px; background:rgba(255,255,255,0.06); font-weight:bold; color:#94a3b8;">SCANNING</span>
                 </div>
 
                 <!-- Focused Two-Stage Trade Selection: PREPARING (Max 5) vs ENTRY-READY (Max 2) -->
                 <div id="rankedOpportunitiesSection">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                        <span style="font-family:'Inter', sans-serif; font-size:0.75rem; font-weight:bold; color:var(--text-primary); display:flex; align-items:center; gap:6px;">
+                        <span
+                            style="font-family:'Inter', sans-serif; font-size:0.75rem; font-weight:bold; color:var(--text-primary); display:flex; align-items:center; gap:6px;">
                             🎯 FOCUSED TRADE SELECTION (5-MIN DISCOVERY & EXECUTION)
-                            <span id="scannerLivePulse" style="font-size:0.60rem; color:var(--neon-green); background:rgba(0,255,170,0.12); border:1px solid var(--neon-green); padding:1px 6px; border-radius:3px; animation:pulseRing 1.5s infinite;">● 219 F&O LIVE SCAN</span>
+                            <span id="scannerLivePulse"
+                                style="font-size:0.60rem; color:var(--neon-green); background:rgba(0,255,170,0.12); border:1px solid var(--neon-green); padding:1px 6px; border-radius:3px; animation:pulseRing 1.5s infinite;">●
+                                219 F&O LIVE SCAN</span>
                         </span>
-                        <span style="font-family:'JetBrains Mono', monospace; font-size:0.65rem; color:var(--neon-cyan);" id="rankSyncTime">SYNCING...</span>
+                        <span
+                            style="font-family:'JetBrains Mono', monospace; font-size:0.65rem; color:var(--neon-cyan);"
+                            id="rankSyncTime">SYNCING...</span>
                     </div>
                     <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
                         <div id="rankedPreparingSection" style="display:flex; flex-direction:column; gap:6px;">
-                            <div style="font-family:'Inter', sans-serif; font-size:0.68rem; font-weight:bold; color:var(--neon-amber); border-bottom:1px solid rgba(255,170,0,0.3); padding-bottom:3px; display:flex; justify-content:space-between;">
+                            <div
+                                style="font-family:'Inter', sans-serif; font-size:0.68rem; font-weight:bold; color:var(--neon-amber); border-bottom:1px solid rgba(255,170,0,0.3); padding-bottom:3px; display:flex; justify-content:space-between;">
                                 <span>⚡ PREPARING (MAX 5) — PRE-BREAKOUT / COIL</span>
                                 <span style="font-size:0.6rem; color:#94a3b8;">BEFORE THE MOVE</span>
                             </div>
                             <div id="rankedPreparingList" style="display:flex; flex-direction:column; gap:6px;">
-                                <div style="font-size:0.7rem; color:var(--text-muted); padding:6px 0;">Scanning 219 F&O for NR4/NR7 and volume coils...</div>
+                                <div style="font-size:0.7rem; color:var(--text-muted); padding:6px 0;">Scanning 219 F&O
+                                    for NR4/NR7 and volume coils...</div>
                             </div>
                         </div>
                         <div id="rankedEntryReadySection" style="display:flex; flex-direction:column; gap:6px;">
-                            <div style="font-family:'Inter', sans-serif; font-size:0.68rem; font-weight:bold; color:var(--neon-green); border-bottom:1px solid rgba(0,255,170,0.3); padding-bottom:3px; display:flex; justify-content:space-between;">
+                            <div
+                                style="font-family:'Inter', sans-serif; font-size:0.68rem; font-weight:bold; color:var(--neon-green); border-bottom:1px solid rgba(0,255,170,0.3); padding-bottom:3px; display:flex; justify-content:space-between;">
                                 <span>🔥 ENTRY READY (MAX 2) — CONFIRMED 5M</span>
                                 <span style="font-size:0.6rem; color:#94a3b8;">5-MIN CANDLE CONFIRMED</span>
                             </div>
                             <div id="rankedEntryReadyList" style="display:flex; flex-direction:column; gap:6px;">
-                                <div style="font-size:0.7rem; color:var(--text-muted); padding:6px 0;">No 5-min confirmed setups right now. Waiting for trigger.</div>
+                                <div style="font-size:0.7rem; color:var(--text-muted); padding:6px 0;">No 5-min
+                                    confirmed setups right now. Waiting for trigger.</div>
                             </div>
                         </div>
                     </div>
                 </div>
 
                 <!-- Live Stream Terminal Console & Trades Journal -->
-                <div style="margin-top:8px; border:1px solid rgba(255,255,255,0.08); border-radius:6px; background:rgba(2,6,18,0.85); overflow:hidden; flex-shrink:0;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.03); border-bottom:1px solid rgba(255,255,255,0.06); padding:4px 10px;">
+                <div
+                    style="margin-top:8px; border:1px solid rgba(255,255,255,0.08); border-radius:6px; background:rgba(2,6,18,0.85); overflow:hidden; flex-shrink:0;">
+                    <div
+                        style="display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.03); border-bottom:1px solid rgba(255,255,255,0.06); padding:4px 10px;">
                         <div style="display:flex; gap:6px;">
-                            <button id="tabBtnStream" class="btn-action active-tab" onclick="switchConsoleTab('stream')" style="padding:4px 10px; font-size:0.68rem; font-weight:bold; border-radius:4px; background:rgba(0,240,255,0.15); border:1px solid var(--neon-cyan); color:var(--neon-cyan);">⚡ AI ACTIVITY STREAM</button>
-                            <button id="tabBtnActive" class="btn-action" onclick="switchConsoleTab('active')" style="padding:4px 10px; font-size:0.68rem; font-weight:bold; border-radius:4px; background:transparent; border:1px solid rgba(255,255,255,0.1); color:#94a3b8;">🟢 ACTIVE TRADES (<span id="tabActiveCount">0</span>)</button>
-                            <button id="tabBtnClosed" class="btn-action" onclick="switchConsoleTab('closed')" style="padding:4px 10px; font-size:0.68rem; font-weight:bold; border-radius:4px; background:transparent; border:1px solid rgba(255,255,255,0.1); color:#94a3b8;">📚 CLOSED TRADES & LEARNING (<span id="tabClosedCount">0</span>)</button>
+                            <button id="tabBtnStream" class="btn-action active-tab" onclick="switchConsoleTab('stream')"
+                                style="padding:4px 10px; font-size:0.68rem; font-weight:bold; border-radius:4px; background:rgba(0,240,255,0.15); border:1px solid var(--neon-cyan); color:var(--neon-cyan);">⚡
+                                AI ACTIVITY STREAM</button>
+                            <button id="tabBtnActive" class="btn-action" onclick="switchConsoleTab('active')"
+                                style="padding:4px 10px; font-size:0.68rem; font-weight:bold; border-radius:4px; background:transparent; border:1px solid rgba(255,255,255,0.1); color:#94a3b8;">🟢
+                                ACTIVE TRADES (<span id="tabActiveCount">0</span>)</button>
+                            <button id="tabBtnClosed" class="btn-action" onclick="switchConsoleTab('closed')"
+                                style="padding:4px 10px; font-size:0.68rem; font-weight:bold; border-radius:4px; background:transparent; border:1px solid rgba(255,255,255,0.1); color:#94a3b8;">📚
+                                CLOSED TRADES & LEARNING (<span id="tabClosedCount">0</span>)</button>
                         </div>
-                        <button class="btn-action" onclick="clearLogs()" id="purgeLogBtn" style="padding:3px 8px; font-size:0.62rem;">PURGE LOG</button>
+                        <button class="btn-action" onclick="clearLogs()" id="purgeLogBtn"
+                            style="padding:3px 8px; font-size:0.62rem;">PURGE LOG</button>
                     </div>
 
                     <!-- Tab 1: AI Activity Stream -->
@@ -239,16 +290,21 @@
                     </div>
 
                     <!-- Tab 2: Active Trades Window -->
-                    <div id="tabContentActive" style="display:none; padding:8px 10px; max-height:280px; overflow-y:auto;">
+                    <div id="tabContentActive"
+                        style="display:none; padding:8px 10px; max-height:280px; overflow-y:auto;">
                         <div id="activeTradesList" style="display:flex; flex-direction:column; gap:6px;">
-                            <div style="font-size:0.72rem; color:var(--text-muted); text-align:center; padding:15px;">No active trades open.</div>
+                            <div style="font-size:0.72rem; color:var(--text-muted); text-align:center; padding:15px;">No
+                                active trades open.</div>
                         </div>
                     </div>
 
                     <!-- Tab 3: Closed Trades & AI Learning Journal -->
-                    <div id="tabContentClosed" style="display:none; padding:10px 12px; max-height:300px; overflow-y:auto; background:rgba(3,7,18,0.95);">
-                        <div id="closedTradesList" style="display:flex; flex-direction:column; gap:8px; padding-bottom:8px;">
-                            <div style="font-size:0.75rem; color:#94a3b8; text-align:center; padding:16px;">Loading closed trades & learning data...</div>
+                    <div id="tabContentClosed"
+                        style="display:none; padding:10px 12px; max-height:300px; overflow-y:auto; background:rgba(3,7,18,0.95);">
+                        <div id="closedTradesList"
+                            style="display:flex; flex-direction:column; gap:8px; padding-bottom:8px;">
+                            <div style="font-size:0.75rem; color:#94a3b8; text-align:center; padding:16px;">Loading
+                                closed trades & learning data...</div>
                         </div>
                     </div>
                 </div>
@@ -264,7 +320,8 @@
                 </span>
                 <span style="font-size:0.65rem; color:var(--text-muted);">PUT / SHORT FLOW</span>
             </div>
-            <div class="panel-body" id="bearishSectors" style="display:flex; flex-direction:column; gap:6px; overflow-y:auto; max-height:calc(100vh - 120px);">
+            <div class="panel-body" id="bearishSectors"
+                style="display:flex; flex-direction:column; gap:6px; overflow-y:auto; max-height:calc(100vh - 120px);">
                 <div style="font-size:0.72rem; color:var(--text-muted); text-align:center; margin-top:30px;">
                     Filtering 219 F&O stocks for active Put/Bear momentum...
                 </div>
@@ -298,7 +355,7 @@
                 activeConfirmedTrades = cleaned;
                 localStorage.setItem('activeConfirmedTrades', JSON.stringify(activeConfirmedTrades));
             }
-        } catch(e) {}
+        } catch (e) { }
 
         // 3D Three.js Background HUD Grid & Starfield
         function initThreeCanvas() {
@@ -348,8 +405,8 @@
             for (let i = 0; i < 40; i++) {
                 const idx1 = Math.floor(Math.random() * particleCount) * 3;
                 const idx2 = Math.floor(Math.random() * particleCount) * 3;
-                wirePos.push(positions[idx1], positions[idx1+1], positions[idx1+2]);
-                wirePos.push(positions[idx2], positions[idx2+1], positions[idx2+2]);
+                wirePos.push(positions[idx1], positions[idx1 + 1], positions[idx1 + 2]);
+                wirePos.push(positions[idx2], positions[idx2 + 1], positions[idx2 + 2]);
             }
             wireGeo.setAttribute('position', new THREE.Float32BufferAttribute(wirePos, 3));
             const wireMat = new THREE.LineBasicMaterial({ color: 0x00f0ff, transparent: true, opacity: 0.16, linewidth: 1 });
@@ -382,7 +439,7 @@
             // Screen remains perfectly still on mouse hover
         }
 
-        function log(msg, type='INFO') {
+        function log(msg, type = 'INFO') {
             const feed = document.getElementById('terminalFeed');
             const time = new Date().toLocaleTimeString();
             const div = document.createElement('div');
@@ -465,7 +522,7 @@
 
                 let pnlPct = 0;
                 if (ep > 0) {
-                    pnlPct = isBuy ? ((lp - ep)/ep * 100) : ((ep - lp)/ep * 100);
+                    pnlPct = isBuy ? ((lp - ep) / ep * 100) : ((ep - lp) / ep * 100);
                 }
                 const pnlSign = pnlPct >= 0 ? '+' : '';
                 const pnlCol = pnlPct >= 0 ? 'var(--neon-green)' : 'var(--neon-red)';
@@ -509,7 +566,7 @@
                         const isWin = c.outcome.includes('WIN');
                         const isLoss = c.outcome === 'LOSS';
                         const isEod = c.outcome.includes('EOD') || c.outcome.includes('STALE');
-                        
+
                         let tagBg = isWin ? 'rgba(16,185,129,0.18)' : (isLoss ? 'rgba(239,68,68,0.18)' : 'rgba(245,158,11,0.18)');
                         let tagCol = isWin ? '#34d399' : (isLoss ? '#f87171' : '#fbbf24');
                         let tagBorder = isWin ? '#059669' : (isLoss ? '#dc2626' : '#d97706');
@@ -537,7 +594,7 @@
                     });
                     listEl.innerHTML = html;
                 }
-            } catch(e) {}
+            } catch (e) { }
         }
 
         function clearLogs() {
@@ -662,7 +719,7 @@
                         }
                     }
                 }
-            } catch (e) {}
+            } catch (e) { }
 
             await loadDynamicTopSectors();
 
@@ -747,7 +804,7 @@
                         }
                     }
                 }
-            } catch (e) {}
+            } catch (e) { }
         }
 
         async function loadDynamicTopSectors() {
@@ -787,8 +844,10 @@
                     card.innerHTML = `
                         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:5px;">
                             <div style="display:flex; align-items:center; gap:6px;">
-                                <span style="font-size:0.86rem; font-weight:800; color:#ffffff; letter-spacing:0.4px; text-shadow:0 1px 3px rgba(0,0,0,0.8);">#${idx+1} ${sym.replace('.NS', '')}</span>
+                                <span style="font-size:0.86rem; font-weight:800; color:#ffffff; letter-spacing:0.4px; text-shadow:0 1px 3px rgba(0,0,0,0.8);">#${idx + 1} ${sym.replace('.NS', '')}</span>
                                 <span class="active-radar-badge">▶ ACTIVE</span>
+                                <span class="scanning-badge">● SCANNING</span>
+                                <span class="news-catalyst-badge">📰 CATALYST</span>
                             </div>
                             <span style="color:#00ffaa; font-size:0.82rem; font-weight:800; font-family:'JetBrains Mono', monospace; background:rgba(0,255,170,0.18); padding:2px 7px; border-radius:4px; border:1px solid rgba(0,255,170,0.45); text-shadow:0 0 6px rgba(0,255,170,0.3); white-space:nowrap;">+${stk.change.toFixed(1)}%</span>
                         </div>
@@ -797,6 +856,9 @@
                             <span style="color:#00ffc4; font-weight:800; font-size:0.68rem; background:rgba(0,255,196,0.14); padding:2px 7px; border-radius:3px; border:1px solid rgba(0,255,196,0.35); letter-spacing:0.3px; white-space:nowrap;">CALL MOVER</span>
                         </div>
                     `;
+                    if (stockNewsCache[sym.replace('.NS', '').toUpperCase()]) {
+                        card.classList.add('has-news-catalyst');
+                    }
                     bullEl.appendChild(card);
                 });
             }
@@ -816,8 +878,10 @@
                     card.innerHTML = `
                         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:5px;">
                             <div style="display:flex; align-items:center; gap:6px;">
-                                <span style="font-size:0.86rem; font-weight:800; color:#ffffff; letter-spacing:0.4px; text-shadow:0 1px 3px rgba(0,0,0,0.8);">#${idx+1} ${sym.replace('.NS', '')}</span>
+                                <span style="font-size:0.86rem; font-weight:800; color:#ffffff; letter-spacing:0.4px; text-shadow:0 1px 3px rgba(0,0,0,0.8);">#${idx + 1} ${sym.replace('.NS', '')}</span>
                                 <span class="active-radar-badge">▶ ACTIVE</span>
+                                <span class="scanning-badge">● SCANNING</span>
+                                <span class="news-catalyst-badge">📰 CATALYST</span>
                             </div>
                             <span style="color:#ff3366; font-size:0.82rem; font-weight:800; font-family:'JetBrains Mono', monospace; background:rgba(255,51,102,0.18); padding:2px 7px; border-radius:4px; border:1px solid rgba(255,51,102,0.45); text-shadow:0 0 6px rgba(255,51,102,0.3); white-space:nowrap;">${stk.change.toFixed(1)}%</span>
                         </div>
@@ -826,6 +890,9 @@
                             <span style="color:#ff4d79; font-weight:800; font-size:0.68rem; background:rgba(255,77,121,0.14); padding:2px 7px; border-radius:3px; border:1px solid rgba(255,77,121,0.35); letter-spacing:0.3px; white-space:nowrap;">PUT MOVER</span>
                         </div>
                     `;
+                    if (stockNewsCache[sym.replace('.NS', '').toUpperCase()]) {
+                        card.classList.add('has-news-catalyst');
+                    }
                     bearEl.appendChild(card);
                 });
             }
@@ -836,32 +903,75 @@
             }
         }
 
+        let stockNewsCache = {};
+        let stockNewsIndex = 0;
+        let stockNewsTimer = null;
+
         async function loadStockCatalystNews(stockSymbol) {
             const sym = stockSymbol || currentStockSymbol;
             if (!sym) return;
-            const cleanSym = sym.replace('.NS', '');
+            const cleanSym = sym.replace('.NS', '').toUpperCase();
             document.getElementById('activeNewsStock').innerText = cleanSym;
+
             try {
                 const res = await fetch(`/api/news/stock?symbol=${encodeURIComponent(cleanSym)}`);
                 const data = await res.json();
                 if (data.success && data.news && data.news.length > 0) {
-                    const topNews = data.news[0];
-                    const headlineEl = document.getElementById('activeStockNewsHeadline');
-                    const sentEl = document.getElementById('activeNewsSentiment');
-                    if (headlineEl) {
-                        headlineEl.innerText = topNews.title;
-                        headlineEl.title = topNews.title;
-                    }
-                    if (sentEl) {
-                        const s = topNews.sentiment || 'NEUTRAL';
-                        sentEl.innerText = s;
-                        sentEl.style.color = s === 'BULLISH' ? 'var(--neon-green)' : (s === 'BEARISH' ? 'var(--neon-red)' : '#94a3b8');
+                    stockNewsCache[cleanSym] = data.news;
+                    stockNewsIndex = 0;
+                    displayCurrentStockNews(cleanSym);
+
+                    // Mark card with has-news-catalyst amber glow
+                    document.querySelectorAll('.sector-card').forEach(c => {
+                        const cardSym = (c.dataset && c.dataset.symbol) ? c.dataset.symbol.replace('.NS', '').toUpperCase() : '';
+                        if (cardSym === cleanSym) {
+                            c.classList.add('has-news-catalyst');
+                        }
+                    });
+
+                    // Start rotating news articles one by one every 4.5 seconds if multiple news available
+                    if (stockNewsTimer) clearInterval(stockNewsTimer);
+                    if (data.news.length > 1) {
+                        stockNewsTimer = setInterval(() => {
+                            if (currentStockSymbol.replace('.NS', '').toUpperCase() === cleanSym) {
+                                const list = stockNewsCache[cleanSym] || [];
+                                if (list.length > 1) {
+                                    stockNewsIndex = (stockNewsIndex + 1) % list.length;
+                                    displayCurrentStockNews(cleanSym);
+                                }
+                            }
+                        }, 4500);
                     }
                 } else {
                     document.getElementById('activeStockNewsHeadline').innerText = `No major news headlines detected for ${cleanSym} today.`;
                     document.getElementById('activeNewsSentiment').innerText = 'STABLE';
+                    document.getElementById('activeNewsSentiment').style.color = '#94a3b8';
+                    document.querySelectorAll('.sector-card').forEach(c => {
+                        const cardSym = (c.dataset && c.dataset.symbol) ? c.dataset.symbol.replace('.NS', '').toUpperCase() : '';
+                        if (cardSym === cleanSym) {
+                            c.classList.remove('has-news-catalyst');
+                        }
+                    });
                 }
-            } catch (e) {}
+            } catch (e) { }
+        }
+
+        function displayCurrentStockNews(cleanSym) {
+            const list = stockNewsCache[cleanSym];
+            if (!list || list.length === 0) return;
+            const item = list[stockNewsIndex % list.length];
+            const headlineEl = document.getElementById('activeStockNewsHeadline');
+            const sentEl = document.getElementById('activeNewsSentiment');
+            if (headlineEl) {
+                const counter = list.length > 1 ? `[${(stockNewsIndex % list.length) + 1}/${list.length}] ` : '';
+                headlineEl.innerHTML = `<span style="color:#00f0ff; font-weight:700;">${counter}</span>${item.title}`;
+                headlineEl.title = item.title;
+            }
+            if (sentEl) {
+                const s = item.sentiment || 'NEUTRAL';
+                sentEl.innerText = s;
+                sentEl.style.color = s === 'BULLISH' ? 'var(--neon-green)' : (s === 'BEARISH' ? 'var(--neon-red)' : '#94a3b8');
+            }
         }
 
         function selectSector(name) {
@@ -870,7 +980,7 @@
             if (sec) {
                 document.getElementById('selectedSectorTitle').innerText = `${name} (${sec.is_bullish ? '+' : ''}${sec.change.toFixed(2)}%)`;
                 document.getElementById('activeSectorSweepText').innerText = `ANALYZING: ${name} [${sec.is_bullish ? '+' : ''}${sec.change.toFixed(2)}%]`;
-                
+
                 document.querySelectorAll('.sector-card').forEach(c => c.classList.remove('selected'));
                 renderStockChips();
                 const stocks = sec.top_5 || sec.top_5_stocks || [];
@@ -905,7 +1015,7 @@
             currentStockSymbol = stk;
             userSelectedStock = stk;
             document.getElementById('radarStockTitle').innerText = stk;
-            
+
             // Find which sector this stock belongs to from sectorsDict
             let foundSector = null;
             let foundSecData = null;
@@ -968,7 +1078,7 @@
                 const isBuy = smc.action.includes('BUY');
                 const entryPrice = Number(smc.entry_price || smc.current_price || 0);
                 const currentPrice = Number(smc.live_price || smc.current_price || entryPrice);
-                
+
                 // Calculate real-time Gain / Loss % from Entry Price
                 let pnlPct = 0;
                 let pnlDiff = 0;
@@ -1021,7 +1131,7 @@
             delete activeConfirmedTrades[symbol];
             try {
                 localStorage.setItem('activeConfirmedTrades', JSON.stringify(activeConfirmedTrades));
-            } catch(e) {}
+            } catch (e) { }
             renderConfirmedBanner();
 
             try {
@@ -1031,7 +1141,7 @@
                     body: JSON.stringify({ symbol: symbol, signal_id: signalId, exit_price: exitPrice, reason: 'CLOSED_MANUAL' })
                 });
                 log(`[TRADE CLOSED] ${symbol} squared off at ₹${exitPrice}.`, 'INFO');
-            } catch (e) {}
+            } catch (e) { }
         }
 
         // Audio Synthesizer for Institutional Alert Chime
@@ -1044,7 +1154,7 @@
                 if (audioCtx.state === 'suspended') {
                     audioCtx.resume();
                 }
-                
+
                 const now = audioCtx.currentTime;
                 // High-probability two-tone notification chord
                 const osc1 = audioCtx.createOscillator();
@@ -1153,7 +1263,7 @@
             }
             const existing = activeConfirmedTrades[symbol];
             const isNew = !existing || !notifiedTradesSet.has(symbol);
-            
+
             // Preserve the original entry price once confirmed!
             const entryPrice = (existing && existing.smc && existing.smc.entry_price) ? existing.smc.entry_price : (smc.entry_price || smc.current_price);
             smc.entry_price = entryPrice;
@@ -1195,14 +1305,14 @@
                         activeConfirmedTrades[symbol].signal_id = res.signal_id;
                         try {
                             localStorage.setItem('activeConfirmedTrades', JSON.stringify(activeConfirmedTrades));
-                        } catch(e) {}
+                        } catch (e) { }
                     }
-                }).catch(() => {});
+                }).catch(() => { });
             }
 
             try {
                 localStorage.setItem('activeConfirmedTrades', JSON.stringify(activeConfirmedTrades));
-            } catch(e) {}
+            } catch (e) { }
 
             renderConfirmedBanner();
         }
@@ -1221,7 +1331,7 @@
                         activeConfirmedTrades = {};
                         try {
                             localStorage.removeItem('activeConfirmedTrades');
-                        } catch(e) {}
+                        } catch (e) { }
                         renderConfirmedBanner();
                         return;
                     }
@@ -1231,7 +1341,7 @@
                         const existing = activeConfirmedTrades[sym];
                         const entryPrice = item.entry_price || (existing && existing.smc ? existing.smc.entry_price : 0);
                         const livePrice = (existing && existing.smc && existing.smc.live_price) ? existing.smc.live_price : entryPrice;
-                        
+
                         activeConfirmedTrades[sym] = {
                             signal_id: item.id,
                             symbol: sym,
@@ -1260,11 +1370,11 @@
 
                     try {
                         localStorage.setItem('activeConfirmedTrades', JSON.stringify(activeConfirmedTrades));
-                    } catch(e) {}
+                    } catch (e) { }
 
                     renderConfirmedBanner();
                 }
-            } catch (e) {}
+            } catch (e) { }
         }
 
         async function loadRankedOpportunities() {
@@ -1294,11 +1404,11 @@
                                         }
                                     }
                                 })
-                                .catch(() => {});
+                                .catch(() => { });
                         }
                     }
                 }
-            } catch (e) {}
+            } catch (e) { }
         }
 
         function renderRankedOpportunitiesUI(ranked) {
@@ -1326,7 +1436,7 @@
                     <div style="background:rgba(255,255,255,0.02); border:1px solid ${isBull ? 'rgba(0,255,170,0.3)' : 'rgba(255,51,102,0.3)'}; border-left:3px solid ${dirCol}; border-radius:4px; padding:6px 8px; cursor:pointer;" onclick="selectStock('${sym}')" title="Click to view ${sym} in Radar">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
                             <span style="font-size:0.75rem; font-weight:bold; color:#fff;">
-                                #${i+1} ${sym.replace('.NS', '')} 
+                                #${i + 1} ${sym.replace('.NS', '')} 
                                 <span style="font-size:0.60rem; color:${dirCol}; background:${isBull ? 'rgba(0,255,170,0.12)' : 'rgba(255,51,102,0.12)'}; border:1px solid ${dirCol}; padding:1px 6px; border-radius:3px; font-weight:bold; margin-left:4px;">
                                     ${isBull ? '▲ PRE-BREAKOUT' : '▼ PRE-BREAKDOWN'}
                                 </span>
@@ -1407,7 +1517,7 @@
                     entryHtml += `
                     <div style="background:rgba(0,255,170,0.06); border:1px solid var(--neon-green); border-radius:4px; padding:6px 8px; cursor:pointer;" onclick="selectStock('${sym}')" title="Click to view confirmed 5m setup">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <span style="font-size:0.78rem; font-weight:bold; color:#fff;">#${i+1} ${sym.replace('.NS', '')} <span style="font-size:0.60rem; color:${dirCol}; background:rgba(0,0,0,0.4); padding:1px 5px; border-radius:3px; font-weight:bold;">${actLabel}</span></span>
+                            <span style="font-size:0.78rem; font-weight:bold; color:#fff;">#${i + 1} ${sym.replace('.NS', '')} <span style="font-size:0.60rem; color:${dirCol}; background:rgba(0,0,0,0.4); padding:1px 5px; border-radius:3px; font-weight:bold;">${actLabel}</span></span>
                             <span style="font-size:0.72rem; color:${dirCol}; font-weight:800;">${c.change_pct >= 0 ? '+' : ''}${c.change_pct}%</span>
                         </div>
                         <div style="font-size:0.62rem; color:#f8fafc; margin-top:3px; background:rgba(0,0,0,0.3); padding:3px 6px; border-radius:3px; display:flex; justify-content:space-between;">
@@ -1425,8 +1535,19 @@
             if (activeWatchlist.length === 0) return;
             watchlistIndex = (watchlistIndex + 1) % activeWatchlist.length;
             const target = activeWatchlist[watchlistIndex];
-            document.getElementById('cycleStatus').innerText = `CYCLE: AI SCANNING ${target.symbol.replace('.NS', '')} [${watchlistIndex + 1}/${activeWatchlist.length}]`;
-            
+            const cleanSym = target.symbol.replace('.NS', '').toUpperCase();
+            document.getElementById('cycleStatus').innerText = `CYCLE: AI SCANNING ${cleanSym} [${watchlistIndex + 1}/${activeWatchlist.length}]`;
+
+            // Update .scanning glow across mover cards
+            document.querySelectorAll('.sector-card').forEach(c => {
+                const cardSym = (c.dataset && c.dataset.symbol) ? c.dataset.symbol.replace('.NS', '').toUpperCase() : '';
+                if (cardSym === cleanSym) {
+                    c.classList.add('scanning');
+                } else {
+                    c.classList.remove('scanning');
+                }
+            });
+
             try {
                 const res = await fetch(`/api/market/smc-scan?symbol=${encodeURIComponent(target.symbol)}`);
                 const data = await res.json();
@@ -1443,7 +1564,7 @@
                         renderRadarData(target.symbol, smc);
                     }
                 }
-            } catch (e) {}
+            } catch (e) { }
         }
 
         function renderRadarData(symbol, smc) {
@@ -1451,11 +1572,11 @@
             const priceStr = isFinNum(smc.current_price) ? `₹${Number(smc.current_price).toFixed(1)}` : '--';
             const vwapStr = isFinNum(smc.vwap) ? `₹${Number(smc.vwap).toFixed(1)}` : '--';
             document.getElementById('valPrice').innerText = `${priceStr} (VWAP: ${vwapStr})`;
-            
+
             const rvolVal = isFinNum(smc.vol_multiplier) ? Number(smc.vol_multiplier).toFixed(2) : '1.00';
             const rsiStr = isFinNum(smc.rsi) ? Number(smc.rsi).toFixed(1) : '--';
             document.getElementById('valRsi').innerHTML = `<span>RSI: <b style="color:#fff;">${rsiStr}</b></span> <span style="color:#64748b;">|</span> <span>VOL: <b style="color:var(--neon-green);">${rvolVal}x</b></span>`;
-            
+
             const ema9Str = isFinNum(smc.ema9) ? Number(smc.ema9).toFixed(1) : '--';
             const ema21Str = isFinNum(smc.ema21) ? Number(smc.ema21).toFixed(1) : '--';
             document.getElementById('valEma').innerText = `EMA9: ${ema9Str} | EMA21: ${ema21Str}`;
@@ -1499,7 +1620,7 @@
                     sslEl.innerText = 'Pool Untapped';
                 }
             }
-            
+
             // Dynamic Telemetry updates
             const isBull = smc.action && smc.action.includes('BUY');
             const obPressEl = document.getElementById('telemetryObPressure');
@@ -1508,7 +1629,7 @@
                 obPressEl.innerText = obPress;
                 obPressEl.style.color = isBull ? 'var(--neon-green)' : 'var(--neon-red)';
             }
-            
+
             const deltaEl = document.getElementById('telemetryDeltaFlow');
             if (deltaEl) {
                 const deltaSign = isBull ? '+' : '-';
@@ -1537,7 +1658,7 @@
             } else {
                 document.getElementById('valQuantScore').innerText = `0/100 (NEUTRAL)`;
             }
-            
+
             const stage = smc.pre_momentum_stage || 'INACTIVE';
             const reasonTxt = document.getElementById('decisionReasonText');
             const pillTag = document.getElementById('decisionPillTag');
@@ -1552,7 +1673,7 @@
 
             const actEl = document.getElementById('decisionAction');
             const banner = document.getElementById('decisionBanner');
-            
+
             // If this stock has an ACTIVE confirmed trade in progress, keep showing ACTIVE TRADE status!
             const existingTrade = activeConfirmedTrades[symbol];
             if (existingTrade && (!smc.action || !smc.action.includes('BUY') && !smc.action.includes('SELL'))) {
@@ -1621,4 +1742,5 @@
         window.onload = init;
     </script>
 </body>
+
 </html>

@@ -339,6 +339,81 @@ header {
     transform: translateX(4px);
 }
 
+/* AI Scanning Pulse Glow on Mover Card */
+.sector-card.scanning {
+    border-color: #00f0ff !important;
+    background: rgba(0, 240, 255, 0.12) !important;
+    box-shadow: 0 0 16px rgba(0, 240, 255, 0.6), inset 0 0 8px rgba(0, 240, 255, 0.25) !important;
+    animation: scanningPulse 1.2s infinite ease-in-out;
+}
+
+@keyframes scanningPulse {
+    0%, 100% {
+        box-shadow: 0 0 10px rgba(0, 240, 255, 0.4), inset 0 0 6px rgba(0, 240, 255, 0.2);
+        border-color: rgba(0, 240, 255, 0.7);
+    }
+    50% {
+        box-shadow: 0 0 24px rgba(0, 240, 255, 0.85), inset 0 0 12px rgba(0, 240, 255, 0.4);
+        border-color: #00f0ff;
+    }
+}
+
+/* News Catalyst Glow on Mover Card when headline relates to stock */
+.sector-card.has-news-catalyst {
+    border-color: #ffb703 !important;
+    box-shadow: 0 0 18px rgba(255, 183, 3, 0.6), inset 0 0 8px rgba(255, 183, 3, 0.2) !important;
+    animation: newsAmberGlow 2s infinite ease-in-out;
+}
+
+@keyframes newsAmberGlow {
+    0%, 100% {
+        box-shadow: 0 0 10px rgba(255, 183, 3, 0.4), inset 0 0 6px rgba(255, 183, 3, 0.15);
+        border-color: rgba(255, 183, 3, 0.6);
+    }
+    50% {
+        box-shadow: 0 0 22px rgba(255, 183, 3, 0.85), inset 0 0 12px rgba(255, 183, 3, 0.35);
+        border-color: #ffb703;
+    }
+}
+
+.sector-card .scanning-badge {
+    display: none;
+    font-size: 0.58rem;
+    font-weight: 800;
+    color: #00f0ff;
+    background: rgba(0, 240, 255, 0.25);
+    border: 1px solid #00f0ff;
+    padding: 1px 5px;
+    border-radius: 3px;
+    margin-left: 4px;
+    animation: scanningTextPulse 1s infinite alternate;
+}
+
+@keyframes scanningTextPulse {
+    from { opacity: 0.7; }
+    to { opacity: 1; }
+}
+
+.sector-card.scanning .scanning-badge {
+    display: inline-block;
+}
+
+.sector-card .news-catalyst-badge {
+    display: none;
+    font-size: 0.58rem;
+    font-weight: 800;
+    color: #ffb703;
+    background: rgba(255, 183, 3, 0.2);
+    border: 1px solid #ffb703;
+    padding: 1px 5px;
+    border-radius: 3px;
+    margin-left: 4px;
+}
+
+.sector-card.has-news-catalyst .news-catalyst-badge {
+    display: inline-block;
+}
+
 .sector-card .active-radar-badge {
     display: none;
     font-size: 0.60rem;
