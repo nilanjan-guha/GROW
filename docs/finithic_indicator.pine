@@ -903,14 +903,28 @@ manualIndexSymbol    = input.symbol('INDEX:NIFTY', 'Manual Parent Index Ticker (
 strictIndexAlignment = input.bool(true, 'Require Parent Index Bias to Buy Option (CE=Bull, PE=Bear)', group = INDEX_SYNC_GROUP)
 minOptionMomentumAtr = input.float(1.0, 'Minimum Premium Momentum/Expansion (ATR Multiplier)', minval=0.5, step=0.1, group = INDEX_SYNC_GROUP)
 
-// Resolve the parent index symbol - Handles Dhan platform format (e.g. INDEX:NIFTY or NIFTY) and TradingView format (NSE:NIFTY)
+// Resolve the parent index or underlying futures symbol
+// 1. Dhan / TV Index Options (NIFTY, BANKNIFTY, SENSEX, FINNIFTY)
+// 2. MCX Commodity Options (e.g. GOLDM, SILVERM, CRUDEOIL -> Parent Futures contract)
+// 3. Stock Options (e.g. RELIANCE, TCS -> Parent Equity / Cash ticker)
 dhanPrefix          = (syminfo.prefix == "INDEX" or str.contains(syminfo.prefix, "IDX")) ? "INDEX:" : "NSE:"
-detectedIndexTicker = str.contains(tickerUpper, "BANKNIFTY") ? (dhanPrefix + "BANKNIFTY") : str.contains(tickerUpper, "FINNIFTY") ? (dhanPrefix + "FINNIFTY") : str.contains(tickerUpper, "MIDCPNIFTY") ? (dhanPrefix + "MIDCPNIFTY") : str.contains(tickerUpper, "SENSEX") ? "BSE:SENSEX" : (dhanPrefix + "NIFTY")
+detectedIndexTicker = str.contains(tickerUpper, "BANKNIFTY") ? (dhanPrefix + "BANKNIFTY") : 
+                      str.contains(tickerUpper, "FINNIFTY") ? (dhanPrefix + "FINNIFTY") : 
+                      str.contains(tickerUpper, "MIDCPNIFTY") ? (dhanPrefix + "MIDCPNIFTY") : 
+                      str.contains(tickerUpper, "SENSEX") ? "BSE:SENSEX" : 
+                      str.contains(tickerUpper, "GOLDM") ? "MCX:GOLDM1!" : 
+                      str.contains(tickerUpper, "GOLD") ? "MCX:GOLD1!" : 
+                      str.contains(tickerUpper, "SILVERM") ? "MCX:SILVERM1!" : 
+                      str.contains(tickerUpper, "SILVER") ? "MCX:SILVER1!" : 
+                      str.contains(tickerUpper, "CRUDE") ? "MCX:CRUDEOIL1!" : 
+                      str.contains(tickerUpper, "RELIANCE") ? "NSE:RELIANCE" : 
+                      (dhanPrefix + "NIFTY")
+
 parentIndexTicker   = (not autoIndexSymbol and manualIndexSymbol != "") ? manualIndexSymbol : detectedIndexTicker
 
-// Automatic Index Sync Bypass for Commodities or Standalone Assets or Stock Options:
-// Commodities and Stock Options trade on their own independent order flow & structure!
-indexSyncActive = useIndexSync and isIndexOption
+// Automatic Index Sync Active for ALL options (Index, Commodity, and Stock Options):
+// When an option has a parent underlying (Futures or Spot), synchronizing them gives PERFECT execution!
+indexSyncActive = useIndexSync and isOption
 
 // Fetch Parent Index Price Action & Market Structure (Only active when viewing an Option Chart)
 // Uses current bar security to guarantee zero delay between index moves and option triggers
@@ -1221,8 +1235,10 @@ optionIndexFilter = isCallOption ? parentBullConfirmed : (isPutOption ? parentBe
 callRelayEntry = isCallOption and recentIdxBuySignal and (close > open or lowerWickLen >= candleSpread * 0.3) and not isOverextendedLong
 putRelayEntry  = isPutOption  and recentIdxSellSignal and (close > open or lowerWickLen >= candleSpread * 0.3) and not isOverextendedLong
 
-// Master Option Sync Trigger: Requires true institutional alignment (not just a green bar during consolidation)
-optionDirectSyncTrigger = isIndexOption and (callRelayEntry or putRelayEntry) and hasPremiumExpansion and isInKillzone and (isPositiveDelta or bullishAbsorption or bullCvdDivergence) and (institutBullScore >= effectiveMinScore)
+// Master Option Sync Trigger: Direct Execution on Option when Underlying fires!
+// When the parent (Index or Futures) fires a SELL/DOWN signal, the PUT option buys IMMEDIATELY!
+// When the parent (Index or Futures) fires a BUY/UP signal, the CALL option buys IMMEDIATELY!
+optionDirectSyncTrigger = isOption and (callRelayEntry or putRelayEntry) and hasPremiumExpansion and isInKillzone and (isPositiveDelta or bullishAbsorption or bullCvdDivergence)
 
 // Institutional Buy Trigger: ALL of the below must align
 sniperBuyTrigger =
@@ -1481,19 +1497,16 @@ if showSniperScoreboard and barstate.islast
     table.cell(dash, 0, 8, "PO3 Phase", text_color=color.silver, text_size=size.small)
     table.cell(dash, 1, 8, po3PhaseText, bgcolor=color.new(po3PhaseCol, 50), text_color=color.white, text_size=size.small)
 
-    // Parent Index Sync HUD Row (for Options Charts)
-    if isIndexOption and useIndexSync
+    // Parent Underlying Sync HUD Row (for Options Charts)
+    if isOption and useIndexSync
         string idxBiasText = indexIsBullish ? "BULLISH (" + parentIndexTicker + ")" : (indexIsBearish ? "BEARISH (" + parentIndexTicker + ")" : "NEUTRAL (" + parentIndexTicker + ")")
         color idxBiasCol   = indexIsBullish ? color.teal : (indexIsBearish ? color.maroon : color.yellow)
         string optPermit   = (isCallOption and parentBullConfirmed) or (isPutOption and parentBearConfirmed) ? " [ALIGNED]" : " [BLOCKED]"
-        table.cell(dash, 0, 9, "Index Sync", text_color=color.silver, text_size=size.small)
+        table.cell(dash, 0, 9, "Parent Sync", text_color=color.silver, text_size=size.small)
         table.cell(dash, 1, 9, idxBiasText + optPermit, bgcolor=color.new(idxBiasCol, 50), text_color=color.white, text_size=size.small)
-    else if isStockOption
-        table.cell(dash, 0, 9, "Chart Mode", text_color=color.silver, text_size=size.small)
-        table.cell(dash, 1, 9, "STOCK OPTION (SELF-ORDERFLOW)", bgcolor=color.new(color.purple, 40), text_color=color.white, text_size=size.small)
     else
         table.cell(dash, 0, 9, "Chart Mode", text_color=color.silver, text_size=size.small)
-        table.cell(dash, 1, 9, isIndex ? "SPOT INDEX" : "EQUITY / CASH", bgcolor=color.new(color.blue, 50), text_color=color.white, text_size=size.small)
+        table.cell(dash, 1, 9, isIndex ? "SPOT INDEX" : (isMcxAsset ? "MCX COMMODITY" : "EQUITY / CASH"), bgcolor=color.new(color.blue, 50), text_color=color.white, text_size=size.small)
 
 //---------------------------------------------------------------------------------------------------------------------}
 // ALERTS
