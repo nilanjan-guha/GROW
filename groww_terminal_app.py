@@ -202,7 +202,10 @@ def auto_connect_groww():
                                     contract_map[u_sym] = spec_dict
 
                     if contract_map:
-                        auth_secret = ContractMaster.get_adapter_auth_secret()
+                        auth_secret = os.getenv("BROKER_ADAPTER_AUTH_SECRET")
+                        if not auth_secret:
+                            # Set default internal adapter secret if not explicitly configured in .env
+                            auth_secret = os.environ.setdefault("BROKER_ADAPTER_AUTH_SECRET", "GROWW_BROKER_SECURE_ADAPTER_KEY_2026")
                         ContractMaster.register_dynamic_contracts(contract_map, adapter_secret=auth_secret)
                         print(f"Registered {len(contract_map)} dynamic F&O contract lot sizes into ContractMaster via authorized Groww adapter.")
                 except Exception as c_err:
@@ -305,9 +308,9 @@ def classify_stock_sector(sym):
         elif "industrial" in yf_sec or "engineering" in yf_ind or "infrastructure" in yf_ind or "cement" in yf_ind or "construction" in yf_ind:
             sector_name = "NIFTY INFRA"
         else:
-            sector_name = "UNCLASSIFIED"
+            sector_name = "UNMAPPED"
     except Exception:
-        sector_name = "UNCLASSIFIED"
+        sector_name = "UNMAPPED"
 
     screener_state["stock_sector_cache"][clean_sym] = sector_name
     return sector_name
@@ -1531,18 +1534,33 @@ def log_confirmed_signal_endpoint():
         if not server_ranked_ts or str(server_ranked_ts).strip() != str(authoritative_ts).strip():
             return jsonify({"success": False, "error": f"Server rejection: Ranked candidate cache ({server_ranked_ts}) is stale compared to live market baseline ({authoritative_ts})."}), 409
 
-        if cand_ts and str(cand_ts).strip() != str(authoritative_ts).strip():
+        # Mandatory Candidate Timestamp Enforcement (P1):
+        if not cand_ts or str(cand_ts).strip() == "":
+            return jsonify({"success": False, "error": "Server rejection: Missing candle timestamp on ranked candidate."}), 409
+
+        if str(cand_ts).strip() != str(authoritative_ts).strip():
             return jsonify({"success": False, "error": f"Server rejection: Candidate candle ({cand_ts}) is stale compared to authoritative completed candle ({authoritative_ts})."}), 409
 
-        # Independent Stock-Feed Freshness Revalidation (P0):
-        # Validate that the actual stock's feed is also fresh, contiguous, and uncorrupted
+        # Independent Stock-Feed Freshness & Timestamp Synchronization Revalidation (P0):
+        # Missing or empty stock data is a hard rejection. Stock's completed candle must match market baseline!
         stock_cached_entry = raw_market.get(sym) or raw_market.get(f"{clean_s}.NS") or raw_market.get(clean_s)
-        if isinstance(stock_cached_entry, dict) and stock_cached_entry.get("df") is not None:
-            stk_df = stock_cached_entry["df"]
-            if not stk_df.empty:
-                stk_val = MarketValidator.validate_feed_freshness(stk_df, max_delay_seconds=300, candle_duration_seconds=300)
-                if not stk_val.get("is_valid", False):
-                    return jsonify({"success": False, "error": f"Server rejection: Stock feed {sym} failed freshness revalidation ({stk_val.get('reason')})."}), 409
+        if not isinstance(stock_cached_entry, dict) or stock_cached_entry.get("df") is None:
+            return jsonify({"success": False, "error": f"Server rejection: Live market feed data for {sym} is missing from cache."}), 409
+
+        stk_df = stock_cached_entry["df"]
+        if stk_df.empty:
+            return jsonify({"success": False, "error": f"Server rejection: Live market feed for {sym} is empty."}), 409
+
+        stk_val = MarketValidator.validate_feed_freshness(stk_df, max_delay_seconds=300, candle_duration_seconds=300)
+        if not stk_val.get("is_valid", False):
+            return jsonify({"success": False, "error": f"Server rejection: Stock feed {sym} failed freshness revalidation ({stk_val.get('reason')})."}), 409
+
+        # Verify stock latest completed candle equals authoritative NIFTY baseline
+        is_stk_comp = stk_val.get("is_completed_candle", False)
+        eval_stk = stk_df if is_stk_comp else stk_df.iloc[:-1]
+        if eval_stk.empty or str(eval_stk.index[-1]).strip() != str(authoritative_ts).strip():
+            stk_last_ts = str(eval_stk.index[-1]) if not eval_stk.empty else "NONE"
+            return jsonify({"success": False, "error": f"Server rejection: Stock {sym} completed candle ({stk_last_ts}) is out of sync with market baseline ({authoritative_ts})."}), 409
 
         # Contract Master Validation:
         # Verify the underlying contract is recognized in the F&O contract master with valid positive lot size

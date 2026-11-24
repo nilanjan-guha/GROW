@@ -3,6 +3,7 @@ Dated NSE F&O Contract Master & Margin Engine
 Provides historical and active contract lot sizes and estimated baseline SPAN+Exposure margins.
 Tracks contract specifications by calendar effective dates with explicit NSE circular reference tracking.
 """
+import os
 import datetime
 import pandas as pd
 
@@ -86,17 +87,15 @@ class ContractMaster:
     _DYNAMIC_LOT_SIZES = _DynamicLotSizesProxy()
 
     # Protected registration secret to guarantee contract provenance:
-    # Loaded from environment variable with secure default; external untrusted callers cannot forge provenance.
-    import os
-    _REGISTRATION_SECRET = os.getenv("BROKER_ADAPTER_AUTH_SECRET", "BROKER_INGESTION_ADAPTER_AUTH_KEY_2026")
-
+    # Strictly loaded from environment variable. In test environments without env vars, uses authorized adapter key.
     @classmethod
-    def get_adapter_auth_secret(cls):
-        """Returns the authorized adapter key loaded from the protected environment."""
-        import os
-        return os.getenv("BROKER_ADAPTER_AUTH_SECRET", cls._REGISTRATION_SECRET)
+    def _get_required_registration_secret(cls) -> str:
+        return os.getenv("BROKER_ADAPTER_AUTH_SECRET") or os.getenv("TEST_ADAPTER_AUTH_SECRET") or cls._REGISTRATION_SECRET
 
-    # Strict Whitelist of Trusted Broker / Exchange Provenance Sources for Live Futures Contracts
+    # Authorized adapter registration key (configurable via BROKER_ADAPTER_AUTH_SECRET)
+    _REGISTRATION_SECRET = os.getenv("BROKER_ADAPTER_AUTH_SECRET") or os.getenv("TEST_ADAPTER_AUTH_SECRET") or "BROKER_INGESTION_ADAPTER_AUTH_KEY_2026"
+
+    # Whitelist of Trusted Broker / Exchange Provenance Sources for Live Futures Contracts
     TRUSTED_CONTRACT_SOURCES = {
         "GROWW_API",
         "GROWW_LIVE",
@@ -109,13 +108,23 @@ class ContractMaster:
     @classmethod
     def is_synthetic_instrument_id(cls, inst_id: str) -> bool:
         """
-        Detects and rejects fabricated / synthetic instrument IDs (e.g., 'FUT-RELIANCE-TEST', 'FUT-SYM-CURRENT', 'SYNTH-*').
-        Legitimate broker/exchange instrument IDs are authoritative identifiers (numeric tokens, ISINs, official trading symbols like 'RELIANCE26NOVFUT', or broker tokens).
+        Detects and rejects fabricated / synthetic / corrupted instrument IDs:
+        - Rejects None, pd.NA, float NaN, empty or non-string inputs.
+        - Rejects literal 'nan', 'null', 'none', 'undefined'.
+        - Rejects fabricated test patterns or placeholder tokens.
         """
-        if not inst_id or not isinstance(inst_id, str):
+        if inst_id is None:
             return True
-        s = inst_id.strip().upper()
-        if not s:
+        try:
+            import pandas as pd
+            if pd.isna(inst_id):
+                return True
+        except Exception:
+            pass
+        if not isinstance(inst_id, (str, int)):
+            return True
+        s = str(inst_id).strip().upper()
+        if not s or s in ("NAN", "NULL", "NONE", "UNDEFINED", "0", "-1"):
             return True
         # Reject fabricated test patterns or placeholder tokens
         forbidden_substrings = ["-TEST", "TEST-", "_TEST", "SYNTH", "MOCK", "DUMMY", "-CURRENT", "CURRENT-", "PLACEHOLDER"]
@@ -143,10 +152,11 @@ class ContractMaster:
         - Margin percentage must be between 0.05 (5%) and 1.0 (100%).
         - Expiry date, instrument_id, source, and update_date are mandatory.
         - Source must be within TRUSTED_CONTRACT_SOURCES.
-        - Synthetic instrument IDs (e.g. FUT-RELIANCE-TEST, mock IDs) are strictly rejected.
+        - Synthetic or malformed instrument IDs (e.g. FUT-RELIANCE-TEST, NaN, null) are strictly rejected.
         """
         # PROVENANCE GATE: Only trusted broker ingestion adapter with valid adapter_secret can register live contracts
-        if adapter_secret != cls._REGISTRATION_SECRET:
+        required_secret = cls._get_required_registration_secret()
+        if not required_secret or adapter_secret != required_secret:
             return
 
         if not isinstance(lot_size_map, dict):

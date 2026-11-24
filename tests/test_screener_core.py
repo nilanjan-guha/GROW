@@ -1105,6 +1105,10 @@ class TestIntradayScreenerCore(unittest.TestCase):
             "^NSEI": {
                 "timestamp": time.time(),
                 "df": self.df_5m
+            },
+            test_sym: {
+                "timestamp": time.time(),
+                "df": self.df_5m
             }
         }
 
@@ -1282,7 +1286,8 @@ class TestIntradayScreenerCore(unittest.TestCase):
             "ranked_candle_ts": auth_ts
         }
         gta.screener_state["raw_market_cache"] = {
-            "^NSEI": {"timestamp": time.time(), "df": self.df_5m}
+            "^NSEI": {"timestamp": time.time(), "df": self.df_5m},
+            test_sym: {"timestamp": time.time(), "df": self.df_5m}
         }
 
         # 1. Test BEARISH confirmation
@@ -2153,6 +2158,54 @@ class TestIntradayScreenerCore(unittest.TestCase):
 
         # Successfully processes candle under explicit evaluation clock
         self.assertEqual(row["tp1_hit"], 1)
+
+    def test_nearest_expiry_sorting_and_malformed_id_rejection(self):
+        # 1. Reject malformed IDs (NaN, float nan, pd.NA, synthetic strings)
+        import numpy as np
+        self.assertTrue(ContractMaster.is_synthetic_instrument_id("nan"))
+        self.assertTrue(ContractMaster.is_synthetic_instrument_id("NaN"))
+        self.assertTrue(ContractMaster.is_synthetic_instrument_id(float("nan")))
+        self.assertTrue(ContractMaster.is_synthetic_instrument_id(np.nan))
+        self.assertTrue(ContractMaster.is_synthetic_instrument_id(None))
+        self.assertTrue(ContractMaster.is_synthetic_instrument_id(""))
+        self.assertTrue(ContractMaster.is_synthetic_instrument_id("FUT-TEST-EXP"))
+
+        # 2. Nearest-expiry sorting test
+        import os
+        test_secret = "TEST_SEC_AUTH_KEY_2026"
+        os.environ["BROKER_ADAPTER_AUTH_SECRET"] = test_secret
+        today = datetime.date.today()
+        far_exp = str(today + datetime.timedelta(days=60))
+        near_exp = str(today + datetime.timedelta(days=10))
+
+        # Register far expiry first, then near expiry with realistic broker tokens (no forbidden TEST/SYNTH substrings)
+        ContractMaster.register_dynamic_contracts({
+            f"TESTEXP:{far_exp}": {
+                "lot_size": 200, "expiry": far_exp, "instrument_id": "NSE_GROWW_38291",
+                "source": "GROWW_API", "update_date": str(today)
+            },
+            f"TESTEXP:{near_exp}": {
+                "lot_size": 150, "expiry": near_exp, "instrument_id": "NSE_GROWW_38290",
+                "source": "GROWW_API", "update_date": str(today)
+            },
+            # Explicit default should be near expiry
+            "TESTEXP": {
+                "lot_size": 150, "expiry": near_exp, "instrument_id": "NSE_GROWW_38290",
+                "source": "GROWW_API", "update_date": str(today)
+            }
+        }, adapter_secret=test_secret)
+
+        spec = ContractMaster.get_contract_spec("TESTEXP")
+        self.assertEqual(str(spec["expiry"]), near_exp)
+        self.assertEqual(spec["lot_size"], 150)
+        self.assertEqual(spec["instrument_id"], "NSE_GROWW_38290")
+
+    def test_unmapped_stock_excluded_from_sector_rankings(self):
+        # UNMAPPED stocks must not be assigned to NIFTY INFRA or influence sector scores
+        import groww_terminal_app as gta
+        unmapped_res = gta.classify_stock_sector("UNKNOWNXYZ99")
+        self.assertEqual(unmapped_res, "UNMAPPED")
+        self.assertNotEqual(unmapped_res, "NIFTY INFRA")
 
 if __name__ == '__main__':
     unittest.main()
