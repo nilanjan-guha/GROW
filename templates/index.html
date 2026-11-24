@@ -847,6 +847,7 @@
                                 <span style="font-size:0.86rem; font-weight:800; color:#ffffff; letter-spacing:0.4px; text-shadow:0 1px 3px rgba(0,0,0,0.8); white-space:nowrap;">#${idx + 1} ${sym.replace('.NS', '')}</span>
                                 <span class="active-radar-badge">▶ ACTIVE</span>
                                 <span class="scanning-badge">● SCANNING</span>
+                                <span class="breaking-news-badge">🔥 BREAKING</span>
                                 <span class="news-catalyst-badge">📰 CATALYST</span>
                             </div>
                             <span style="color:#00ffaa; font-size:0.80rem; font-weight:800; font-family:'JetBrains Mono', monospace; background:rgba(0,255,170,0.18); padding:2px 6px; border-radius:4px; border:1px solid rgba(0,255,170,0.45); text-shadow:0 0 6px rgba(0,255,170,0.3); white-space:nowrap; flex-shrink:0;">+${stk.change.toFixed(1)}%</span>
@@ -856,8 +857,14 @@
                             <span style="color:#00ffc4; font-weight:800; font-size:0.68rem; background:rgba(0,255,196,0.14); padding:2px 7px; border-radius:3px; border:1px solid rgba(0,255,196,0.35); letter-spacing:0.3px; white-space:nowrap;">CALL MOVER</span>
                         </div>
                     `;
-                    if (stockNewsCache[sym.replace('.NS', '').toUpperCase()]) {
-                        card.classList.add('has-news-catalyst');
+                    const cachedNews = stockNewsCache[sym.replace('.NS', '').toUpperCase()];
+                    if (cachedNews && cachedNews.articles && cachedNews.articles.length > 0) {
+                        const isBreaking = cachedNews.articles.some(a => (a.sentiment === 'BULLISH' || a.sentiment === 'BEARISH'));
+                        if (isBreaking) {
+                            card.classList.add('has-breaking-news');
+                        } else {
+                            card.classList.add('has-news-catalyst');
+                        }
                     }
                     bullEl.appendChild(card);
                 });
@@ -881,6 +888,7 @@
                                 <span style="font-size:0.86rem; font-weight:800; color:#ffffff; letter-spacing:0.4px; text-shadow:0 1px 3px rgba(0,0,0,0.8); white-space:nowrap;">#${idx + 1} ${sym.replace('.NS', '')}</span>
                                 <span class="active-radar-badge">▶ ACTIVE</span>
                                 <span class="scanning-badge">● SCANNING</span>
+                                <span class="breaking-news-badge">🔥 BREAKING</span>
                                 <span class="news-catalyst-badge">📰 CATALYST</span>
                             </div>
                             <span style="color:#ff3366; font-size:0.80rem; font-weight:800; font-family:'JetBrains Mono', monospace; background:rgba(255,51,102,0.18); padding:2px 6px; border-radius:4px; border:1px solid rgba(255,51,102,0.45); text-shadow:0 0 6px rgba(255,51,102,0.3); white-space:nowrap; flex-shrink:0;">${stk.change.toFixed(1)}%</span>
@@ -890,8 +898,14 @@
                             <span style="color:#ff4d79; font-weight:800; font-size:0.68rem; background:rgba(255,77,121,0.14); padding:2px 7px; border-radius:3px; border:1px solid rgba(255,77,121,0.35); letter-spacing:0.3px; white-space:nowrap;">PUT MOVER</span>
                         </div>
                     `;
-                    if (stockNewsCache[sym.replace('.NS', '').toUpperCase()]) {
-                        card.classList.add('has-news-catalyst');
+                    const cachedNews = stockNewsCache[sym.replace('.NS', '').toUpperCase()];
+                    if (cachedNews && cachedNews.articles && cachedNews.articles.length > 0) {
+                        const isBreaking = cachedNews.articles.some(a => (a.sentiment === 'BULLISH' || a.sentiment === 'BEARISH'));
+                        if (isBreaking) {
+                            card.classList.add('has-breaking-news');
+                        } else {
+                            card.classList.add('has-news-catalyst');
+                        }
                     }
                     bearEl.appendChild(card);
                 });
@@ -906,6 +920,56 @@
         let stockNewsCache = {};
         let stockNewsActiveTimer = null;
         let stockNewsRequestId = 0;
+        let isUserManualSelection = false;
+
+        async function fetchStockNews(stockSymbol) {
+            if (!stockSymbol) return null;
+            const cleanSym = stockSymbol.replace('.NS', '').toUpperCase();
+            if (stockNewsCache[cleanSym] && stockNewsCache[cleanSym].fetchedAt && (Date.now() - stockNewsCache[cleanSym].fetchedAt < 60000)) {
+                return stockNewsCache[cleanSym];
+            }
+            try {
+                const res = await fetch(`/api/news/stock?symbol=${encodeURIComponent(cleanSym)}`);
+                const data = await res.json();
+                if (data.success && data.news && data.news.length > 0) {
+                    const isBreaking = data.news.some(a => a.sentiment === 'BULLISH' || a.sentiment === 'BEARISH');
+                    stockNewsCache[cleanSym] = {
+                        articles: data.news,
+                        index: 0,
+                        isBreaking: isBreaking,
+                        fetchedAt: Date.now()
+                    };
+                    updateCardNewsGlow(cleanSym, isBreaking, true);
+                    return stockNewsCache[cleanSym];
+                } else {
+                    delete stockNewsCache[cleanSym];
+                    updateCardNewsGlow(cleanSym, false, false);
+                    return null;
+                }
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function updateCardNewsGlow(cleanSym, isBreaking, hasNews) {
+            document.querySelectorAll('.sector-card').forEach(c => {
+                const cardSym = (c.dataset && c.dataset.symbol) ? c.dataset.symbol.replace('.NS', '').toUpperCase() : '';
+                if (cardSym === cleanSym) {
+                    if (hasNews) {
+                        if (isBreaking) {
+                            c.classList.remove('has-news-catalyst');
+                            c.classList.add('has-breaking-news');
+                        } else {
+                            c.classList.remove('has-breaking-news');
+                            c.classList.add('has-news-catalyst');
+                        }
+                    } else {
+                        c.classList.remove('has-news-catalyst');
+                        c.classList.remove('has-breaking-news');
+                    }
+                }
+            });
+        }
 
         async function loadStockCatalystNews(stockSymbol) {
             const sym = stockSymbol || currentStockSymbol;
@@ -913,7 +977,7 @@
             const cleanSym = sym.replace('.NS', '').toUpperCase();
             document.getElementById('activeNewsStock').textContent = cleanSym;
 
-            // Clear old news timer immediately when switching stocks
+            // Clear old news rotation timer immediately when switching stocks
             if (stockNewsActiveTimer) {
                 clearInterval(stockNewsActiveTimer);
                 stockNewsActiveTimer = null;
@@ -922,45 +986,24 @@
             // Generate monotonic request ID to discard out-of-order stale responses
             const thisReqId = ++stockNewsRequestId;
 
+            // If we have cached news, display immediately and start rotating
+            if (stockNewsCache[cleanSym] && stockNewsCache[cleanSym].articles && stockNewsCache[cleanSym].articles.length > 0) {
+                displayCurrentStockNews(cleanSym);
+                startNewsRotation(cleanSym);
+            }
+
             try {
-                const res = await fetch(`/api/news/stock?symbol=${encodeURIComponent(cleanSym)}`);
-                const data = await res.json();
+                const newsData = await fetchStockNews(cleanSym);
 
                 // Discard stale out-of-order response if user already switched stocks
                 if (thisReqId !== stockNewsRequestId) return;
                 const currentClean = (currentStockSymbol || '').replace('.NS', '').toUpperCase();
                 if (currentClean !== cleanSym) return;
 
-                if (data.success && data.news && data.news.length > 0) {
-                    stockNewsCache[cleanSym] = {
-                        articles: data.news,
-                        index: 0
-                    };
+                if (newsData && newsData.articles && newsData.articles.length > 0) {
                     displayCurrentStockNews(cleanSym);
-
-                    // Mark card with has-news-catalyst amber glow
-                    document.querySelectorAll('.sector-card').forEach(c => {
-                        const cardSym = (c.dataset && c.dataset.symbol) ? c.dataset.symbol.replace('.NS', '').toUpperCase() : '';
-                        if (cardSym === cleanSym) {
-                            c.classList.add('has-news-catalyst');
-                        }
-                    });
-
-                    // Start rotating news articles one by one every 4.5 seconds if multiple news available
-                    if (data.news.length > 1) {
-                        stockNewsActiveTimer = setInterval(() => {
-                            const nowCurrent = (currentStockSymbol || '').replace('.NS', '').toUpperCase();
-                            if (nowCurrent === cleanSym && stockNewsCache[cleanSym]) {
-                                const state = stockNewsCache[cleanSym];
-                                if (state.articles.length > 1) {
-                                    state.index = (state.index + 1) % state.articles.length;
-                                    displayCurrentStockNews(cleanSym);
-                                }
-                            }
-                        }, 4500);
-                    }
+                    startNewsRotation(cleanSym);
                 } else {
-                    delete stockNewsCache[cleanSym];
                     const headlineEl = document.getElementById('activeStockNewsHeadline');
                     const sentEl = document.getElementById('activeNewsSentiment');
                     if (headlineEl) {
@@ -971,12 +1014,6 @@
                         sentEl.textContent = 'STABLE';
                         sentEl.style.color = '#94a3b8';
                     }
-                    document.querySelectorAll('.sector-card').forEach(c => {
-                        const cardSym = (c.dataset && c.dataset.symbol) ? c.dataset.symbol.replace('.NS', '').toUpperCase() : '';
-                        if (cardSym === cleanSym) {
-                            c.classList.remove('has-news-catalyst');
-                        }
-                    });
                 }
             } catch (e) {
                 if (thisReqId === stockNewsRequestId) {
@@ -988,6 +1025,26 @@
                         sentEl.style.color = '#94a3b8';
                     }
                 }
+            }
+        }
+
+        function startNewsRotation(cleanSym) {
+            if (stockNewsActiveTimer) {
+                clearInterval(stockNewsActiveTimer);
+                stockNewsActiveTimer = null;
+            }
+            const cached = stockNewsCache[cleanSym];
+            if (cached && cached.articles && cached.articles.length > 1) {
+                stockNewsActiveTimer = setInterval(() => {
+                    const nowCurrent = (currentStockSymbol || '').replace('.NS', '').toUpperCase();
+                    if (nowCurrent === cleanSym && stockNewsCache[cleanSym]) {
+                        const state = stockNewsCache[cleanSym];
+                        if (state.articles.length > 1) {
+                            state.index = (state.index + 1) % state.articles.length;
+                            displayCurrentStockNews(cleanSym);
+                        }
+                    }
+                }, 4500);
             }
         }
 
@@ -1056,9 +1113,20 @@
             });
         }
 
-        function selectStock(stk) {
+        function selectStock(stk, isManual = true) {
+            // If user clicks the currently selected stock again, toggle off manual lock and resume auto scan
+            if (isManual && isUserManualSelection && currentStockSymbol === stk) {
+                isUserManualSelection = false;
+                userSelectedStock = null;
+                log(`[AUTONOMOUS SCAN RESUMED] Manual lock released on ${stk.replace('.NS', '')}. Auto cycle active.`, 'INFO');
+                return;
+            }
+
             currentStockSymbol = stk;
-            userSelectedStock = stk;
+            if (isManual) {
+                userSelectedStock = stk;
+                isUserManualSelection = true;
+            }
             document.getElementById('radarStockTitle').innerText = stk;
 
             // Find which sector this stock belongs to from sectorsDict
@@ -1592,6 +1660,14 @@
                     c.classList.remove('scanning');
                 }
             });
+
+            // Pre-fetch news for the scanned stock in background so catalyst badges and breaking glow appear automatically
+            fetchStockNews(cleanSym);
+
+            // If the user hasn't locked onto a manual stock, let radar follow the autonomous scan
+            if (!isUserManualSelection) {
+                selectStock(target.symbol, false);
+            }
 
             try {
                 const res = await fetch(`/api/market/smc-scan?symbol=${encodeURIComponent(target.symbol)}`);

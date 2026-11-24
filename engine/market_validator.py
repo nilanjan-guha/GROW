@@ -243,8 +243,9 @@ class MarketValidator:
                 t_curr = df_eval.index[idx_c]
                 if t_prev.date() == t_curr.date():
                     int_diff = (t_curr - t_prev).total_seconds()
-                    # Allow closing auction gap between 15:15 and 15:25 (600s) on standard session
-                    is_closing_auction_gap = (t_prev.hour == 15 and t_prev.minute == 15 and t_curr.hour == 15 and t_curr.minute == 25 and int_diff == 600)
+                    # Allow closing auction gaps between 15:10/15:15 and 15:25/15:30 on standard session
+                    # (e.g. 15:10 -> 15:25 is 900s, 15:15 -> 15:25 is 600s, 15:20 -> 15:25/15:30 is 300s/600s)
+                    is_closing_auction_gap = (t_prev.hour == 15 and t_prev.minute in (10, 15, 20) and t_curr.hour == 15 and t_curr.minute in (20, 25, 30) and 300 <= int_diff <= 900)
                     if int_diff != candle_duration_seconds and not is_closing_auction_gap:
                         missing_count += 1
                         return {
