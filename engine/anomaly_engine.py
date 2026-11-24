@@ -31,13 +31,13 @@ class AnomalyDetector:
         # Historical candles matching the same time of day from previous sessions
         same_time_bars = df_copy[(df_copy['Time'] == target_time) & (df_copy['Date'] < current_date)]
         if len(same_time_bars) >= 2:
-            avg_hist_vol = float(same_time_bars['Volume'].mean()) or 1.0
+            avg_hist_vol = float(same_time_bars['Volume'].values.mean()) or 1.0
             return round(curr_vol / avg_hist_vol, 2)
 
         # Fallback to 20-candle rolling volume across prior completed bars
         v = df_copy['Volume']
         prior_v = v.iloc[:-1] if len(v) > 1 else v
-        avg_vol = float(prior_v.tail(20).mean()) or 1.0
+        avg_vol = float(prior_v.tail(20).values.mean()) or 1.0
         return round(curr_vol / avg_vol, 2)
 
     @staticmethod
@@ -46,7 +46,7 @@ class AnomalyDetector:
             return 1.0
         curr_vol = float(v_series.iloc[-1])
         prior = v_series.iloc[:-1]
-        avg_vol = float(prior.tail(window).mean()) or 1.0
+        avg_vol = float(prior.tail(window).values.mean()) or 1.0
         return round(curr_vol / avg_vol, 2)
 
     @staticmethod
@@ -85,9 +85,9 @@ class AnomalyDetector:
         # Current candle velocity: compare current candle against completed prior candles
         curr_c = float(c.iloc[-1])
         curr_o = float(o.iloc[-1])
-        curr_range = float(h.iloc[-1] - l.iloc[-1])
+        curr_range = float((h.iloc[-1] - l.iloc[-1]))
         prior_ranges = (h - l).iloc[:-1]
-        avg_range = float(prior_ranges.tail(15).mean()) if len(prior_ranges) > 0 else (curr_range or 0.0001)
+        avg_range = float(prior_ranges.tail(15).values.mean()) if len(prior_ranges) > 0 else (curr_range or 0.0001)
         avg_range = avg_range or 0.0001
 
         range_expansion = curr_range / avg_range
