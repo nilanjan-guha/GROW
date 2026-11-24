@@ -77,19 +77,30 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
     base_statutory_friction_pct = 0.08  # STT + Exchange + GST + Stamp Duty
     max_holding_candles = 6
     max_concurrent_portfolio_trades = 4  # Concurrency limit across shared portfolio capital
-    active_portfolio_trades = []  # Tracks active positions: [{"symbol": sym, "exit_time": ts, "capital_alloc": 0.25}]
+
+    # Pre-download and prepare all symbols data
+    symbol_data = {}
+    from engine.groww_sector_engine import GrowwSectorEngine
+    sec_engine = GrowwSectorEngine()
+    sec_engine.build_complete_fno_sector_universe_mapping(set(sample_symbols))
 
     for sym in sample_symbols:
-        print(f"Replaying {sym}...")
+        print(f"Loading data for {sym}...")
         df = yf.download(sym, period=days, interval="5m", progress=False)
         if isinstance(df.columns, pd.MultiIndex):
             df = df.xs(sym, axis=1, level=1) if sym in df.columns.levels[1] else df
         if df is None or len(df) < 30:
             continue
-            
+
+        # Timezone normalize
+        if not pd.api.types.is_datetime64_any_dtype(df.index):
+            df.index = pd.to_datetime(df.index)
+        if df.index.tz is None:
+            df.index = df.index.tz_localize("Asia/Kolkata")
+        else:
+            df.index = df.index.tz_convert("Asia/Kolkata")
+
         # 1. Identify distinct, non-overlapping Bullish and Bearish movement events
-        # A bullish event: subsequent 12 candles produce high >= +1.25%
-        # A bearish event: subsequent 12 candles produce low <= -1.25%
         bullish_event_indices = []
         bearish_event_indices = []
         skip_bull_until = 0
@@ -102,40 +113,31 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
             c_base = closes[e_i]
             if c_base <= 0:
                 continue
-            
-            # Check Bullish Event
             if e_i >= skip_bull_until:
                 max_h = np.max(highs_all[e_i:e_i+12])
                 if ((max_h - c_base) / c_base * 100) >= 1.25:
                     bullish_event_indices.append(e_i)
                     skip_bull_until = e_i + 12
 
-            # Check Bearish Event
             if e_i >= skip_bear_until:
                 min_l = np.min(lows_all[e_i:e_i+12])
                 if ((c_base - min_l) / c_base * 100) >= 1.25:
                     bearish_event_indices.append(e_i)
                     skip_bear_until = e_i + 12
 
-        # Download 1mo Daily OHLC for true Wilder Daily ATR14 calculation point-in-time
+        # Daily OHLC for ATR14
         daily_df = yf.download(sym, period="3mo", interval="1d", progress=False)
         if isinstance(daily_df.columns, pd.MultiIndex):
             daily_df = daily_df.xs(sym, axis=1, level=1) if sym in daily_df.columns.levels[1] else daily_df
 
-        # Resolve official Sector Index for this stock symbol (Item 2 & P0)
-        from engine.groww_sector_engine import GrowwSectorEngine
-        sec_engine = GrowwSectorEngine()
-        sec_engine.build_complete_fno_sector_universe_mapping({sym})
         stock_clean_sym = sym.replace(".NS", "").upper()
         norm_sector = sec_engine.full_universe_stock_map.get(stock_clean_sym, "GENERAL")
         sector_ticker = sec_engine.get_sector_index_ticker(norm_sector)
-        
         sector_df = None
         try:
             sec_raw = yf.download(sector_ticker, period=days, interval="5m", progress=False)
             if not sec_raw.empty:
                 sector_df = sec_raw.xs(sector_ticker, axis=1, level=1) if isinstance(sec_raw.columns, pd.MultiIndex) and sector_ticker in sec_raw.columns.levels[1] else sec_raw
-                # Normalize timezone
                 if not pd.api.types.is_datetime64_any_dtype(sector_df.index):
                     sector_df.index = pd.to_datetime(sector_df.index)
                 if sector_df.index.tz is None:
@@ -145,38 +147,95 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
         except Exception:
             sector_df = None
 
-        scanned_history = {}
-        current_open_trade = None
+        symbol_data[sym] = {
+            "df": df,
+            "daily_df": daily_df,
+            "sector_df": sector_df,
+            "bullish_event_indices": bullish_event_indices,
+            "bearish_event_indices": bearish_event_indices,
+            "scanned_history": {}
+        }
 
-        # Replay candle by candle from index 25 onwards
-        for idx in range(25, len(df) - 5):
+    # Normalize NIFTY timezone
+    if not pd.api.types.is_datetime64_any_dtype(nifty_df.index):
+        nifty_df.index = pd.to_datetime(nifty_df.index)
+    if nifty_df.index.tz is None:
+        nifty_df.index = nifty_df.index.tz_localize("Asia/Kolkata")
+    else:
+        nifty_df.index = nifty_df.index.tz_convert("Asia/Kolkata")
+
+    # Build Master Chronological Timeline of 5-minute timestamps across all symbols
+    all_timestamps = sorted(list(set.union(*[set(data["df"].index[25:-5]) for data in symbol_data.values()])))
+    print(f"Master chronological timeline built: {len(all_timestamps)} unique 5m candles across {len(symbol_data)} stocks.")
+
+    # Shared Portfolio State:
+    # Starting portfolio equity: 100.0 (normalized base)
+    # Max concurrent positions: 4
+    # Max allocation per trade: 25% of current equity
+    active_portfolio_positions = [] # List of {"symbol": sym, "direction": dir, "entry_ts": ts, "exit_ts": ts, "net_pnl": pnl, "gross_pnl": pnl, "alloc": alloc, ...}
+
+    for current_ts in all_timestamps:
+        # 1. First, release any active positions whose holding period expired or exited at or before current_ts
+        still_active = []
+        for pos in active_portfolio_positions:
+            if current_ts >= pos["exit_ts"]:
+                # Realize position into shared portfolio equity
+                pnl_mult = (pos["net_pnl"] / 100.0) * pos["alloc"]
+                prev_eq = stats["equity_curve"][-1]
+                new_eq = prev_eq * (1.0 + pnl_mult)
+                stats["equity_curve"].append(new_eq)
+                stats["trades_executed"] += 1
+                stats["trade_net_pnls"].append(pos["net_pnl"])
+                stats["trade_gross_pnls"].append(pos["gross_pnl"])
+                stats["total_pnl_pct"] += pos["net_pnl"]
+                stats["gross_pnl_pct"] += pos["gross_pnl"]
+                stats["trade_r_multiples"].append(pos["r_mult"])
+                stats["mfes"].append(pos["mfe"])
+                stats["maes"].append(pos["mae"])
+                if pos["net_pnl"] > 0:
+                    stats["wins"] += 1
+                else:
+                    stats["losses"] += 1
+                if pos["is_oos"]:
+                    stats["out_of_sample_trades"] += 1
+                    if pos["net_pnl"] > 0:
+                        stats["out_of_sample_wins"] += 1
+                else:
+                    stats["in_sample_trades"] += 1
+                    if pos["net_pnl"] > 0:
+                        stats["in_sample_wins"] += 1
+            else:
+                still_active.append(pos)
+        active_portfolio_positions = still_active
+
+        # 2. Check each candidate symbol for this exact completed candle timestamp
+        for sym, s_data in symbol_data.items():
+            df = s_data["df"]
+            if current_ts not in df.index:
+                continue
+            idx = df.index.get_loc(current_ts)
+            if idx < 25 or idx >= len(df) - 5:
+                continue
+
             window_df = df.iloc[:idx]
-            # The signal candle is explicitly the completed last candle of window_df (idx - 1)
             signal_candle_idx = idx - 1
             signal_candle_ts = window_df.index[-1]
-            
-            if current_open_trade is not None:
-                if idx >= current_open_trade["exit_idx"]:
-                    current_open_trade = None
-            
+
             nifty_sub = nifty_df[nifty_df.index <= signal_candle_ts]
             if nifty_sub.empty:
                 continue
 
+            sector_df = s_data["sector_df"]
             sector_sub = sector_df[sector_df.index <= signal_candle_ts] if sector_df is not None else None
-
-            # Point-in-time Daily context
+            daily_df = s_data["daily_df"]
             daily_sub = daily_df[daily_df.index.date < signal_candle_ts.date()] if daily_df is not None and not daily_df.empty else None
 
-            # True Point-in-time 3-Way Relative Performance:
-            # 1. Stock vs NIFTY
-            # 2. Sector Index vs NIFTY
-            # 3. Stock vs Sector Index
+            # Calculate Point-in-time Relative Performance
             stock_day_open = float(window_df[window_df.index.date == signal_candle_ts.date()]["Open"].iloc[0]) if len(window_df[window_df.index.date == signal_candle_ts.date()]) > 0 else float(window_df["Open"].iloc[0])
             stock_change_pt = round((float(window_df["Close"].iloc[-1]) - stock_day_open) / stock_day_open * 100, 2)
             nifty_day_open = float(nifty_sub[nifty_sub.index.date == signal_candle_ts.date()]["Open"].iloc[0]) if len(nifty_sub[nifty_sub.index.date == signal_candle_ts.date()]) > 0 else float(nifty_sub["Open"].iloc[0])
             nifty_change_pt = round((float(nifty_sub["Close"].iloc[-1]) - nifty_day_open) / nifty_day_open * 100, 2) if nifty_day_open > 0 else 0.0
-            
+
             sector_change_pt = 0.0
             if sector_sub is not None and not sector_sub.empty:
                 sec_day_sub = sector_sub[sector_sub.index.date == signal_candle_ts.date()]
@@ -185,9 +244,6 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
                     sec_last = float(sec_day_sub["Close"].iloc[-1])
                     sector_change_pt = round((sec_last - sec_open) / sec_open * 100, 2) if sec_open > 0 else 0.0
 
-            # True Sector Leadership Bias:
-            # Bullish: Stock outperforms Sector AND Sector outperforms NIFTY
-            # Bearish: Stock underperforms Sector AND Sector underperforms NIFTY
             if (stock_change_pt > sector_change_pt) and (sector_change_pt >= nifty_change_pt - 0.2):
                 sector_bias = "BULLISH"
             elif (stock_change_pt < sector_change_pt) and (sector_change_pt <= nifty_change_pt + 0.2):
@@ -195,7 +251,6 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
             else:
                 sector_bias = "NEUTRAL"
 
-            # Complete live-equivalent pipeline with point-in-time historical context
             pipeline_res = ScreenerPipeline.evaluate_candidate_unified(
                 stock_df=window_df,
                 symbol=sym,
@@ -206,48 +261,50 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
                 is_replay=True,
                 sector_df=sector_sub
             )
-            
+
             stats["total_evaluations"] += 1
             if not pipeline_res:
                 stats["watch_only_candidates"] += 1
-                scanned_history[signal_candle_idx] = {"stage": "DISQUALIFIED", "direction": "NEUTRAL", "ts": signal_candle_ts}
+                s_data["scanned_history"][signal_candle_idx] = {"stage": "DISQUALIFIED", "direction": "NEUTRAL", "ts": signal_candle_ts}
                 continue
 
             opp_res = pipeline_res.get("opp_res")
             if not opp_res:
                 stats["watch_only_candidates"] += 1
-                scanned_history[signal_candle_idx] = {"stage": "DISQUALIFIED", "direction": "NEUTRAL", "ts": signal_candle_ts}
+                s_data["scanned_history"][signal_candle_idx] = {"stage": "DISQUALIFIED", "direction": "NEUTRAL", "ts": signal_candle_ts}
                 continue
 
             stage = opp_res.get("stage", "WATCHLIST")
             direction = opp_res.get("direction", "NEUTRAL")
             is_actionable = opp_res.get("is_actionable", False)
-            
+
             stats["stage_counts"][stage] = stats["stage_counts"].get(stage, 0) + 1
-            scanned_history[signal_candle_idx] = {"stage": stage, "direction": direction, "ts": signal_candle_ts}
+            s_data["scanned_history"][signal_candle_idx] = {"stage": stage, "direction": direction, "ts": signal_candle_ts}
 
             if not is_actionable or direction == "NEUTRAL":
                 stats["watch_only_candidates"] += 1
                 continue
 
-            # Deduplication
-            if current_open_trade is not None:
+            # Check if this stock is ALREADY in an active trade
+            if any(p["symbol"] == sym for p in active_portfolio_positions):
                 continue
 
-            # ZERO MANUFACTURED RISK: Require genuine structural risk levels from institutional evaluation!
+            # Shared Portfolio Concurrency Gate: Max 4 simultaneous positions
+            if len(active_portfolio_positions) >= max_concurrent_portfolio_trades:
+                continue
+
+            # Validate risk levels
             sl = opp_res.get("suggested_sl")
             tp1 = opp_res.get("suggested_tp1")
             entry_price = float(df["Open"].iloc[idx])
-            
+
             if sl is None or tp1 is None:
                 stats["rejected_no_risk"] += 1
                 stats["watch_only_candidates"] += 1
                 continue
 
-            # Model execution price with realistic bid-ask spread and entry slippage (0.03% on entry)
             actual_entry = entry_price * (1.0 + entry_slippage_pct/100) if direction == "BULLISH" else entry_price * (1.0 - entry_slippage_pct/100)
 
-            # Recalculate Risk/Reward using the ACTUAL slipped entry price (Item 6):
             if direction == "BULLISH":
                 if not (sl < actual_entry and tp1 > actual_entry):
                     stats["rejected_no_risk"] += 1
@@ -268,9 +325,7 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
                 stats["watch_only_candidates"] += 1
                 continue
 
-            # Executable trade verified
-            stats["trades_executed"] += 1
-            
+            # Calculate Trade Outcome Forward
             forward_candles = df.iloc[idx:min(idx + max_holding_candles, len(df))]
             if forward_candles.empty:
                 continue
@@ -279,7 +334,7 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
             highs = forward_candles["High"].values
             lows = forward_candles["Low"].values
             closes_sub = forward_candles["Close"].values
-            
+
             hit_tp = False
             hit_sl = False
             exit_offset = len(forward_candles)
@@ -290,13 +345,10 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
             for c_i, (c_open, h, l, c_close) in enumerate(zip(opens, highs, lows, closes_sub)):
                 in_trade_highs.append(h)
                 in_trade_lows.append(l)
-                
-                # Check for simultaneous same-candle SL and TP touch:
-                # Conservative conservative resolution: If both touched on same 5m bar, assume Stop-Loss was triggered first!
+
                 if direction == "BULLISH":
                     touched_sl = (l <= sl) or (c_open <= sl)
                     touched_tp = (h >= tp1) or (c_open >= tp1)
-                    
                     if touched_sl and touched_tp:
                         hit_sl = True
                         exit_price_actual = c_open if c_open <= sl else (sl - sl * 0.0003)
@@ -304,7 +356,7 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
                         break
                     elif c_open <= sl:
                         hit_sl = True
-                        exit_price_actual = c_open  # Gap-through stop fill
+                        exit_price_actual = c_open
                         exit_offset = c_i + 1
                         break
                     elif l <= sl:
@@ -322,10 +374,9 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
                         exit_price_actual = tp1
                         exit_offset = c_i + 1
                         break
-                else:  # BEARISH
+                else:
                     touched_sl = (h >= sl) or (c_open >= sl)
                     touched_tp = (l <= tp1) or (c_open <= tp1)
-                    
                     if touched_sl and touched_tp:
                         hit_sl = True
                         exit_price_actual = c_open if c_open >= sl else (sl + sl * 0.0003)
@@ -333,7 +384,7 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
                         break
                     elif c_open >= sl:
                         hit_sl = True
-                        exit_price_actual = c_open  # Gap-through stop fill
+                        exit_price_actual = c_open
                         exit_offset = c_i + 1
                         break
                     elif h >= sl:
@@ -360,78 +411,67 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
                 max_fav = (actual_entry - min(in_trade_lows)) / actual_entry * 100
                 max_adv = (max(in_trade_highs) - actual_entry) / actual_entry * 100
 
-            stats["mfes"].append(max_fav)
-            stats["maes"].append(max_adv)
-            
-            current_open_trade = {"entry_idx": idx, "exit_idx": idx + exit_offset}
-            is_out_of_sample = (idx >= int(len(df) * 0.60))
-            is_win = False
-
-            # Separate Gross vs Net PnL with Side-Specific Indian Statutory Friction:
-            # Buy side statutory friction: 0.035% (Brokerage + Stamp + Exch + GST)
-            # Sell side statutory friction: 0.055% (STT 0.025% + Brokerage + Exch + GST)
-            # Total friction: 0.090% + slippage
             trade_friction_pct = base_statutory_friction_pct + (0.015 if direction == "BEARISH" else 0.010)
 
             if hit_tp:
                 gross_diff = (exit_price_actual - actual_entry) / actual_entry * 100 if direction == "BULLISH" else (actual_entry - exit_price_actual) / actual_entry * 100
-                net_pnl = gross_diff - trade_friction_pct
-                stats["gross_pnl_pct"] += gross_diff
-                stats["total_pnl_pct"] += net_pnl
-                stats["trade_gross_pnls"].append(gross_diff)
-                stats["trade_net_pnls"].append(net_pnl)
-                # Compute realized R-multiple: net profit / risk
-                risk_pct = (risk / actual_entry) * 100
-                r_mult = net_pnl / risk_pct if risk_pct > 0 else 1.0
-                stats["trade_r_multiples"].append(r_mult)
-                # Compounded portfolio growth: assuming 20% position size per trade
-                prev_eq = stats["equity_curve"][-1]
-                stats["equity_curve"].append(prev_eq * (1.0 + (net_pnl / 100.0) * 0.20))
-                if net_pnl > 0:
-                    stats["wins"] += 1
-                    is_win = True
-                else:
-                    stats["losses"] += 1
             elif hit_sl:
-                stats["losses"] += 1
                 gross_diff = -(abs(actual_entry - exit_price_actual) / actual_entry * 100)
-                net_pnl = gross_diff - trade_friction_pct
-                stats["gross_pnl_pct"] += gross_diff
-                stats["total_pnl_pct"] += net_pnl
-                stats["trade_gross_pnls"].append(gross_diff)
-                stats["trade_net_pnls"].append(net_pnl)
-                risk_pct = (risk / actual_entry) * 100
-                r_mult = net_pnl / risk_pct if risk_pct > 0 else -1.0
-                stats["trade_r_multiples"].append(r_mult)
-                prev_eq = stats["equity_curve"][-1]
-                stats["equity_curve"].append(prev_eq * (1.0 + (net_pnl / 100.0) * 0.20))
             else:
                 gross_diff = ((exit_price_actual - actual_entry) / actual_entry * 100) if direction == "BULLISH" else ((actual_entry - exit_price_actual) / actual_entry * 100)
-                net_pnl = gross_diff - trade_friction_pct
-                stats["gross_pnl_pct"] += gross_diff
-                stats["total_pnl_pct"] += net_pnl
-                stats["trade_gross_pnls"].append(gross_diff)
-                stats["trade_net_pnls"].append(net_pnl)
-                risk_pct = (risk / actual_entry) * 100
-                r_mult = net_pnl / risk_pct if risk_pct > 0 else 0.0
-                stats["trade_r_multiples"].append(r_mult)
-                prev_eq = stats["equity_curve"][-1]
-                stats["equity_curve"].append(prev_eq * (1.0 + (net_pnl / 100.0) * 0.20))
-                if net_pnl > 0:
-                    stats["wins"] += 1
-                    is_win = True
-                else:
-                    stats["losses"] += 1
 
-            if is_out_of_sample:
-                stats["out_of_sample_trades"] += 1
-                if is_win: stats["out_of_sample_wins"] += 1
-            else:
-                stats["in_sample_trades"] += 1
-                if is_win: stats["in_sample_wins"] += 1
+            net_pnl = gross_diff - trade_friction_pct
+            risk_pct = (risk / actual_entry) * 100
+            r_mult = net_pnl / risk_pct if risk_pct > 0 else (1.0 if net_pnl > 0 else -1.0)
+            exit_idx = idx + exit_offset
+            exit_ts = df.index[min(exit_idx, len(df) - 1)]
 
-        # Evaluate Direction-Matched Pre-Move Event Recall & Lead Times
-        for b_idx in bullish_event_indices:
+            # Register into shared active portfolio positions
+            active_portfolio_positions.append({
+                "symbol": sym,
+                "direction": direction,
+                "entry_ts": current_ts,
+                "exit_ts": exit_ts,
+                "net_pnl": net_pnl,
+                "gross_pnl": gross_diff,
+                "alloc": 0.25, # Max 25% allocation per concurrent trade
+                "r_mult": r_mult,
+                "mfe": max_fav,
+                "mae": max_adv,
+                "is_oos": (idx >= int(len(df) * 0.60))
+            })
+
+    # Flush any remaining positions that completed at the end of the timeline
+    for pos in active_portfolio_positions:
+        pnl_mult = (pos["net_pnl"] / 100.0) * pos["alloc"]
+        prev_eq = stats["equity_curve"][-1]
+        new_eq = prev_eq * (1.0 + pnl_mult)
+        stats["equity_curve"].append(new_eq)
+        stats["trades_executed"] += 1
+        stats["trade_net_pnls"].append(pos["net_pnl"])
+        stats["trade_gross_pnls"].append(pos["gross_pnl"])
+        stats["total_pnl_pct"] += pos["net_pnl"]
+        stats["gross_pnl_pct"] += pos["gross_pnl"]
+        stats["trade_r_multiples"].append(pos["r_mult"])
+        stats["mfes"].append(pos["mfe"])
+        stats["maes"].append(pos["mae"])
+        if pos["net_pnl"] > 0:
+            stats["wins"] += 1
+        else:
+            stats["losses"] += 1
+        if pos["is_oos"]:
+            stats["out_of_sample_trades"] += 1
+            if pos["net_pnl"] > 0:
+                stats["out_of_sample_wins"] += 1
+        else:
+            stats["in_sample_trades"] += 1
+            if pos["net_pnl"] > 0:
+                stats["in_sample_wins"] += 1
+
+    # Evaluate Direction-Matched Pre-Move Event Recall & Lead Times across all symbols
+    for sym, s_data in symbol_data.items():
+        scanned_history = s_data["scanned_history"]
+        for b_idx in s_data["bullish_event_indices"]:
             stats["bullish_events"] += 1
             for lead in range(1, 7):
                 c_idx = b_idx - lead
@@ -441,13 +481,15 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
                     stats["bullish_lead_times"].append(lead)
                     break
 
-        for s_idx in bearish_event_indices:
+        for s_idx in s_data["bearish_event_indices"]:
             stats["bearish_events"] += 1
             for lead in range(1, 7):
                 c_idx = s_idx - lead
                 entry = scanned_history.get(c_idx, {})
                 if entry.get("direction") == "BEARISH" and entry.get("stage") in ("ENTRY READY", "IGNITION", "PREPARING", "OBSERVING"):
                     stats["detected_bearish_events"] += 1
+                    stats["bearish_lead_times"].append(lead)
+                    break
                     stats["bearish_lead_times"].append(lead)
                     break
 
