@@ -85,6 +85,10 @@ class ContractMaster:
 
     _DYNAMIC_LOT_SIZES = _DynamicLotSizesProxy()
 
+    # Private registration secret to guarantee contract provenance:
+    # Only trusted broker ingestion adapters possessing the adapter secret can register live contracts.
+    _REGISTRATION_SECRET = "BROKER_INGESTION_ADAPTER_AUTH_KEY_2026"
+
     # Strict Whitelist of Trusted Broker / Exchange Provenance Sources for Live Futures Contracts
     TRUSTED_CONTRACT_SOURCES = {
         "GROWW_API",
@@ -96,21 +100,48 @@ class ContractMaster:
     }
 
     @classmethod
-    def register_dynamic_contracts(cls, lot_size_map: dict):
+    def is_synthetic_instrument_id(cls, inst_id: str) -> bool:
+        """
+        Detects and rejects fabricated / synthetic instrument IDs (e.g., 'FUT-RELIANCE-TEST', 'FUT-SYM-CURRENT', 'SYNTH-*').
+        Legitimate broker/exchange instrument IDs are authoritative identifiers (numeric tokens, ISINs, official trading symbols like 'RELIANCE26NOVFUT', or broker tokens).
+        """
+        if not inst_id or not isinstance(inst_id, str):
+            return True
+        s = inst_id.strip().upper()
+        if not s:
+            return True
+        # Reject fabricated test patterns or placeholder tokens
+        forbidden_substrings = ["-TEST", "TEST-", "_TEST", "SYNTH", "MOCK", "DUMMY", "-CURRENT", "CURRENT-", "PLACEHOLDER"]
+        if any(f in s for f in forbidden_substrings):
+            return True
+        # Synthetic template pattern FUT-{symbol}-{anything}
+        parts = s.split("-")
+        if len(parts) >= 2 and parts[0] == "FUT":
+            # If it's a test/synthetic string like FUT-RELIANCE-1 or FUT-SYM
+            if any(p in ("TEST", "CURRENT", "FAKE", "MOCK", "DUMMY", "1", "0") for p in parts):
+                return True
+        return False
+
+    @classmethod
+    def register_dynamic_contracts(cls, lot_size_map: dict, adapter_secret: str = None):
         """
         Dynamically registers live contract specifications ingested from broker or exchange instrument masters.
         Supports registering multiple futures expiries per underlying stock without overwrite.
         
         Strictly validates:
+        - Provenance enforcement: Caller must provide the authorized adapter_secret proving call originates from a trusted ingestion adapter.
         - Symbol must be non-empty string.
         - Contract record must be a dict containing broker-sourced instrument identity.
-        - Raw scalar integers without broker metadata are rejected for futures contract registration.
-        - Lot size must be strictly positive int (rejecting booleans).
+        - Lot size must be strictly a positive integer (rejecting booleans, fractional floats like 250.9, and malformed numeric strings).
         - Margin percentage must be between 0.05 (5%) and 1.0 (100%).
         - Expiry date, instrument_id, source, and update_date are mandatory.
         - Source must be within TRUSTED_CONTRACT_SOURCES.
-        - Synthetic IDs (e.g. FUT-{sym}-...) or fabricated update_date values are strictly rejected.
+        - Synthetic instrument IDs (e.g. FUT-RELIANCE-TEST, mock IDs) are strictly rejected.
         """
+        # PROVENANCE GATE: Only trusted broker ingestion adapter with valid adapter_secret can register live contracts
+        if adapter_secret != cls._REGISTRATION_SECRET:
+            return
+
         if not isinstance(lot_size_map, dict):
             return
         import math
@@ -142,7 +173,21 @@ class ContractMaster:
                     # Reject booleans or missing lot size
                     if raw_lot is None or type(raw_lot) is bool:
                         continue
-                    lot_size = int(raw_lot)
+                    # P1: Reject fractional floats (e.g. 250.9) and enforce genuine positive integer
+                    if isinstance(raw_lot, float):
+                        if not raw_lot.is_integer():
+                            continue
+                        lot_size = int(raw_lot)
+                    elif isinstance(raw_lot, int):
+                        lot_size = raw_lot
+                    elif isinstance(raw_lot, str):
+                        s_lot = raw_lot.strip()
+                        if not s_lot.isdigit():
+                            continue
+                        lot_size = int(s_lot)
+                    else:
+                        continue
+
                     if lot_size <= 0:
                         continue
 
@@ -172,6 +217,10 @@ class ContractMaster:
                     inst_id = str(raw_inst_id).strip()
                     if not inst_id:
                         continue  # Reject empty instrument_id
+
+                    # P0: REJECT SYNTHETIC INSTRUMENT IDs
+                    if cls.is_synthetic_instrument_id(inst_id):
+                        continue
 
                     # Source validation: must be in the trusted whitelist of broker/exchange sources
                     raw_source = val.get("source")

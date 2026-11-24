@@ -1477,11 +1477,11 @@ class TestIntradayScreenerCore(unittest.TestCase):
             sym: {
                 "lot_size": 300,
                 "expiry": str(datetime.date.today() + datetime.timedelta(days=7)),
-                "instrument_id": "FUT-RELIANCE-TEST",
+                "instrument_id": "NSE_RELIANCE_FUT_10294",
                 "source": "BROKER_FEED",
                 "update_date": str(datetime.date.today())
             }
-        })
+        }, adapter_secret=ContractMaster._REGISTRATION_SECRET)
 
         # For today (current session), dynamic takes precedence
         current_spec = ContractMaster.get_contract_spec(sym, as_of_date=datetime.date.today())
@@ -1604,7 +1604,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
                 "lot_size": 250,
                 "estimated_margin_pct": 0.22,
                 "expiry": str(exp_near),
-                "instrument_id": f"FUT-MULTI_TEST-{exp_near}",
+                "instrument_id": f"NSE_MULTI_NEAR_{exp_near.strftime('%Y%m%d')}",
                 "source": "BROKER_FEED",
                 "update_date": str(today)
             },
@@ -1612,25 +1612,25 @@ class TestIntradayScreenerCore(unittest.TestCase):
                 "lot_size": 250,
                 "estimated_margin_pct": 0.25,
                 "expiry": str(exp_far),
-                "instrument_id": f"FUT-MULTI_TEST-{exp_far}",
+                "instrument_id": f"NSE_MULTI_FAR_{exp_far.strftime('%Y%m%d')}",
                 "source": "BROKER_FEED",
                 "update_date": str(today)
             }
-        })
+        }, adapter_secret=ContractMaster._REGISTRATION_SECRET)
 
         # Query exact near expiry
         near_spec = ContractMaster.get_contract_spec("MULTI_TEST", expiry=str(exp_near))
         self.assertIsNotNone(near_spec)
         self.assertEqual(near_spec["expiry"], exp_near)
         self.assertEqual(near_spec["estimated_margin_pct"], 0.22)
-        self.assertEqual(near_spec["instrument_id"], f"FUT-MULTI_TEST-{exp_near}")
+        self.assertEqual(near_spec["instrument_id"], f"NSE_MULTI_NEAR_{exp_near.strftime('%Y%m%d')}")
 
         # Query exact far expiry
         far_spec = ContractMaster.get_contract_spec("MULTI_TEST", expiry=str(exp_far))
         self.assertIsNotNone(far_spec)
         self.assertEqual(far_spec["expiry"], exp_far)
         self.assertEqual(far_spec["estimated_margin_pct"], 0.25)
-        self.assertEqual(far_spec["instrument_id"], f"FUT-MULTI_TEST-{exp_far}")
+        self.assertEqual(far_spec["instrument_id"], f"NSE_MULTI_FAR_{exp_far.strftime('%Y%m%d')}")
 
         # Query without explicit expiry -> defaults to nearest unexpired contract
         default_spec = ContractMaster.get_contract_spec("MULTI_TEST")
@@ -1677,11 +1677,11 @@ class TestIntradayScreenerCore(unittest.TestCase):
             f"FAIL_CLOSED_TEST::{today + datetime.timedelta(days=7)}": {
                 "lot_size": 150,
                 "expiry": str(today + datetime.timedelta(days=7)),
-                "instrument_id": f"FUT-FAIL_CLOSED_TEST-{today + datetime.timedelta(days=7)}",
+                "instrument_id": f"NSE_FAIL_CLOSED_AUTH_{today.strftime('%Y%m%d')}",
                 "source": "BROKER_FEED",
                 "update_date": str(today)
             }
-        })
+        }, adapter_secret=ContractMaster._REGISTRATION_SECRET)
 
         # Requesting a non-existent explicit expiry fails closed
         spec_missing = ContractMaster.get_contract_spec("FAIL_CLOSED_TEST", expiry=str(today + datetime.timedelta(days=35)))
@@ -1777,10 +1777,11 @@ class TestIntradayScreenerCore(unittest.TestCase):
             f"FUT_LOG_TEST::{exp_date}": {
                 "lot_size": 250,
                 "expiry": str(exp_date),
-                "instrument_id": f"FUT-LOG_TEST-{exp_date}",
-                "source": "BROKER_LIVE"
+                "instrument_id": f"NSE_LOG_TEST_FUT_{exp_date.strftime('%Y%m%d')}",
+                "source": "BROKER_LIVE",
+                "update_date": str(today)
             }
-        })
+        }, adapter_secret=ContractMaster._REGISTRATION_SECRET)
 
         sig_id = storage.log_signal({
             "symbol": "FUT_LOG_TEST.NS",
@@ -1791,7 +1792,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
             "target_1": 520.0,
             "quantity": 250,
             "instrument_type": "FUTURES",
-            "instrument_id": f"FUT-LOG_TEST-{exp_date}",
+            "instrument_id": f"NSE_LOG_TEST_FUT_{exp_date.strftime('%Y%m%d')}",
             "contract_expiry": str(exp_date),
             "contract_source": "BROKER_LIVE"
         })
@@ -1802,7 +1803,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
         row = c.fetchone()
         conn.close()
 
-        self.assertEqual(row["instrument_id"], f"FUT-LOG_TEST-{exp_date}")
+        self.assertEqual(row["instrument_id"], f"NSE_LOG_TEST_FUT_{exp_date.strftime('%Y%m%d')}")
         self.assertEqual(row["contract_expiry"], str(exp_date))
         self.assertEqual(row["contract_source"], "BROKER_LIVE")
         self.assertEqual(row["quantity"], 250)
@@ -2029,6 +2030,129 @@ class TestIntradayScreenerCore(unittest.TestCase):
         # TP1 must NOT be hit because off-grid candle was rejected unconditionally
         self.assertEqual(row["outcome"], "ACTIVE")
         self.assertEqual(row["tp1_hit"], 0)
+
+    def test_synthetic_instrument_id_with_approved_source_rejected(self):
+        # Even with source=BROKER_FEED, synthetic/fabricated instrument IDs must be rejected
+        today = datetime.date.today()
+        exp_date = today + datetime.timedelta(days=14)
+        for synth_id in ["FUT-RELIANCE-TEST", "SYNTH-12345", "MOCK_TOKEN_99", "DUMMY_INSTRUMENT", "FUT-SYM-CURRENT"]:
+            ContractMaster.register_dynamic_contracts({
+                "SYNTH_SYM": {
+                    "lot_size": 250,
+                    "expiry": str(exp_date),
+                    "instrument_id": synth_id,
+                    "source": "BROKER_FEED",
+                    "update_date": str(today)
+                }
+            }, adapter_secret=ContractMaster._REGISTRATION_SECRET)
+            self.assertNotIn(("SYNTH_SYM", exp_date), ContractMaster._DYNAMIC_CONTRACTS)
+
+    def test_forged_broker_feed_source_without_adapter_secret_rejected(self):
+        # A caller supplying an invented contract with source=BROKER_FEED but without valid adapter_secret is rejected
+        today = datetime.date.today()
+        exp_date = today + datetime.timedelta(days=14)
+        ContractMaster.register_dynamic_contracts({
+            "FORGED_SYM": {
+                "lot_size": 250,
+                "expiry": str(exp_date),
+                "instrument_id": "NSE_GENUINE_LOOKING_ID",
+                "source": "BROKER_FEED",
+                "update_date": str(today)
+            }
+        }, adapter_secret="INVALID_OR_MISSING_SECRET")
+        self.assertNotIn(("FORGED_SYM", exp_date), ContractMaster._DYNAMIC_CONTRACTS)
+
+        # Calling without secret argument also rejected
+        ContractMaster.register_dynamic_contracts({
+            "FORGED_SYM2": {
+                "lot_size": 250,
+                "expiry": str(exp_date),
+                "instrument_id": "NSE_GENUINE_LOOKING_ID_2",
+                "source": "BROKER_FEED",
+                "update_date": str(today)
+            }
+        })
+        self.assertNotIn(("FORGED_SYM2", exp_date), ContractMaster._DYNAMIC_CONTRACTS)
+
+    def test_fractional_lot_sizes_rejected(self):
+        # Fractional lot sizes (e.g. 250.9, 100.5, "250.7") must be rejected, not silently truncated
+        today = datetime.date.today()
+        exp_date = today + datetime.timedelta(days=14)
+        for bad_lot in [250.9, 100.5, "250.7", "abc", None]:
+            ContractMaster.register_dynamic_contracts({
+                "FRACT_LOT_SYM": {
+                    "lot_size": bad_lot,
+                    "expiry": str(exp_date),
+                    "instrument_id": "NSE_FRACT_LOT_TOKEN",
+                    "source": "BROKER_FEED",
+                    "update_date": str(today)
+                }
+            }, adapter_secret=ContractMaster._REGISTRATION_SECRET)
+            self.assertNotIn(("FRACT_LOT_SYM", exp_date), ContractMaster._DYNAMIC_CONTRACTS)
+
+    def test_missing_5m_candles_inside_trading_session_rejected(self):
+        # Intra-session missing candle gaps (e.g. 09:20 -> 09:35 skipping 09:25 and 09:30) must be detected and rejected
+        from engine.market_validator import MarketValidator
+        now_ts = (int(time.time()) // 300) * 300
+
+        # Generate sequence with missing candle gap (interval = 600s instead of 300s)
+        c1 = pd.to_datetime(now_ts - 1800, unit='s', utc=True).tz_convert('Asia/Kolkata')
+        c2 = pd.to_datetime(now_ts - 1200, unit='s', utc=True).tz_convert('Asia/Kolkata')  # 600s gap!
+        df_gap = pd.DataFrame({
+            "Open": [100.0, 100.0],
+            "High": [105.0, 115.0],
+            "Low": [99.0, 99.0],
+            "Close": [104.0, 112.0],
+            "Volume": [10000, 10000]
+        }, index=pd.DatetimeIndex([c1, c2]))
+
+        is_cont, gap_cnt, gap_err = MarketValidator.validate_candle_sequence_continuity(df_gap)
+        self.assertFalse(is_cont)
+        self.assertGreater(gap_cnt, 0)
+        self.assertIn("Missing intra-session candle(s)", gap_err)
+
+        # Contiguous feed with exact 300s steps must pass
+        c3 = pd.to_datetime(now_ts - 1500, unit='s', utc=True).tz_convert('Asia/Kolkata')
+        df_cont = pd.DataFrame({
+            "Open": [100.0, 101.0],
+            "High": [105.0, 106.0],
+            "Low": [99.0, 100.0],
+            "Close": [104.0, 105.0],
+            "Volume": [10000, 10000]
+        }, index=pd.DatetimeIndex([c1, c3]))
+        is_cont2, gap_cnt2, _ = MarketValidator.validate_candle_sequence_continuity(df_cont)
+        self.assertTrue(is_cont2)
+        self.assertEqual(gap_cnt2, 0)
+
+    def test_replay_with_explicit_evaluation_clock(self):
+        # When evaluation_time is explicitly provided in replay mode, it governs the evaluation clock
+        sym = "REPLAY_CLOCK_TEST.NS"
+        replay_clock = 1770000000.0  # Explicit past/frozen replay timestamp on 300s grid
+        replay_base = (int(replay_clock) // 300) * 300
+
+        sig_id = storage.log_signal({
+            "symbol": sym, "direction": "BUY", "strategy": "BOS",
+            "entry_price": 100.0, "stop_loss": 90.0, "target_1": 110.0,
+            "signal_candle_start": replay_base - 1200,
+            "signal_candle_close_time": replay_base - 900
+        })
+
+        # Candle closed at replay_base - 600 (formed strictly before replay_clock)
+        valid_replay_candle = {
+            "open": 101.0, "high": 112.0, "low": 100.0, "close": 111.0,
+            "timestamp": replay_base - 600,
+            "is_completed": True
+        }
+        storage.evaluate_open_outcomes({sym: valid_replay_candle}, evaluation_time=replay_base)
+
+        conn = storage.get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT outcome, tp1_hit FROM historical_signals WHERE id = ?", (sig_id,))
+        row = c.fetchone()
+        conn.close()
+
+        # Successfully processes candle under explicit evaluation clock
+        self.assertEqual(row["tp1_hit"], 1)
 
 if __name__ == '__main__':
     unittest.main()

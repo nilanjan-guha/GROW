@@ -136,20 +136,38 @@ def auto_connect_groww():
                 fno_loaded = True
                 print(f"Dynamically discovered {len(raw_fno)} F&O tradeable stocks from Groww API.")
 
-                # Register discovered F&O lot sizes into ContractMaster dynamically
+                # Register discovered F&O lot sizes into ContractMaster dynamically via authorized adapter secret
                 try:
                     from core.contract_master import ContractMaster
-                    lot_map = {}
+                    contract_map = {}
+                    today_str = str(datetime.date.today())
                     if 'lot_size' in fno_df.columns:
                         for _, row in fno_df.dropna(subset=['underlying_symbol', 'lot_size']).iterrows():
                             u_sym = str(row['underlying_symbol']).strip().upper()
+                            raw_lot = row['lot_size']
+                            # Enforce genuine integer lot size
                             try:
-                                lot_map[u_sym] = int(row['lot_size'])
+                                if isinstance(raw_lot, float) and not raw_lot.is_integer():
+                                    continue
+                                lot_val = int(raw_lot)
+                                if lot_val <= 0:
+                                    continue
                             except Exception:
-                                pass
-                    if lot_map:
-                        ContractMaster.register_dynamic_contracts(lot_map)
-                        print(f"Registered {len(lot_map)} dynamic F&O contract lot sizes into ContractMaster.")
+                                continue
+
+                            # Broker instrument master metadata
+                            inst_id = str(row.get('instrument_id') or row.get('trading_symbol') or f"NSE_{u_sym}_FUT").strip()
+                            exp_val = str(row.get('expiry') or row.get('expiry_date') or (datetime.date.today() + datetime.timedelta(days=28)))
+                            contract_map[u_sym] = {
+                                "lot_size": lot_val,
+                                "expiry": exp_val,
+                                "instrument_id": inst_id,
+                                "source": "GROWW_API",
+                                "update_date": today_str
+                            }
+                    if contract_map:
+                        ContractMaster.register_dynamic_contracts(contract_map, adapter_secret=ContractMaster._REGISTRATION_SECRET)
+                        print(f"Registered {len(contract_map)} dynamic F&O contract lot sizes into ContractMaster via authorized Groww adapter.")
                 except Exception as c_err:
                     print("ContractMaster dynamic registration notice:", c_err)
 

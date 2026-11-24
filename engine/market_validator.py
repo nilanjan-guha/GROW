@@ -287,6 +287,53 @@ class MarketValidator:
         }
 
     @staticmethod
+    def validate_candle_sequence_continuity(df, candle_duration_seconds=300):
+        """
+        P1: Validates continuity across a candle sequence (DataFrame or DatetimeIndex):
+        - Detects any missing 5-minute candle intervals inside a trading session.
+        - Accurately respects inter-day session boundaries, weekends, and official NSE holidays (not flagging overnight gaps as missing candles).
+        - Allows closing auction interval adjustments between 15:10/15:15 and 15:25.
+        
+        Returns (is_continuous, missing_gaps_count, first_gap_details).
+        """
+        if df is None or len(df) < 2:
+            return True, 0, None
+
+        if hasattr(df, 'index'):
+            idx = df.index
+        else:
+            idx = df
+
+        missing_count = 0
+        first_gap = None
+        for i in range(1, len(idx)):
+            t_prev = idx[i - 1]
+            t_curr = idx[i]
+            # Same trading session: check exact 300s interval
+            if t_prev.date() == t_curr.date():
+                diff_s = (t_curr - t_prev).total_seconds()
+                is_closing_gap = (t_prev.hour == 15 and t_prev.minute in (10, 15, 20) and t_curr.hour == 15 and t_curr.minute in (20, 25, 30) and 300 <= diff_s <= 900)
+                if diff_s != candle_duration_seconds and not is_closing_gap:
+                    missing_count += 1
+                    if first_gap is None:
+                        first_gap = f"Missing intra-session candle(s) between {t_prev.strftime('%Y-%m-%d %H:%M')} and {t_curr.strftime('%Y-%m-%d %H:%M')} ({int(diff_s)}s gap)"
+            else:
+                # Across different calendar days: verify no missed intermediate trading days
+                # Inter-day overnight transition is standard, but check if an entire trading day was skipped unexpectedly
+                p_date = t_prev.date()
+                c_date = t_curr.date()
+                # Check dates strictly between p_date and c_date
+                check_dt = p_date + datetime.timedelta(days=1)
+                while check_dt < c_date:
+                    if MarketValidator.is_trading_day(check_dt):
+                        missing_count += 1
+                        if first_gap is None:
+                            first_gap = f"Missing entire trading session: {check_dt} between {p_date} and {c_date}"
+                    check_dt += datetime.timedelta(days=1)
+
+        return (missing_count == 0), missing_count, first_gap
+
+    @staticmethod
     def validate_historical_replay_data(df, candle_duration_seconds=300, allow_partial_final_session=True, requested_start_dt=None, requested_end_dt=None):
         """
         Validates historical data integrity for backtesting/replay (NO current wall-clock checks):
