@@ -393,5 +393,21 @@ class TestIntradayScreenerCore(unittest.TestCase):
         self.assertGreater(net_profit, 0.0)
         self.assertLess(net_profit, gross_profit)
 
+    def test_institutional_breaker_and_volume_profile(self):
+        # Verify Breaker block tracking, Inducement sweeps, and Volume Profile POC evaluation
+        strat_res = InstitutionalStrategyEngine.evaluate_strategies(
+            df=self.df_5m,
+            daily_df=self.daily_df
+        )
+        self.assertIsNotNone(strat_res)
+        self.assertIn("bullish_breaker_obs", strat_res)
+        self.assertIn("bearish_breaker_obs", strat_res)
+        self.assertIn("has_eqh_inducement_sweep", strat_res)
+        self.assertIn("has_eql_inducement_sweep", strat_res)
+        self.assertIn("volume_profile_poc", strat_res)
+        self.assertIn("volume_profile_vah", strat_res)
+        self.assertIn("volume_profile_val", strat_res)
+        self.assertGreater(strat_res["volume_profile_poc"], 0.0)
+
 if __name__ == '__main__':
     unittest.main()

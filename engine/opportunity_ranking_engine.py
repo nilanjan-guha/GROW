@@ -405,6 +405,9 @@ class OpportunityRankingEngine:
         if is_flat_open_ignition: early_bull_score += 15
         if is_gap_up_holding: early_bull_score += 10
         if above_vwap: early_bull_score += 10
+        # Deep Institutional Triggers (Breaker Blocks & Liquidity Inducement Sweeps):
+        if opp_eval and opp_eval.get("has_eql_inducement_sweep"): early_bull_score += 25
+        if opp_eval and opp_eval.get("nearest_bull_breaker"): conf_bull_score += 25
 
         # Bullish Confirmation Factors:
         if is_broken_above_orh or is_broken_above_pdh: conf_bull_score += 25
@@ -423,6 +426,9 @@ class OpportunityRankingEngine:
         if is_pdl_retest_hold_bear: early_bear_score += 15
         if is_gap_down_holding: early_bear_score += 10
         if below_vwap: early_bear_score += 10
+        # Deep Institutional Triggers (Breaker Blocks & Liquidity Inducement Sweeps):
+        if opp_eval and opp_eval.get("has_eqh_inducement_sweep"): early_bear_score += 25
+        if opp_eval and opp_eval.get("nearest_bear_breaker"): conf_bear_score += 25
 
         # Bearish Confirmation Factors:
         if is_broken_below_orl or is_broken_below_pdl: conf_bear_score += 25

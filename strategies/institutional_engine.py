@@ -230,6 +230,8 @@ class InstitutionalStrategyEngine:
                 if ob["created_at_idx"] < k and ob["state"] not in ("INVALIDATED",):
                     if c_curr < ob["bottom"]:
                         ob["state"] = "INVALIDATED"
+                        ob["invalidated_at_idx"] = k
+                        ob["breaker_type"] = "BEARISH_BREAKER" # Invalidated Demand OB becomes a Bearish Breaker Block
                     elif l_curr < ob["bottom"]:
                         ob["state"] = "FULLY_MITIGATED"
                     elif l_curr <= ob["top"]:
@@ -240,13 +242,15 @@ class InstitutionalStrategyEngine:
                 if ob["created_at_idx"] < k and ob["state"] not in ("INVALIDATED",):
                     if c_curr > ob["top"]:
                         ob["state"] = "INVALIDATED"
+                        ob["invalidated_at_idx"] = k
+                        ob["breaker_type"] = "BULLISH_BREAKER" # Invalidated Supply OB becomes a Bullish Breaker Block
                     elif h_curr > ob["top"]:
                         ob["state"] = "FULLY_MITIGATED"
                     elif h_curr >= ob["bottom"]:
                         if ob["state"] == "ACTIVE":
                             ob["state"] = "PARTIALLY_MITIGATED"
 
-        # Relevant Order Blocks:
+        # Relevant Order Blocks & Institutional Breaker Blocks:
         # Demand OB must be BELOW or touching current price (cannot be above current price for Bullish!)
         # Supply OB must be ABOVE or touching current price (cannot be below current price for Bearish!)
         fresh_bull_obs = [ob for ob in active_bull_obs if ob["state"] in ("ACTIVE", "PARTIALLY_MITIGATED") and ob["top"] <= (curr_c * 1.005)]
@@ -254,8 +258,77 @@ class InstitutionalStrategyEngine:
         fully_mitigated_bull_obs = [ob for ob in active_bull_obs if ob["state"] == "FULLY_MITIGATED"]
         fully_mitigated_bear_obs = [ob for ob in active_bear_obs if ob["state"] == "FULLY_MITIGATED"]
         
+        # Institutional Breaker Blocks (Trapped Liquidity Flip Zones):
+        # Bullish Breaker: Prior supply OB breached by aggressive buying, now acting as support below price
+        bull_breakers = [ob for ob in active_bear_obs if ob.get("breaker_type") == "BULLISH_BREAKER" and ob["bottom"] <= (curr_c * 1.005)]
+        # Bearish Breaker: Prior demand OB breached by aggressive selling, now acting as resistance above price
+        bear_breakers = [ob for ob in active_bull_obs if ob.get("breaker_type") == "BEARISH_BREAKER" and ob["top"] >= (curr_c * 0.995)]
+
         near_demand_ob = min(fresh_bull_obs, key=lambda ob: abs(curr_c - ob['top'])) if fresh_bull_obs else None
         near_supply_ob = min(fresh_bear_obs, key=lambda ob: abs(curr_c - ob['bottom'])) if fresh_bear_obs else None
+        near_bull_breaker = min(bull_breakers, key=lambda ob: abs(curr_c - ob['top'])) if bull_breakers else None
+        near_bear_breaker = min(bear_breakers, key=lambda ob: abs(curr_c - ob['bottom'])) if bear_breakers else None
+
+        # 3. Institutional Liquidity Inducement (Retail Double Tops/Bottoms & Liquidity Clusters):
+        # Equal Highs (EQH) / Equal Lows (EQL) within 0.15% threshold attract retail breakout/stop orders
+        eqh_clusters = []
+        eql_clusters = []
+        if len(swing_highs) >= 2:
+            for s_idx in range(len(swing_highs) - 1):
+                if abs(swing_highs[s_idx] - swing_highs[-1]) / swing_highs[-1] <= 0.0015:
+                    eqh_clusters.append(swing_highs[-1])
+        if len(swing_lows) >= 2:
+            for s_idx in range(len(swing_lows) - 1):
+                if abs(swing_lows[s_idx] - swing_lows[-1]) / swing_lows[-1] <= 0.0015:
+                    eql_clusters.append(swing_lows[-1])
+
+        # Inducement Swept: Price pierced EQH/EQL cluster and rejected (Institutional Stop Run / Counterparty Fill)
+        has_eqh_inducement_sweep = bool(eqh_clusters and float(h.iloc[-1]) >= eqh_clusters[-1] and curr_c < eqh_clusters[-1])
+        has_eql_inducement_sweep = bool(eql_clusters and float(l.iloc[-1]) <= eql_clusters[-1] and curr_c > eql_clusters[-1])
+
+        # 4. Auction Market Theory: Intraday Volume Profile POC (Point of Control) & Value Area (VAH/VAL 70%)
+        # Discretize today's volume into price bins to establish high-volume acceptance vs low-volume rejection
+        poc_price = vwap
+        vah_price = vwap * 1.01
+        val_price = vwap * 0.99
+        is_above_poc = True
+        is_below_poc = False
+        is_outside_value_area = False
+
+        if not today_df.empty and len(today_df) >= 5:
+            t_closes = today_df['Close'].values
+            t_vols = today_df['Volume'].values
+            price_min = float(today_df['Low'].min())
+            price_max = float(today_df['High'].max())
+            if price_max > price_min:
+                num_bins = min(30, max(10, len(today_df)))
+                bin_edges = np.linspace(price_min, price_max, num_bins + 1)
+                bin_volumes = np.zeros(num_bins)
+                bin_indices = np.clip(np.digitize(t_closes, bin_edges) - 1, 0, num_bins - 1)
+                for b_i, vol in zip(bin_indices, t_vols):
+                    bin_volumes[b_i] += vol
+                
+                max_vol_bin = int(np.argmax(bin_volumes))
+                poc_price = (bin_edges[max_vol_bin] + bin_edges[max_vol_bin + 1]) / 2.0
+                
+                # Value Area (70% highest volume range)
+                total_vol = float(np.sum(bin_volumes))
+                target_va_vol = total_vol * 0.70
+                sorted_bins_by_vol = np.argsort(bin_volumes)[::-1]
+                cum_va_vol = 0.0
+                va_bin_indices = []
+                for b_idx in sorted_bins_by_vol:
+                    cum_va_vol += bin_volumes[b_idx]
+                    va_bin_indices.append(b_idx)
+                    if cum_va_vol >= target_va_vol:
+                        break
+                if va_bin_indices:
+                    val_price = float(bin_edges[min(va_bin_indices)])
+                    vah_price = float(bin_edges[max(va_bin_indices) + 1])
+
+            is_above_poc = curr_c >= poc_price
+            is_below_poc = curr_c <= poc_price
+            is_outside_value_area = (curr_c > vah_price or curr_c < val_price)
 
         # Fair Value Gaps (FVG)
         fvg_bull = len(df) >= 3 and float(l.iloc[-1]) > float(h.iloc[-3])
@@ -346,6 +419,25 @@ class InstitutionalStrategyEngine:
             evaluated_signals.append({"strategy": "Demand OB Mitigation", "direction": "BUY", "weight": 23})
         elif near_supply_ob and (near_supply_ob['bottom'] * 0.988 <= curr_c <= near_supply_ob['top'] * 1.005) and curr_c < vwap:
             evaluated_signals.append({"strategy": "Supply OB Rejection", "direction": "SELL", "weight": 23})
+
+        # Strategy M2: Institutional Breaker Block Reclaim / Rejection (Trapped Order Liquidity Flip)
+        if near_bull_breaker and (near_bull_breaker['bottom'] * 0.995 <= curr_c <= near_bull_breaker['top'] * 1.015) and is_above_poc:
+            evaluated_signals.append({"strategy": "Bullish Breaker Block", "direction": "BUY", "weight": 27})
+        elif near_bear_breaker and (near_bear_breaker['bottom'] * 0.985 <= curr_c <= near_bear_breaker['top'] * 1.005) and is_below_poc:
+            evaluated_signals.append({"strategy": "Bearish Breaker Block", "direction": "SELL", "weight": 27})
+
+        # Strategy M3: Liquidity Inducement Trap & Counterparty Absorption
+        if has_eql_inducement_sweep and is_above_poc:
+            evaluated_signals.append({"strategy": "Liquidity Inducement Absorption", "direction": "BUY", "weight": 26})
+        elif has_eqh_inducement_sweep and is_below_poc:
+            evaluated_signals.append({"strategy": "Liquidity Inducement Absorption", "direction": "SELL", "weight": 26})
+
+        # Strategy M4: Auction Market Theory - Value Area Repricing Expansion
+        if is_outside_value_area and rvol >= 1.3:
+            if curr_c > vah_price and is_above_poc:
+                evaluated_signals.append({"strategy": "Value Area Expansion", "direction": "BUY", "weight": 24})
+            elif curr_c < val_price and is_below_poc:
+                evaluated_signals.append({"strategy": "Value Area Expansion", "direction": "SELL", "weight": 24})
 
         # Strategy N: Sector Alignment
         if sector_bias == "BULLISH" and curr_c > vwap:
@@ -539,6 +631,20 @@ class InstitutionalStrategyEngine:
             "active_supply_obs": fresh_bear_obs,
             "fully_mitigated_demand_obs": fully_mitigated_bull_obs,
             "fully_mitigated_supply_obs": fully_mitigated_bear_obs,
+            "bullish_breaker_obs": bull_breakers,
+            "bearish_breaker_obs": bear_breakers,
+            "nearest_bull_breaker": near_bull_breaker,
+            "nearest_bear_breaker": near_bear_breaker,
+            "eqh_inducement_clusters": eqh_clusters,
+            "eql_inducement_clusters": eql_clusters,
+            "has_eqh_inducement_sweep": has_eqh_inducement_sweep,
+            "has_eql_inducement_sweep": has_eql_inducement_sweep,
+            "volume_profile_poc": round(poc_price, 2),
+            "volume_profile_vah": round(vah_price, 2),
+            "volume_profile_val": round(val_price, 2),
+            "is_above_poc": is_above_poc,
+            "is_below_poc": is_below_poc,
+            "is_outside_value_area": is_outside_value_area,
             "swing_high_records": swing_high_records,
             "swing_low_records": swing_low_records,
             "or_high": or_high,
