@@ -1113,35 +1113,74 @@ if triggeredBearShift
     lastBearBreakoutBar   := bar_index
 
 // Direct Retest of Breakout Level / Order Block Support:
-// Price tests previous broken high (support) with a bullish confirmation candle
 bullBreakoutRetest = not na(lastBullBreakoutLevel) and (bar_index - lastBullBreakoutBar <= 5) and (low <= lastBullBreakoutLevel + (atr14 * 0.4)) and (close > open)
 bearBreakoutRetest = not na(lastBearBreakoutLevel) and (bar_index - lastBearBreakoutBar <= 5) and (high >= lastBearBreakoutLevel - (atr14 * 0.4)) and (close < open)
 
-// CHoCH / BOS Breakout Shift (Market Structure Shift)
-// When price breaks CHoCH (trend change) or BOS with a strong candle close, trigger immediate entry!
-isBullChochOrBos = triggeredBullShift and close > open
-isBearChochOrBos = triggeredBearShift and close < open
+// CHoCH / BOS Breakout Shift (Market Structure Shift) with displacement confirmation
+isBullChochOrBos = triggeredBullShift and close > open and isDisplacement
+isBearChochOrBos = triggeredBearShift and close < open and isDisplacement
 
-// Complete Trigger: Immediate CHoCH/BOS Shift OR Retest OR Sweep OR OB/FVG touch OR HTF confluence + Order Flow + Parent Index Sync
+// ═══════════════════════════════════════════════════════════════════════
+// INSTITUTIONAL ENTRY MASTER TRIGGER
+// Full Checklist: MSS + Liquidity Sweep + Order Flow + Index Sync + Score
+// Only fires when minimum 7/19 institutional confluence score is met
+// ═══════════════════════════════════════════════════════════════════════
 optionIndexFilter = isCallOption ? parentBullConfirmed : (isPutOption ? parentBearConfirmed : true)
-sniperBuyTrigger  = orderFlowBullConfirmed and optionIndexFilter and hasPremiumExpansion and (isBullChochOrBos or (bullTrend and (bullBreakoutRetest or (sweepLow and close > open) or obDemandTouch or fvgDemandRetest)) or htfMajorBuy)
-sniperSellTrigger = not isOption and orderFlowBearConfirmed and (isBearChochOrBos or (bearTrend and (bearBreakoutRetest or (sweepHigh and close < open) or obSupplyTouch or fvgSupplyRetest)) or htfMajorSell)
+
+// Institutional Buy Trigger: ALL of the below must align
+sniperBuyTrigger =
+     isHighQualityBull and          // Must meet minimum 7/19 institutional score
+     optionIndexFilter and          // Parent Index must be aligned with option direction
+     orderFlowBullConfirmed and     // Order Flow / Volume Delta / Absorption confirmed
+     isInKillzone and               // Active in institutional killzone (avoid chop)
+     (
+         isBullChochOrBos or        // MSS + Displacement
+         bullOteHit or              // OTE Golden Pocket 62%-79% retracement
+         bullIFVGRetest or          // Inverted FVG demand zone
+         bprBullRetest or           // Balanced Price Range demand zone
+         judasSwingBull or          // Judas Swing manipulation reversal
+         po3DistBull or             // Power of 3: Distribution phase confirmed
+         bullSMTDiv or              // SMT Divergence (Nifty vs BankNifty)
+         (bullTrend and (bullBreakoutRetest or (sweepLow and close > open) or obDemandTouch or fvgDemandRetest)) or
+         htfMajorBuy                // 15M HTF Sweep + Discount Zone confirmation
+     )
+
+// Institutional Sell Trigger: Only on Index/Spot charts, never direct sell on option premium charts
+sniperSellTrigger =
+     not isOption and               // Options are always "BUY" direction (CE or PE)
+     isHighQualityBear and          // Must meet minimum 7/19 institutional score
+     orderFlowBearConfirmed and     // Order Flow / Volume Delta / Absorption confirmed
+     isInKillzone and               // Active in institutional killzone
+     (
+         isBearChochOrBos or
+         bearOteHit or
+         bearIFVGRetest or
+         bprBearRetest or
+         judasSwingBear or
+         po3DistBear or
+         bearSMTDiv or
+         (bearTrend and (bearBreakoutRetest or (sweepHigh and close < open) or obSupplyTouch or fvgSupplyRetest)) or
+         htfMajorSell
+     )
 
 // Direct Execution & Retest Management
 if enableSniperEngine and not inTrade and (bar_index - lastExitBar >= cooldownBarsInput)
-    // Direct Entry on Support / Breakout Retest or Displacement Shift
+    // ── LONG ENTRY ──
     if sniperBuyTrigger and not pendingOrder
-        // Structural low: Cushion SL right below the support candle / swing low
+        // Structural low: Cushion SL right below the most recent swing low / SSL sweep origin
         float structLow = not na(internalLow.currentLevel) ? internalLow.currentLevel : low[1]
         if not na(lastBullBreakoutLevel) and lastBullBreakoutLevel < close
             structLow := math.min(structLow, math.min(low, low[1]))
         if sweepLow and not na(swingLow.currentLevel) and swingLow.currentLevel < structLow
             structLow := swingLow.currentLevel
-        // Add breathing room buffer (0.35 ATR on options) to prevent 1-minute wick hunting
+        // OTE-based SL: Place SL at 100% retracement (below OTE swing low origin)
+        if bullOteHit and not na(oteSwingLow)
+            structLow := math.min(structLow, oteSwingLow)
+        // Breathing room: 0.40 ATR on options to prevent 1-min wick hunting
         slBuffer = isOption ? (atr14 * 0.40) : (atr14 * 0.15)
-        calcSL   = math.min(structLow, low) - slBuffer
+        calcSL    = math.min(structLow, low) - slBuffer
         calcEntry = close
-        riskDist = calcEntry - calcSL
+        riskDist  = calcEntry - calcSL
 
         if riskDist >= (atr14 * minRiskAtr * 0.5)
             inTrade         := true
@@ -1149,30 +1188,35 @@ if enableSniperEngine and not inTrade and (bar_index - lastExitBar >= cooldownBa
             entryBarIdx     := bar_index
             entryPrice      := calcEntry
             stopLossPrice   := calcSL
-            targetHighPrice = (targetOppositeSwing and not na(swingHigh.currentLevel) and swingHigh.currentLevel > entryPrice + riskDist * 2.0) ? math.min(swingHigh.currentLevel, entryPrice + (riskDist * 4.0)) : entryPrice + (riskDist * sniperRRRatio)
+            // DOL Target: Use Draw on Liquidity pool (EQH / Previous swing high) as TP if available
+            dolTP = hasBullDOL and not na(dolBullTarget) and dolBullTarget > entryPrice + riskDist * 1.5 ? math.min(dolBullTarget, entryPrice + riskDist * 6.0) : na
+            targetHighPrice = not na(dolTP) ? dolTP : ((targetOppositeSwing and not na(swingHigh.currentLevel) and swingHigh.currentLevel > entryPrice + riskDist * 2.0) ? math.min(swingHigh.currentLevel, entryPrice + (riskDist * 4.0)) : entryPrice + (riskDist * sniperRRRatio))
             takeProfitPrice := targetHighPrice
 
-            activeTPBox := box.new(left=entryBarIdx, top=takeProfitPrice, right=entryBarIdx + 1, bottom=entryPrice, 
+            // Label with score and primary reason
+            entryReason = bullOteHit ? "OTE" : (bullSMTDiv ? "SMT" : (bullIFVGRetest ? "IFVG" : (bprBullRetest ? "BPR" : (judasSwingBull ? "JUDAS" : (po3DistBull ? "PO3" : "MSS")))))
+            activeTPBox := box.new(left=entryBarIdx, top=takeProfitPrice, right=entryBarIdx + 1, bottom=entryPrice,
                                    bgcolor=colTPBox, border_color=color.teal, border_style=line.style_solid)
-            activeSLBox := box.new(left=entryBarIdx, top=entryPrice, right=entryBarIdx + 1, bottom=stopLossPrice, 
+            activeSLBox := box.new(left=entryBarIdx, top=entryPrice, right=entryBarIdx + 1, bottom=stopLossPrice,
                                    bgcolor=colSLBox, border_color=color.maroon, border_style=line.style_solid)
             buyLabelText = isIndex ? "BUY CALL (CE) " : (isCallOption ? "BUY CALL " : (isPutOption ? "BUY PUT " : "BUY "))
-            activeLbl   := label.new(entryBarIdx + 1, entryPrice, 
-                                     buyLabelText + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
+            activeLbl   := label.new(entryBarIdx + 1, entryPrice,
+                                     buyLabelText + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##") + " | " + entryReason + " [" + str.tostring(institutBullScore) + "/19]",
                                      style=label.style_label_left, color=color(na), textcolor=color.teal, size=size.tiny)
 
+    // ── SHORT ENTRY (Index / Spot charts only) ──
     else if sniperSellTrigger and not pendingOrder
-        // Structural high: Cushion SL right above the resistance candle / swing high
         float structHigh = not na(internalHigh.currentLevel) ? internalHigh.currentLevel : high[1]
         if not na(lastBearBreakoutLevel) and lastBearBreakoutLevel > close
             structHigh := math.max(structHigh, math.max(high, high[1]))
         if sweepHigh and not na(swingHigh.currentLevel) and swingHigh.currentLevel > structHigh
             structHigh := swingHigh.currentLevel
-        // Add breathing room buffer (0.35 ATR on options) to prevent 1-minute wick hunting
+        if bearOteHit and not na(oteSwingHigh)
+            structHigh := math.max(structHigh, oteSwingHigh)
         slBuffer = isOption ? (atr14 * 0.40) : (atr14 * 0.15)
-        calcSL   = math.max(structHigh, high) + slBuffer
+        calcSL    = math.max(structHigh, high) + slBuffer
         calcEntry = close
-        riskDist = calcSL - calcEntry
+        riskDist  = calcSL - calcEntry
 
         if riskDist >= (atr14 * minRiskAtr * 0.5)
             inTrade         := true
@@ -1180,16 +1224,18 @@ if enableSniperEngine and not inTrade and (bar_index - lastExitBar >= cooldownBa
             entryBarIdx     := bar_index
             entryPrice      := calcEntry
             stopLossPrice   := calcSL
-            targetLowPrice  = (targetOppositeSwing and not na(swingLow.currentLevel) and swingLow.currentLevel < entryPrice - riskDist * 2.0 and swingLow.currentLevel > 0) ? math.max(swingLow.currentLevel, entryPrice - (riskDist * 4.0)) : entryPrice - (riskDist * sniperRRRatio)
+            dolTP = hasBearDOL and not na(dolBearTarget) and dolBearTarget < entryPrice - riskDist * 1.5 ? math.max(dolBearTarget, entryPrice - riskDist * 6.0) : na
+            targetLowPrice  = not na(dolTP) ? dolTP : ((targetOppositeSwing and not na(swingLow.currentLevel) and swingLow.currentLevel < entryPrice - riskDist * 2.0 and swingLow.currentLevel > 0) ? math.max(swingLow.currentLevel, entryPrice - (riskDist * 4.0)) : entryPrice - (riskDist * sniperRRRatio))
             takeProfitPrice := targetLowPrice
 
-            activeTPBox := box.new(left=entryBarIdx, top=entryPrice, right=entryBarIdx + 1, bottom=takeProfitPrice, 
+            entryReason = bearOteHit ? "OTE" : (bearSMTDiv ? "SMT" : (bearIFVGRetest ? "IFVG" : (bprBearRetest ? "BPR" : (judasSwingBear ? "JUDAS" : (po3DistBear ? "PO3" : "MSS")))))
+            activeTPBox := box.new(left=entryBarIdx, top=entryPrice, right=entryBarIdx + 1, bottom=takeProfitPrice,
                                    bgcolor=colTPBox, border_color=color.teal, border_style=line.style_solid)
-            activeSLBox := box.new(left=entryBarIdx, top=stopLossPrice, right=entryBarIdx + 1, bottom=entryPrice, 
+            activeSLBox := box.new(left=entryBarIdx, top=stopLossPrice, right=entryBarIdx + 1, bottom=entryPrice,
                                    bgcolor=colSLBox, border_color=color.maroon, border_style=line.style_solid)
             sellLabelText = isIndex ? "BUY PUT (PE) " : "SELL "
-            activeLbl   := label.new(entryBarIdx + 1, entryPrice, 
-                                     sellLabelText + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##"), 
+            activeLbl   := label.new(entryBarIdx + 1, entryPrice,
+                                     sellLabelText + str.tostring(entryPrice, "#.##") + " | SL: " + str.tostring(stopLossPrice, "#.##") + " | " + entryReason + " [" + str.tostring(institutBearScore) + "/19]",
                                      style=label.style_label_left, color=color(na), textcolor=color.maroon, size=size.tiny)
 
 // Active Trade Progression (With Break-Even & Full Swing Target Delivery)
@@ -1244,49 +1290,64 @@ if inTrade
                 totalLosses += 1
                 label.new(bar_index, high, "SL HIT", style=label.style_label_down, color=color(na), textcolor=color.red, size=size.small)
 
-// Top-Right Scoreboard Table
-var table dash = table.new(position.top_right, 2, 8, bgcolor=color.new(#131722, 10), border_color=color.new(#2a2e39, 40), border_width=1)
+// Top-Right Scoreboard Table — Institutional HUD (10 rows)
+var table dash = table.new(position.top_right, 2, 10, bgcolor=color.new(#131722, 10), border_color=color.new(#2a2e39, 40), border_width=1)
 
 if showSniperScoreboard and barstate.islast
     totalTrades = totalWins + totalLosses
     winRate     = totalTrades > 0 ? (totalWins / totalTrades) * 100.0 : 0.0
 
-    table.cell(dash, 0, 0, "SMC SNIPER + ORDER FLOW", bgcolor=color.new(#1e222d, 0), text_color=color.white, text_size=size.small)
+    table.cell(dash, 0, 0, "INSTITUTIONAL SNIPER ENGINE", bgcolor=color.new(#1e222d, 0), text_color=color.white, text_size=size.small)
     table.merge_cells(dash, 0, 0, 1, 0)
 
     table.cell(dash, 0, 1, "Win Rate", text_color=color.silver, text_size=size.small)
-    table.cell(dash, 1, 1, str.tostring(totalWins) + "W - " + str.tostring(totalLosses) + "L (" + str.tostring(winRate, "#.#") + "%)", 
-               bgcolor=winRate >= 50 ? color.new(color.teal, 30) : color.new(color.maroon, 30), text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 1, str.tostring(totalWins) + "W - " + str.tostring(totalLosses) + "L (" + str.tostring(winRate, "#.#") + "%)",
+               bgcolor=winRate >= 55 ? color.new(color.teal, 30) : color.new(color.maroon, 30), text_color=color.white, text_size=size.small)
 
     table.cell(dash, 0, 2, "Action State", text_color=color.silver, text_size=size.small)
-    statusText = inTrade ? (tradeDir == 1 ? "LONG ACTIVE" : "SHORT ACTIVE") : (pendingOrder ? "WAITING RETEST FILL" : "SCANNING...")
+    statusText = inTrade ? (tradeDir == 1 ? "LONG ACTIVE" : "SHORT ACTIVE") : (pendingOrder ? "WAITING OTE FILL" : "SCANNING...")
     table.cell(dash, 1, 2, statusText, text_color=inTrade ? color.lime : (pendingOrder ? color.orange : color.yellow), text_size=size.small)
 
     table.cell(dash, 0, 3, "Entry Price", text_color=color.silver, text_size=size.small)
     table.cell(dash, 1, 3, inTrade ? str.tostring(entryPrice, "#.##") : (pendingOrder ? str.tostring(pendingEntry, "#.##") : "--"), text_color=color.white, text_size=size.small)
 
-    table.cell(dash, 0, 4, "Target (TP)", text_color=color.silver, text_size=size.small)
+    table.cell(dash, 0, 4, "DOL Target (TP)", text_color=color.silver, text_size=size.small)
     table.cell(dash, 1, 4, inTrade ? str.tostring(takeProfitPrice, "#.##") : (pendingOrder ? str.tostring(pendingTP, "#.##") : "--"), text_color=color.teal, text_size=size.small)
 
-    table.cell(dash, 0, 5, "Tight SL", text_color=color.silver, text_size=size.small)
+    table.cell(dash, 0, 5, "Structural SL", text_color=color.silver, text_size=size.small)
     table.cell(dash, 1, 5, inTrade ? str.tostring(stopLossPrice, "#.##") : (pendingOrder ? str.tostring(pendingSL, "#.##") : "--"), text_color=color.maroon, text_size=size.small)
 
-    // Order Flow / Delta HUD Indicator
-    string ofStatus = bullishAbsorption ? "BULL ABSORPTION" : (bearishAbsorption ? "BEAR ABSORPTION" : (barDelta > 0 ? "BUY DELTA (+)" : "SELL DELTA (-)"))
-    color ofColor   = (bullishAbsorption or barDelta > 0) ? color.teal : color.maroon
-    table.cell(dash, 0, 6, "Order Flow / CVD", text_color=color.silver, text_size=size.small)
-    table.cell(dash, 1, 6, ofStatus, bgcolor=color.new(ofColor, 50), text_color=color.white, text_size=size.small)
+    // Institutional Score HUD
+    currentBullScore = institutBullScore
+    currentBearScore = institutBearScore
+    activeScore = tradeDir == 1 ? currentBullScore : currentBearScore
+    scoreColor  = activeScore >= 10 ? color.lime : (activeScore >= 7 ? color.teal : color.orange)
+    table.cell(dash, 0, 6, "Instit. Score", text_color=color.silver, text_size=size.small)
+    table.cell(dash, 1, 6, (tradeDir != 0 ? str.tostring(activeScore) : (currentBullScore > currentBearScore ? "BULL " + str.tostring(currentBullScore) : "BEAR " + str.tostring(currentBearScore))) + " / 19",
+               bgcolor=color.new(scoreColor, 50), text_color=color.white, text_size=size.small)
+
+    // Order Flow / Delta HUD
+    string ofStatus = bullishAbsorption ? "BULL ABSORB" : (bearishAbsorption ? "BEAR ABSORB" : (bullCvdDivergence ? "CVD BULL DIV" : (bearCvdDivergence ? "CVD BEAR DIV" : (barDelta > 0 ? "BUY Δ (+)" : "SELL Δ (-)"))))
+    color ofColor   = (bullishAbsorption or bullCvdDivergence or barDelta > 0) ? color.teal : color.maroon
+    table.cell(dash, 0, 7, "Order Flow / CVD", text_color=color.silver, text_size=size.small)
+    table.cell(dash, 1, 7, ofStatus, bgcolor=color.new(ofColor, 50), text_color=color.white, text_size=size.small)
+
+    // PO3 Phase HUD
+    po3PhaseText = po3Phase == 0 ? "SCAN" : (po3Phase == 1 ? "ACCUMULATION" : (po3Phase == 2 ? "MANIPULATION" : "DISTRIBUTION"))
+    po3PhaseCol  = po3Phase == 1 ? color.gray : (po3Phase == 2 ? color.orange : (po3Phase == 3 ? color.lime : color.gray))
+    table.cell(dash, 0, 8, "PO3 Phase", text_color=color.silver, text_size=size.small)
+    table.cell(dash, 1, 8, po3PhaseText, bgcolor=color.new(po3PhaseCol, 50), text_color=color.white, text_size=size.small)
 
     // Parent Index Sync HUD Row (for Options Charts)
     if isOption and useIndexSync
         string idxBiasText = indexIsBullish ? "BULLISH (" + parentIndexTicker + ")" : (indexIsBearish ? "BEARISH (" + parentIndexTicker + ")" : "NEUTRAL (" + parentIndexTicker + ")")
         color idxBiasCol   = indexIsBullish ? color.teal : (indexIsBearish ? color.maroon : color.yellow)
         string optPermit   = (isCallOption and parentBullConfirmed) or (isPutOption and parentBearConfirmed) ? " [ALIGNED]" : " [BLOCKED]"
-        table.cell(dash, 0, 7, "Index Sync Status", text_color=color.silver, text_size=size.small)
-        table.cell(dash, 1, 7, idxBiasText + optPermit, bgcolor=color.new(idxBiasCol, 50), text_color=color.white, text_size=size.small)
+        table.cell(dash, 0, 9, "Index Sync", text_color=color.silver, text_size=size.small)
+        table.cell(dash, 1, 9, idxBiasText + optPermit, bgcolor=color.new(idxBiasCol, 50), text_color=color.white, text_size=size.small)
     else
-        table.cell(dash, 0, 7, "Chart Mode", text_color=color.silver, text_size=size.small)
-        table.cell(dash, 1, 7, isIndex ? "SPOT INDEX" : "EQUITY / CASH", bgcolor=color.new(color.blue, 50), text_color=color.white, text_size=size.small)
+        table.cell(dash, 0, 9, "Chart Mode", text_color=color.silver, text_size=size.small)
+        table.cell(dash, 1, 9, isIndex ? "SPOT INDEX" : "EQUITY / CASH", bgcolor=color.new(color.blue, 50), text_color=color.white, text_size=size.small)
 
 //---------------------------------------------------------------------------------------------------------------------}
 // ALERTS
