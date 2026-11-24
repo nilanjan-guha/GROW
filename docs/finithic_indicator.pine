@@ -729,10 +729,12 @@ colSLBox        = color.new(#f23645, 75)
 colPendingLong  = color.new(#00bcd4, 85)
 colPendingShort = color.new(#e91e63, 85)
 
-// Institutional Session Killzones (IST / Market Active Hours: 09:15-11:30 and 13:15-15:15)
-// Helps avoid midday (11:30-13:15) sideways chop where fakeouts and theta decay occur
+// Institutional Session Killzones
+// For Equity/Indices (09:15-11:45 & 13:15-15:15 IST)
+// For MCX Commodities (GOLD, SILVER, CRUDEOIL, NATURALGAS - trades 09:00 to 23:30 / 23:55 IST!)
+isMcxAsset    = syminfo.prefix == "MCX" or str.contains(tickerUpper, "GOLD") or str.contains(tickerUpper, "SILVER") or str.contains(tickerUpper, "CRUDE") or str.contains(tickerUpper, "NATURALGAS")
 barHourMinute = hour * 100 + minute
-isInKillzone  = not useKillzones or ((barHourMinute >= 915 and barHourMinute <= 1145) or (barHourMinute >= 1315 and barHourMinute <= 1515))
+isInKillzone  = not useKillzones or (isMcxAsset ? (barHourMinute >= 900 and barHourMinute <= 2330) : ((barHourMinute >= 915 and barHourMinute <= 1145) or (barHourMinute >= 1315 and barHourMinute <= 1515)))
 
 // Estimated Price-Action Volume Delta & Cumulative Delta (Proxy)
 // NOTE: Uses bar price location and close-to-open displacement as an estimated volume delta proxy.
@@ -894,8 +896,12 @@ minOptionMomentumAtr = input.float(1.0, 'Minimum Premium Momentum/Expansion (ATR
 
 // Resolve the parent index symbol - Handles Dhan platform format (e.g. INDEX:NIFTY or NIFTY) and TradingView format (NSE:NIFTY)
 dhanPrefix          = (syminfo.prefix == "INDEX" or str.contains(syminfo.prefix, "IDX")) ? "INDEX:" : "NSE:"
-detectedIndexTicker = str.contains(tickerUpper, "BANKNIFTY") ? (dhanPrefix + "BANKNIFTY") : str.contains(tickerUpper, "FINNIFTY") ? (dhanPrefix + "FINNIFTY") : str.contains(tickerUpper, "MIDCPNIFTY") ? (dhanPrefix + "MIDCPNIFTY") : str.contains(tickerUpper, "SENSEX") ? "BSE:SENSEX" : (dhanPrefix + "NIFTY")
+detectedIndexTicker = isMcxAsset ? (syminfo.prefix + ":" + syminfo.root + "1!") : (str.contains(tickerUpper, "BANKNIFTY") ? (dhanPrefix + "BANKNIFTY") : str.contains(tickerUpper, "FINNIFTY") ? (dhanPrefix + "FINNIFTY") : str.contains(tickerUpper, "MIDCPNIFTY") ? (dhanPrefix + "MIDCPNIFTY") : str.contains(tickerUpper, "SENSEX") ? "BSE:SENSEX" : (dhanPrefix + "NIFTY"))
 parentIndexTicker   = (not autoIndexSymbol and manualIndexSymbol != "") ? manualIndexSymbol : detectedIndexTicker
+
+// Automatic Index Sync Bypass for Commodities or Standalone Assets:
+// If on MCX or standalone asset, do not block option if an NSE Index is irrelevant!
+indexSyncActive = useIndexSync and not isMcxAsset
 
 // Fetch Parent Index Price Action & Market Structure (Only active when viewing an Option Chart)
 // Uses current bar security to guarantee zero delay between index moves and option triggers
@@ -951,10 +957,10 @@ indexIsBearish = (idxBearTrend or idxBearDisplacement or idxBearBreak or recentI
 
 // Parent Index Permission Rules for Options:
 // If on CALL option chart: Parent Index MUST be Bullish. ABSOLUTELY FORBIDDEN if Index is Bearish!
-parentBullConfirmed = not (isCallOption and useIndexSync and strictIndexAlignment) or (indexIsBullish and not indexIsBearish)
+parentBullConfirmed = not (isCallOption and indexSyncActive and strictIndexAlignment) or (indexIsBullish and not indexIsBearish)
 
 // If on PUT option chart: Parent Index MUST be Bearish. ABSOLUTELY FORBIDDEN if Index is Bullish!
-parentBearConfirmed = not (isPutOption and useIndexSync and strictIndexAlignment) or (indexIsBearish and not indexIsBullish)
+parentBearConfirmed = not (isPutOption and indexSyncActive and strictIndexAlignment) or (indexIsBearish and not indexIsBullish)
 
 // Premium Movement & Liquidity Filter:
 // Prevents taking signals when premium is dead/flat-lining or experiencing theta decay with no volume

@@ -937,6 +937,96 @@ class TestIntradayScreenerCore(unittest.TestCase):
         self.assertEqual(sig["outcome"], "WIN_PARTIAL")
         self.assertEqual(sig["final_pnl"], 5.0)
 
+    def test_first_candle_after_signal_not_skipped_when_candle_timestamp_is_start_time(self):
+        # Scenario:
+        # Signal candle completed at 09:20:00.
+        # Signal generation logged with timestamp = 09:20:03.
+        # Signal candle close time recorded = 09:20:00.
+        # The NEXT executable 5m candle starts at 09:20:00 and completes at 09:25:00.
+        # In the market feed, this candle's index timestamp is 09:20:00 (which is < 09:20:03).
+        # Outcome evaluator MUST NOT skip this first candle!
+        # Signal candle completed 30 minutes ago, close time was base_epoch
+        one_hour_ago = time.time() - 1800
+        base_epoch = one_hour_ago
+        sig_id = storage.log_signal({
+            "symbol": "TEST_FIRST_BAR.NS",
+            "direction": "BUY",
+            "strategy": "SMC_PULLBACK",
+            "entry_price": 1000.0,
+            "stop_loss": 990.0,
+            "target_1": 1010.0,
+            "target_2": 1025.0,
+            "signal_candle_start": base_epoch - 300,
+            "signal_candle_close_time": base_epoch,
+            "signal_generated_at": base_epoch + 3.0,
+            "quantity": 500
+        })
+
+        conn = storage.get_db_connection()
+        c = conn.cursor()
+        # Ensure timestamp is set to base_epoch + 3.0 and last_candle_time is 0
+        c.execute("UPDATE historical_signals SET timestamp = ?, last_candle_time = 0 WHERE id = ?", (base_epoch + 3.0, sig_id))
+        conn.commit()
+        conn.close()
+
+        # Next candle starting at base_epoch (which is < base_epoch + 3.0, but >= signal_candle_close_time)
+        c_time = pd.to_datetime(base_epoch, unit='s', utc=True).tz_convert('Asia/Kolkata')
+        df_first_candle = pd.DataFrame({
+            "Open": [1000.0],
+            "High": [1015.0],
+            "Low": [998.0],
+            "Close": [1012.0],
+            "Volume": [30000]
+        }, index=pd.DatetimeIndex([c_time]))
+
+        storage.evaluate_open_outcomes({"TEST_FIRST_BAR.NS": df_first_candle})
+
+        conn = storage.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT outcome, tp1_hit, last_candle_time FROM historical_signals WHERE id = ?", (sig_id,))
+        sig = cursor.fetchone()
+        conn.close()
+
+        # The first candle MUST have been processed!
+        self.assertEqual(sig["tp1_hit"], 1)
+        self.assertEqual(sig["last_candle_time"], base_epoch)
+
+    def test_quantity_and_instrument_type_cost_scaling(self):
+        # Verify that different quantities scale brokerage and statutory fees properly
+        sig_100_id = storage.log_signal({
+            "symbol": "COST_100.NS", "direction": "BUY", "strategy": "TEST_STRAT",
+            "entry_price": 1000.0, "stop_loss": 990.0, "target_1": 1020.0, "quantity": 100
+        })
+        sig_1000_id = storage.log_signal({
+            "symbol": "COST_1000.NS", "direction": "BUY", "strategy": "TEST_STRAT",
+            "entry_price": 1000.0, "stop_loss": 990.0, "target_1": 1020.0, "quantity": 1000
+        })
+
+        conn = storage.get_db_connection()
+        c = conn.cursor()
+        one_hour_ago = time.time() - 3600
+        c.execute("UPDATE historical_signals SET timestamp = ?, last_candle_time = 0 WHERE id IN (?, ?)", (one_hour_ago, sig_100_id, sig_1000_id))
+        conn.commit()
+        conn.close()
+
+        c_time = pd.to_datetime(one_hour_ago + 300, unit='s', utc=True).tz_convert('Asia/Kolkata')
+        df_win = pd.DataFrame({
+            "Open": [1000.0], "High": [1025.0], "Low": [1001.0], "Close": [1022.0], "Volume": [20000]
+        }, index=pd.DatetimeIndex([c_time]))
+
+        storage.evaluate_open_outcomes({"COST_100.NS": df_win, "COST_1000.NS": df_win})
+
+        conn = storage.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, brokerage_costs, net_pnl, quantity FROM historical_signals WHERE id IN (?, ?)", (sig_100_id, sig_1000_id))
+        rows = {r["id"]: dict(r) for r in cursor.fetchall()}
+        conn.close()
+
+        self.assertIn(sig_100_id, rows)
+        self.assertIn(sig_1000_id, rows)
+        self.assertEqual(rows[sig_100_id]["quantity"], 100)
+        self.assertEqual(rows[sig_1000_id]["quantity"], 1000)
+
     def test_nifty_benchmark_fail_closed_gate(self):
         # Verify that compute_and_update_ranked_opportunities fails-closed when NIFTY feed is corrupted
         import groww_terminal_app as gta

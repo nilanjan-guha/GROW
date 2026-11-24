@@ -13,7 +13,7 @@ class OpportunityPotentialEngine:
     
     Key Features:
     1. Dual Volatility Tracking:
-       - intraday_atr_15m: 15-minute ATR for micro-structure and stop sizing
+       - intraday_atr_5m: 5-minute ATR for micro-structure and stop sizing
        - daily_atr_14d: True multi-day ATR for daily range exhaustion
     2. Strict >= 0.70% Potential Gate:
        - Uses raw unrounded potential (raw_room_to_tp1_pct >= 0.70)
