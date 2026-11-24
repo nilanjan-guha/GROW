@@ -1272,8 +1272,9 @@ def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
         v_series = eval_df_sym['Volume']
         tp_series = (h_series + l_series + c_series) / 3.0
         candle_turnover = tp_series * v_series
-        avg_turnover_10 = float(candle_turnover.iloc[-10:].mean()) if len(candle_turnover) >= 10 else float(candle_turnover.mean())
-        recent_vol_10 = float(v_series.iloc[-10:].mean()) if len(v_series) >= 10 else float(v_series.mean())
+        # Use .values.mean() to compute scalar mean directly without pandas single-element Series deprecation warnings:
+        avg_turnover_10 = float(candle_turnover.iloc[-10:].values.mean()) if len(candle_turnover) >= 10 else float(candle_turnover.values.mean())
+        recent_vol_10 = float(v_series.iloc[-10:].values.mean()) if len(v_series) >= 10 else float(v_series.values.mean())
         if recent_vol_10 < 5000 or avg_turnover_10 < 1500000:
             continue
 

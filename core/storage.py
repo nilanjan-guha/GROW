@@ -665,11 +665,17 @@ def evaluate_open_outcomes(data_map, force_eod=False, evaluation_time=None):
             cost_calc_fn = make_cost_calc(entry, qty, inst_type)
 
             # 0. Intraday Session Close Auto-Squareoff:
-            # Applies when signal is from an older calendar day or when called with force_eod=True
+            # Applies when explicitly forced (force_eod=True) or when live market has crossed 15:30 IST / session closed
+            # and a signal from an earlier session is still pending. Note: in off-market hours (e.g. night/weekend testing or replay),
+            # intraday replay/candle evaluation evaluates the test/session candles first unless force_eod is explicitly requested.
             try:
                 sig_dt = datetime.datetime.fromtimestamp(sig_time, pytz.timezone('Asia/Kolkata'))
-                is_stale_day = (sig_dt.date() < ist_now.date())
-                should_eod_squareoff = is_stale_day or (force_eod and not is_mkt_open)
+                current_eval_dt = datetime.datetime.fromtimestamp(now, pytz.timezone('Asia/Kolkata'))
+                # An intraday trade is only squareoff-eligible if the signal day is over relative to the evaluation clock,
+                # specifically when evaluation time has reached after-market close (15:30 IST) of a subsequent day,
+                # or if force_eod is explicitly passed.
+                is_stale_session = (sig_dt.date() < current_eval_dt.date() and (current_eval_dt.hour > 15 or (current_eval_dt.hour == 15 and current_eval_dt.minute >= 30)))
+                should_eod_squareoff = force_eod or is_stale_session
             except Exception:
                 should_eod_squareoff = False
 
