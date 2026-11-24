@@ -348,10 +348,13 @@ header {
 }
 
 @keyframes scanningPulse {
-    0%, 100% {
+
+    0%,
+    100% {
         box-shadow: 0 0 10px rgba(0, 240, 255, 0.4), inset 0 0 6px rgba(0, 240, 255, 0.2);
         border-color: rgba(0, 240, 255, 0.7);
     }
+
     50% {
         box-shadow: 0 0 24px rgba(0, 240, 255, 0.9), inset 0 0 14px rgba(0, 240, 255, 0.45);
         border-color: #00f0ff;
@@ -374,10 +377,13 @@ header {
 }
 
 @keyframes newsHotPinkGlow {
-    0%, 100% {
+
+    0%,
+    100% {
         box-shadow: 0 0 12px rgba(255, 0, 127, 0.5), inset 0 0 8px rgba(255, 0, 127, 0.2);
         border-color: rgba(255, 0, 127, 0.7);
     }
+
     50% {
         box-shadow: 0 0 26px rgba(255, 0, 127, 0.95), inset 0 0 16px rgba(255, 0, 127, 0.5);
         border-color: #ff007f;
@@ -385,10 +391,13 @@ header {
 }
 
 @keyframes newsAmberGlow {
-    0%, 100% {
+
+    0%,
+    100% {
         box-shadow: 0 0 10px rgba(255, 183, 3, 0.4), inset 0 0 6px rgba(255, 183, 3, 0.15);
         border-color: rgba(255, 183, 3, 0.6);
     }
+
     50% {
         box-shadow: 0 0 22px rgba(255, 183, 3, 0.85), inset 0 0 12px rgba(255, 183, 3, 0.35);
         border-color: #ffb703;
@@ -409,8 +418,13 @@ header {
 }
 
 @keyframes scanningTextPulse {
-    from { opacity: 0.7; }
-    to { opacity: 1; }
+    from {
+        opacity: 0.7;
+    }
+
+    to {
+        opacity: 1;
+    }
 }
 
 .sector-card.scanning .scanning-badge {
@@ -467,8 +481,18 @@ header {
 }
 
 @keyframes radarPulse {
-    0%, 100% { opacity: 0.85; border-color: rgba(0, 240, 255, 0.6); }
-    50% { opacity: 1; border-color: #00f0ff; box-shadow: 0 0 8px rgba(0, 240, 255, 0.6); }
+
+    0%,
+    100% {
+        opacity: 0.85;
+        border-color: rgba(0, 240, 255, 0.6);
+    }
+
+    50% {
+        opacity: 1;
+        border-color: #00f0ff;
+        box-shadow: 0 0 8px rgba(0, 240, 255, 0.6);
+    }
 }
 
 .sector-card.selected .active-radar-badge {

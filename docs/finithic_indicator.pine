@@ -1302,7 +1302,7 @@ var int tradesToday = 0
 if isNewSession
     tradesToday := 0
 
-canTradeToday = tradesToday < 3
+canTradeToday = tradesToday < 6
 
 if enableSniperEngine and not inTrade and (bar_index - lastExitBar >= math.max(12, cooldownBarsInput)) and canTradeToday
     // ── LONG ENTRY ──
