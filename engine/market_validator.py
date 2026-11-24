@@ -148,6 +148,45 @@ class MarketValidator:
             except Exception as e:
                 return {"is_valid": False, "status": "INVALID_INDEX", "reason": f"Cannot parse datetime index: {e}"}
 
+        # Check unique chronological ordering
+        if df_eval.index.has_duplicates:
+            return {"is_valid": False, "status": "DUPLICATE_TIMESTAMPS", "reason": "Duplicate candle timestamps detected in live feed"}
+
+        if not df_eval.index.is_monotonic_increasing:
+            return {"is_valid": False, "status": "NON_MONOTONIC_INDEX", "reason": "Live candles not strictly chronological"}
+
+        # Validate required columns
+        req_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+        if not all(col in df_eval.columns for col in req_cols):
+            return {"is_valid": False, "status": "MISSING_COLUMNS", "reason": f"Required OHLCV columns missing in live feed: {[c for c in req_cols if c not in df_eval.columns]}"}
+
+        c_arr = df_eval['Close'].values
+        h_arr = df_eval['High'].values
+        l_arr = df_eval['Low'].values
+        o_arr = df_eval['Open'].values
+        v_arr = df_eval['Volume'].values
+
+        import numpy as np
+        # Finite number check (no NaN, no Inf)
+        for name, arr in [('Open', o_arr), ('High', h_arr), ('Low', l_arr), ('Close', c_arr), ('Volume', v_arr)]:
+            if not np.all(np.isfinite(arr)):
+                return {"is_valid": False, "status": "NON_FINITE_DATA", "reason": f"NaN or Inf values detected in live {name} array"}
+
+        # Price values must be strictly positive
+        if np.any(c_arr <= 0) or np.any(h_arr <= 0) or np.any(l_arr <= 0) or np.any(o_arr <= 0):
+            return {"is_valid": False, "status": "INVALID_PRICES", "reason": "Non-positive price values detected in live feed"}
+
+        # Volume must be non-negative
+        if np.any(v_arr < 0):
+            return {"is_valid": False, "status": "NEGATIVE_VOLUME", "reason": "Negative volume values detected in live feed"}
+
+        # Strict OHLC logical relationships
+        if np.any(h_arr < l_arr) or np.any(h_arr < o_arr) or np.any(h_arr < c_arr):
+            return {"is_valid": False, "status": "CORRUPT_OHLC_HIGH", "reason": "High price violated boundary in live feed (High < Low, High < Open, or High < Close)"}
+
+        if np.any(l_arr > o_arr) or np.any(l_arr > c_arr):
+            return {"is_valid": False, "status": "CORRUPT_OHLC_LOW", "reason": "Low price violated boundary in live feed (Low > Open or Low > Close)"}
+
         # Normalize naive datetime index to Asia/Kolkata
         if df_eval.index.tz is None:
             df_eval.index = df_eval.index.tz_localize(ist)

@@ -832,12 +832,6 @@ sweepLow  = sweepIntLow or sweepSwingLow
 bullTrend = not trendFilterEma or (close > ema200 and ema50 >= ema200)
 bearTrend = not trendFilterEma or (close < ema200 and ema50 <= ema200)
 
-// Absolute Macro Trend Gate:
-// On Index & Non-Option charts: Absolutely NO BUY trades allowed if price is trading below EMA 200!
-// On Index & Non-Option charts: Absolutely NO SELL trades allowed if price is trading above EMA 200!
-macroTrendAllowBuy  = isOption ? true : (not trendFilterEma or close >= ema200)
-macroTrendAllowSell = isOption ? false : (not trendFilterEma or close <= ema200)
-
 // Multi-Entry Opportunities:
 // 1. Demand/Supply Order Block Pullback Touch
 obDemandTouch = not na(internalLow.currentLevel) and (low <= internalLow.currentLevel + (atr14 * 0.6)) and (close > open)
@@ -865,6 +859,12 @@ isOption     = syminfo.type == 'option' or str.contains(tickerUpper, "CALL") or 
 isCallOption = isOption and (str.endswith(tickerUpper, "CE") or str.contains(tickerUpper, "CALL"))
 isPutOption  = isOption and (str.endswith(tickerUpper, "PE") or str.contains(tickerUpper, "PUT"))
 isIndex      = str.contains(tickerUpper, "NIFTY") or str.contains(tickerUpper, "BANKNIFTY") or str.contains(tickerUpper, "SENSEX") or str.contains(tickerUpper, "FINNIFTY") or str.contains(tickerUpper, "MIDCPNIFTY") or syminfo.type == "index"
+
+// Absolute Macro Trend Gate:
+// On Index & Non-Option charts: Absolutely NO BUY trades allowed if price is trading below EMA 200!
+// On Index & Non-Option charts: Absolutely NO SELL trades allowed if price is trading above EMA 200!
+macroTrendAllowBuy  = isOption ? true : (not trendFilterEma or close >= ema200)
+macroTrendAllowSell = isOption ? false : (not trendFilterEma or close <= ema200)
 
 // Multi-Chart Parent Index & Option Synchronization Engine
 useIndexSync         = input.bool(true, 'Enable Index & Option Chart Synchronization', group = INDEX_SYNC_GROUP)
