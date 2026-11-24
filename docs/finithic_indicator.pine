@@ -1238,9 +1238,14 @@ if enableSniperEngine and not inTrade and (bar_index - lastExitBar >= cooldownBa
             entryBarIdx     := bar_index
             entryPrice      := calcEntry
             stopLossPrice   := calcSL
-            // DOL Target: Use Draw on Liquidity pool (EQH / Previous swing high) as TP if available
-            dolTP = hasBullDOL and not na(dolBullTarget) and dolBullTarget > entryPrice + riskDist * 1.5 ? math.min(dolBullTarget, entryPrice + riskDist * 6.0) : na
-            targetHighPrice = not na(dolTP) ? dolTP : ((targetOppositeSwing and not na(swingHigh.currentLevel) and swingHigh.currentLevel > entryPrice + riskDist * 2.0) ? math.min(swingHigh.currentLevel, entryPrice + (riskDist * 4.0)) : entryPrice + (riskDist * sniperRRRatio))
+            // Minimum Guaranteed High R:R Target (>= 3.0R) to eliminate micro-targets
+            minTargetDistance = riskDist * math.max(3.0, sniperRRRatio)
+            
+            // DOL Target: Use Draw on Liquidity pool (EQH / Previous major swing high) only if it offers substantial expansion (>= 3R)
+            dolTP = hasBullDOL and not na(dolBullTarget) and dolBullTarget >= entryPrice + minTargetDistance ? math.min(dolBullTarget, entryPrice + riskDist * 6.0) : na
+            oppositeSwingTP = targetOppositeSwing and not na(swingHigh.currentLevel) and swingHigh.currentLevel >= entryPrice + minTargetDistance ? math.min(swingHigh.currentLevel, entryPrice + (riskDist * 5.0)) : na
+
+            targetHighPrice = not na(dolTP) ? dolTP : (not na(oppositeSwingTP) ? oppositeSwingTP : entryPrice + minTargetDistance)
             takeProfitPrice := targetHighPrice
 
             // Label with score and primary reason
@@ -1274,8 +1279,13 @@ if enableSniperEngine and not inTrade and (bar_index - lastExitBar >= cooldownBa
             entryBarIdx     := bar_index
             entryPrice      := calcEntry
             stopLossPrice   := calcSL
-            dolTP = hasBearDOL and not na(dolBearTarget) and dolBearTarget < entryPrice - riskDist * 1.5 ? math.max(dolBearTarget, entryPrice - riskDist * 6.0) : na
-            targetLowPrice  = not na(dolTP) ? dolTP : ((targetOppositeSwing and not na(swingLow.currentLevel) and swingLow.currentLevel < entryPrice - riskDist * 2.0 and swingLow.currentLevel > 0) ? math.max(swingLow.currentLevel, entryPrice - (riskDist * 4.0)) : entryPrice - (riskDist * sniperRRRatio))
+            // Minimum Guaranteed High R:R Target (>= 3.0R) to eliminate micro-targets
+            minTargetDistance = riskDist * math.max(3.0, sniperRRRatio)
+            
+            dolTP = hasBearDOL and not na(dolBearTarget) and dolBearTarget <= entryPrice - minTargetDistance ? math.max(dolBearTarget, entryPrice - riskDist * 6.0) : na
+            oppositeSwingTP = targetOppositeSwing and not na(swingLow.currentLevel) and swingLow.currentLevel <= entryPrice - minTargetDistance and swingLow.currentLevel > 0 ? math.max(swingLow.currentLevel, entryPrice - (riskDist * 5.0)) : na
+
+            targetLowPrice  = not na(dolTP) ? dolTP : (not na(oppositeSwingTP) ? oppositeSwingTP : entryPrice - minTargetDistance)
             takeProfitPrice := targetLowPrice
 
             entryReason = bearOteHit ? "OTE" : (bearSMTDiv ? "SMT" : (bearIFVGRetest ? "IFVG" : (bprBearRetest ? "BPR" : (judasSwingBear ? "JUDAS" : (po3DistBear ? "PO3" : "MSS")))))
