@@ -46,9 +46,10 @@ EQUAL_GROUP                     = 'SMC: Equal Highs & Lows (EQH/EQL)'
 GAPS_GROUP                      = 'SMC: Fair Value Gaps (FVG)'
 LEVELS_GROUP                    = 'SMC: Multi-Timeframe Highs & Lows'
 ZONES_GROUP                     = 'SMC: Premium & Discount Zones'
-SNIPER_GROUP                    = '1M Sniper Scalper Engine'
-ORDERFLOW_GROUP                 = 'Price-Action Volume Delta & Absorption (Estimated Proxy)'
+SNIPER_GROUP                    = 'Institutional Sniper Engine'
+ORDERFLOW_GROUP                 = 'Order Flow: Volume Delta & CVD Absorption'
 INDEX_SYNC_GROUP                = 'Index & Option Chart Synchronization'
+INSTIT_GROUP                    = 'Institutional Concepts: OTE / IFVG / SMT / DOL'
 
 // SMC Inputs
 modeInput                       = input.string( HISTORICAL, 'Structure History Mode', group = SMART_GROUP, options = [HISTORICAL, PRESENT])
@@ -112,11 +113,11 @@ equilibriumZoneColorInput       = input.color(  GRAY,       'Equilibrium Zone', 
 discountZoneColorInput          = input.color(  GREEN,      'Discount Zone',          group = ZONES_GROUP)
 
 // Sniper Scalp Engine Inputs
-enableSniperEngine              = input.bool(   true,       'Enable Sniper Retest Engine', group = SNIPER_GROUP)
-sniperRRRatio                   = input.float(  3.0,        'Sniper Target R:R Ratio (3, 4, 5, 6+)', minval=1.5, step=0.5, group = SNIPER_GROUP)
-sniperRetraceRatio              = input.float(  0.5,        'Discount Retracement Entry (0.5 = 50%)', minval=0.2, maxval=0.79, step=0.05, group = SNIPER_GROUP)
-sniperMaxWaitBars               = input.int(    12,         'Max Wait Bars for Retest Fill', minval=3, maxval=30, group = SNIPER_GROUP)
-showSniperScoreboard            = input.bool(   true,       'Show Top-Right Scalp Scoreboard', group = SNIPER_GROUP)
+enableSniperEngine              = input.bool(   true,       'Enable Institutional Sniper Engine', group = SNIPER_GROUP)
+sniperRRRatio                   = input.float(  3.0,        'Target R:R Ratio (default 3, use 4-6 for HTF)', minval=1.5, step=0.5, group = SNIPER_GROUP)
+sniperRetraceRatio              = input.float(  0.5,        'OTE Retracement Entry (0.705 = ICT Golden Pocket)', minval=0.2, maxval=0.79, step=0.05, group = SNIPER_GROUP)
+sniperMaxWaitBars               = input.int(    12,         'Max Wait Bars for OTE/Retest Fill', minval=3, maxval=30, group = SNIPER_GROUP)
+showSniperScoreboard            = input.bool(   true,       'Show Institutional Scoreboard HUD', group = SNIPER_GROUP)
 // Global ATR & Trend calculations
 atr14 = ta.atr(14)
 microBuffer = atr14 * 0.15
@@ -126,13 +127,24 @@ ema200 = ta.ema(close, 200)
 useHtfConfluence = input.bool(true, '15M HTF Zone & Sweep Confluence (Multi-Timeframe)', group = SNIPER_GROUP)
 htfTimeframe     = input.timeframe('15', 'HTF Timeframe', group = SNIPER_GROUP)
 minRiskAtr       = input.float(0.8, 'Minimum Swing Size / Risk (ATR Multiple)', minval=0.3, step=0.1, group = SNIPER_GROUP)
-trailToBE        = input.bool(false, 'Trail SL to Break-Even (Off = Fixed Invalidation SL until hit)', group = SNIPER_GROUP)
-targetOppositeSwing = input.bool(false, 'Target Opposite Swing High/Low (Major Target)', group = SNIPER_GROUP)
+trailToBE        = input.bool(false, 'Trail SL to Break-Even at 1R', group = SNIPER_GROUP)
+targetOppositeSwing = input.bool(true, 'Target Draw on Liquidity (DOL): Opposite Swing High/Low', group = SNIPER_GROUP)
 cooldownBarsInput   = input.int(5, 'Trade Cooldown Bars (Prevents Chop Spam)', minval=2, maxval=20, group = SNIPER_GROUP)
-useKillzones        = input.bool(true, 'Trade Only In High-Volume Killzones (Avoid Chop)', group = SNIPER_GROUP)
-useVolumeDisplace   = input.bool(true, 'Require Institutional Volume & Displacement', group = SNIPER_GROUP)
+useKillzones        = input.bool(true, 'Trade Only In Institutional Killzones', group = SNIPER_GROUP)
+useVolumeDisplace   = input.bool(true, 'Require Displacement: Institutional Volume & Body Candle', group = SNIPER_GROUP)
 volMultInput        = input.float(1.15, 'Volume Expansion Multiplier (vs 20 EMA)', minval=1.0, maxval=3.0, step=0.05, group = SNIPER_GROUP)
 useWickAbsorption   = input.bool(true, 'Require Wick Absorption on Liquidity Sweeps', group = SNIPER_GROUP)
+
+// Institutional Concepts: OTE / IFVG / SMT / DOL / BPR inputs
+useOteEntry          = input.bool(true,  'OTE Entry: Optimal Trade Entry (62%-79% Fib Retracement)', group = INSTIT_GROUP)
+useIFVG              = input.bool(true,  'IFVG: Detect Inverted Fair Value Gaps (Flipped FVGs)', group = INSTIT_GROUP)
+useSMTDivergence     = input.bool(true,  'SMT: Detect Index vs Premium CVD Divergence', group = INSTIT_GROUP)
+smtIndexTicker       = input.symbol('NSE:BANKNIFTY', 'SMT Correlated Asset Ticker (e.g. NSE:BANKNIFTY)', group = INSTIT_GROUP)
+useJudasSwing        = input.bool(true,  'Judas Swing: Detect False Open Session Reversal', group = INSTIT_GROUP)
+usePO3Filter         = input.bool(true,  'Power of 3: Require Accumulation-Manipulation-Distribution', group = INSTIT_GROUP)
+useBPR               = input.bool(true,  'BPR: Balanced Price Range (Overlapping Bullish+Bearish FVG)', group = INSTIT_GROUP)
+useDOLTargets        = input.bool(true,  'DOL: Draw on Liquidity as TP Target (PDH/PDL/EQH/EQL)', group = INSTIT_GROUP)
+showInstitChecklist  = input.bool(true,  'Show Institutional Entry Checklist on Chart', group = INSTIT_GROUP)
 
 // HTF calculations for 15M discount/premium and sweep zones
 htfHigh  = request.security(syminfo.tickerid, htfTimeframe, high[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
@@ -896,6 +908,196 @@ parentBearConfirmed = not (isPutOption and useIndexSync and strictIndexAlignment
 // Prevents taking signals when premium is dead/flat-lining or experiencing theta decay with no volume
 premiumRange3       = ta.highest(high, 3) - ta.lowest(low, 3)
 hasPremiumExpansion = not isOption or (premiumRange3 >= atr14 * minOptionMomentumAtr and volume >= ta.ema(volume, 10) * 0.75)
+
+//---------------------------------------------------------------------------------------------------------------------}
+// INSTITUTIONAL CONCEPTS ENGINE (OTE / IFVG / SMT / BPR / DOL / PO3 / Judas Swing)
+//---------------------------------------------------------------------------------------------------------------------{
+
+// ── 1. OTE (Optimal Trade Entry) – ICT Golden Pocket: 62% / 70.5% / 79% Fibonacci Retracement ──
+// After MSS + Displacement, institution fills orders at the Fibonacci OTE zone inside the FVG/OB
+var float oteSwingHigh  = na
+var float oteSwingLow   = na
+var int   oteOriginBar  = -999
+var int   oteDir        = 0  // 1 = bullish OTE setup, -1 = bearish OTE setup
+
+// Record the swing origin when structure shifts happen
+if triggeredBullShift
+    oteSwingLow   := ta.lowest(low, 10)
+    oteSwingHigh  := internalHigh.currentLevel
+    oteOriginBar  := bar_index
+    oteDir        := 1
+if triggeredBearShift
+    oteSwingHigh  := ta.highest(high, 10)
+    oteSwingLow   := internalLow.currentLevel
+    oteOriginBar  := bar_index
+    oteDir        := -1
+
+oteRange      = not na(oteSwingHigh) and not na(oteSwingLow) ? oteSwingHigh - oteSwingLow : na
+// Golden Pocket: 62% to 79% retracement (ICT OTE zone)
+oteBullFib62  = not na(oteRange) ? oteSwingHigh - oteRange * 0.62 : na
+oteBullFib705 = not na(oteRange) ? oteSwingHigh - oteRange * 0.705 : na
+oteBullFib79  = not na(oteRange) ? oteSwingHigh - oteRange * 0.79 : na
+oteBearFib62  = not na(oteRange) ? oteSwingLow  + oteRange * 0.62 : na
+oteBearFib705 = not na(oteRange) ? oteSwingLow  + oteRange * 0.705 : na
+oteBearFib79  = not na(oteRange) ? oteSwingLow  + oteRange * 0.79 : na
+
+// OTE Hit: Price retraces into the Golden Pocket zone after displacement
+oteWindowBars  = 15
+bullOteHit = useOteEntry and oteDir == 1 and (bar_index - oteOriginBar <= oteWindowBars) and not na(oteBullFib62) and low <= oteBullFib62 and low >= oteBullFib79 and close > open
+bearOteHit = useOteEntry and oteDir == -1 and (bar_index - oteOriginBar <= oteWindowBars) and not na(oteBearFib62) and high >= oteBearFib62 and high <= oteBearFib79 and close < open
+
+// ── 2. IFVG (Inverted Fair Value Gap) – Former FVG flips to opposing side ──
+// A Bullish FVG that price breaks back through becomes a Bearish IFVG (resistance). Vice versa.
+var bool lastFvgWasBullish = false
+var float ifvgTop = na
+var float ifvgBottom = na
+var int   ifvgBias = 0  // 1 = bullish IFVG (demand), -1 = bearish IFVG (supply)
+
+if currentAlerts.bullishFairValueGap
+    lastFvgWasBullish := true
+    ifvgTop    := low
+    ifvgBottom := high[2]
+    ifvgBias   := 1
+if currentAlerts.bearishFairValueGap
+    lastFvgWasBullish := false
+    ifvgTop    := low[2]
+    ifvgBottom := high
+    ifvgBias   := -1
+
+// IFVG Flip: If price re-enters the former FVG from the opposite direction, it becomes an IFVG
+bullIFVGRetest = useIFVG and ifvgBias == -1 and not na(ifvgTop) and low <= ifvgTop and close >= ifvgTop and close > open
+bearIFVGRetest = useIFVG and ifvgBias == 1 and not na(ifvgBottom) and high >= ifvgBottom and close <= ifvgBottom and close < open
+
+// ── 3. Balanced Price Range (BPR) – Bullish FVG + Bearish FVG overlapping zone ──
+// When two FVGs overlap, it creates a high-probability institutional reaction zone
+var float bprBull = na
+var float bprBear = na
+if currentAlerts.bullishFairValueGap and currentAlerts.bearishFairValueGap
+    bprBull := low
+    bprBear := high[2]
+
+bprBullRetest = useBPR and not na(bprBull) and low <= bprBull and close >= bprBull and close > open
+bprBearRetest = useBPR and not na(bprBear) and high >= bprBear and close <= bprBear and close < open
+
+// ── 4. SMT Divergence (Smart Money Technique) ──
+// Correlated index divergence: Nifty makes HH but BankNifty makes LH → bearish SMT divergence
+smtClose = request.security(smtIndexTicker, timeframe.period, close[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+smtHigh  = request.security(smtIndexTicker, timeframe.period, ta.highest(high, 5)[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+smtLow   = request.security(smtIndexTicker, timeframe.period, ta.lowest(low, 5)[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+
+priceHigh5 = ta.highest(high, 5)[1]
+priceLow5  = ta.lowest(low, 5)[1]
+
+// Bearish SMT: Current chart makes new HH but SMT correlated asset fails to make HH (LH)
+bearSMTDiv = useSMTDivergence and not na(smtHigh) and high >= priceHigh5 and smtClose < smtHigh * 0.9995
+// Bullish SMT: Current chart makes new LL but SMT correlated asset fails to make LL (HL)
+bullSMTDiv = useSMTDivergence and not na(smtLow) and low <= priceLow5 and smtClose > smtLow * 1.0005
+
+// ── 5. Judas Swing Detection ──
+// False move at session open (09:15 IST) before the real institutional direction
+var float sessionOpenPrice  = na
+var float sessionHigh15min  = na
+var float sessionLow15min   = na
+var int   sessionOpenBar    = -999
+
+barHourMin = hour * 100 + minute
+isSessionOpen = barHourMin == 915
+if isSessionOpen
+    sessionOpenPrice := open
+    sessionHigh15min := high
+    sessionLow15min  := low
+    sessionOpenBar   := bar_index
+else if bar_index - sessionOpenBar <= 15
+    sessionHigh15min := math.max(sessionHigh15min, high)
+    sessionLow15min  := math.min(sessionLow15min, low)
+
+// Judas Swing Bull: Session opened with a dip (manipulation low), then reversed with strong close above open
+judasSwingBull = useJudasSwing and not na(sessionOpenPrice) and (bar_index - sessionOpenBar >= 3 and bar_index - sessionOpenBar <= 20) and (sessionLow15min < sessionOpenPrice) and (close > sessionOpenPrice) and close > open and barDelta > 0
+
+// Judas Swing Bear: Session opened with a pop (manipulation high), then reversed with strong close below open  
+judasSwingBear = useJudasSwing and not na(sessionOpenPrice) and (bar_index - sessionOpenBar >= 3 and bar_index - sessionOpenBar <= 20) and (sessionHigh15min > sessionOpenPrice) and (close < sessionOpenPrice) and close < open and barDelta < 0
+
+// ── 6. Power of Three (PO3): Accumulation → Manipulation → Distribution ──
+// Institutions: Accumulate in range, manipulate retail stops, then distribute in real direction
+var float accumulationHigh = na
+var float accumulationLow  = na
+var int   po3Phase         = 0  // 0=scanning, 1=accumulation, 2=manipulation, 3=distribution
+
+// Detect Accumulation: Range-bound 5-bar environment (ATR compression)
+rangeCompression = (ta.highest(high, 5) - ta.lowest(low, 5)) < atr14 * 1.5
+if rangeCompression and po3Phase == 0
+    accumulationHigh := ta.highest(high, 5)
+    accumulationLow  := ta.lowest(low, 5)
+    po3Phase         := 1
+
+// Manipulation: Price breaks above/below accumulation range (stop hunt)
+po3ManipBull = usePO3Filter and po3Phase == 1 and not na(accumulationLow) and low < accumulationLow and close > accumulationLow
+po3ManipBear = usePO3Filter and po3Phase == 1 and not na(accumulationHigh) and high > accumulationHigh and close < accumulationHigh
+if po3ManipBull or po3ManipBear
+    po3Phase := 2
+
+// Distribution (real move): After manipulation, strong directional candle confirms
+po3DistBull = usePO3Filter and po3Phase == 2 and triggeredBullShift
+po3DistBear = usePO3Filter and po3Phase == 2 and triggeredBearShift
+if po3DistBull or po3DistBear
+    po3Phase := 3
+
+// Reset PO3 after distribution completes or after 30 bars
+if po3Phase == 3 and bar_index - oteOriginBar > 30
+    po3Phase := 0
+
+// ── 7. Draw on Liquidity (DOL) – Price magnet targeting next institutional liquidity pool ──
+// Equal Highs (EQH), Equal Lows (EQL), Previous Day High/Low are institutional targets
+dolBullTarget = not na(equalHigh.currentLevel) ? equalHigh.currentLevel : swingHigh.currentLevel
+dolBearTarget = not na(equalLow.currentLevel) ? equalLow.currentLevel : swingLow.currentLevel
+
+// DOL TP: If there is a DOL magnet in the direction of the trade, use it as the TP target
+hasBullDOL = useDOLTargets and not na(dolBullTarget) and dolBullTarget > close + (atr14 * 1.0)
+hasBearDOL = useDOLTargets and not na(dolBearTarget) and dolBearTarget < close - (atr14 * 1.0)
+
+// ── 8. Institutional Confluence Score (All 37 concepts weighted) ──
+// Minimum score to trigger an entry — prevents any single-condition signals
+var int lastInstitScoreBar = -999
+var int lastInstitScore = 0
+
+institutBullScore = 0
+institutBullScore := institutBullScore + (triggeredBullShift ? 2 : 0)                 // CHoCH/BOS MSS       (+2)
+institutBullScore := institutBullScore + (sweepLow ? 2 : 0)                            // Liquidity SSL Sweep  (+2)
+institutBullScore := institutBullScore + (bullishAbsorption ? 2 : 0)                   // Order Flow Absorption(+2)
+institutBullScore := institutBullScore + (bullOteHit ? 2 : 0)                          // OTE Golden Pocket    (+2)
+institutBullScore := institutBullScore + (bullSMTDiv ? 2 : 0)                          // SMT Divergence       (+2)
+institutBullScore := institutBullScore + (judasSwingBull ? 1 : 0)                      // Judas Swing          (+1)
+institutBullScore := institutBullScore + (po3ManipBull or po3DistBull ? 1 : 0)         // PO3 Phase            (+1)
+institutBullScore := institutBullScore + (bullIFVGRetest ? 1 : 0)                      // IFVG Demand          (+1)
+institutBullScore := institutBullScore + (bprBullRetest ? 1 : 0)                       // BPR Zone             (+1)
+institutBullScore := institutBullScore + (htfMajorBuy ? 1 : 0)                         // 15M HTF Confluence   (+1)
+institutBullScore := institutBullScore + (obDemandTouch ? 1 : 0)                       // OB Demand Touch      (+1)
+institutBullScore := institutBullScore + (fvgDemandRetest ? 1 : 0)                     // FVG CE Retest        (+1)
+institutBullScore := institutBullScore + (isInKillzone ? 1 : 0)                        // Killzone             (+1)
+institutBullScore := institutBullScore + (isPositiveDelta ? 1 : 0)                     // Order Flow Delta     (+1)
+institutBullScore := institutBullScore + (parentBullConfirmed ? 1 : 0)                 // Index Sync           (+1)
+
+institutBearScore = 0
+institutBearScore := institutBearScore + (triggeredBearShift ? 2 : 0)
+institutBearScore := institutBearScore + (sweepHigh ? 2 : 0)
+institutBearScore := institutBearScore + (bearishAbsorption ? 2 : 0)
+institutBearScore := institutBearScore + (bearOteHit ? 2 : 0)
+institutBearScore := institutBearScore + (bearSMTDiv ? 2 : 0)
+institutBearScore := institutBearScore + (judasSwingBear ? 1 : 0)
+institutBearScore := institutBearScore + (po3ManipBear or po3DistBear ? 1 : 0)
+institutBearScore := institutBearScore + (bearIFVGRetest ? 1 : 0)
+institutBearScore := institutBearScore + (bprBearRetest ? 1 : 0)
+institutBearScore := institutBearScore + (htfMajorSell ? 1 : 0)
+institutBearScore := institutBearScore + (obSupplyTouch ? 1 : 0)
+institutBearScore := institutBearScore + (fvgSupplyRetest ? 1 : 0)
+institutBearScore := institutBearScore + (isInKillzone ? 1 : 0)
+institutBearScore := institutBearScore + (isNegativeDelta ? 1 : 0)
+institutBearScore := institutBearScore + (parentBearConfirmed ? 1 : 0)
+
+// Maximum possible score = 19. Minimum score for HIGH QUALITY institutional entry = 7
+minInstitScore = 7
+isHighQualityBull = institutBullScore >= minInstitScore and hasPremiumExpansion
+isHighQualityBear = institutBearScore >= minInstitScore and hasPremiumExpansion
 
 // Recent BOS / Structure Breakout Level Memory
 var float lastBullBreakoutLevel = na

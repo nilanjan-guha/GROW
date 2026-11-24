@@ -34,20 +34,7 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
     
     print(f"=== STARTING 5-MINUTE SCREENER REPLAY VALIDATION ({len(sample_symbols)} STOCKS | PERIOD: {days}) ===")
     
-    # 1. Download benchmark NIFTY 50 5m candles
-    print("Downloading NIFTY 50 5m candles...")
-    nifty_df = yf.download("^NSEI", period=days, interval="5m", progress=False)
-    if isinstance(nifty_df.columns, pd.MultiIndex):
-        nifty_df = nifty_df.xs("^NSEI", axis=1, level=1) if "^NSEI" in nifty_df.columns.levels[1] else nifty_df
-    
-    # Validate downloaded historical NIFTY benchmark with strict session grid validator (Item A)
-    from engine.market_validator import MarketValidator
-    val_nifty = MarketValidator.validate_historical_replay_data(nifty_df, candle_duration_seconds=300, allow_partial_final_session=True)
-    if not val_nifty.get("is_valid", False):
-        print(f"[REJECTED] Benchmark NIFTY 50 feed failed historical session-grid validation: {val_nifty.get('reason')}")
-        return stats
-    print(f"[VALIDATED] Benchmark NIFTY 50 feed passed validation ({val_nifty.get('total_sessions')} sessions).")
-
+    # Initialize replay statistics upfront before downloading or validating any benchmark (P0)
     stats = {
         "total_evaluations": 0,
         "watch_only_candidates": 0,
@@ -73,8 +60,24 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
         "in_sample_wins": 0,
         "in_sample_trades": 0,
         "out_of_sample_wins": 0,
-        "out_of_sample_trades": 0
+        "out_of_sample_trades": 0,
+        "final_cash_rs": 1000000.0,
+        "portfolio_net_return_pct": 0.0
     }
+
+    # 1. Download benchmark NIFTY 50 5m candles
+    print("Downloading NIFTY 50 5m candles...")
+    nifty_df = yf.download("^NSEI", period=days, interval="5m", progress=False)
+    if isinstance(nifty_df.columns, pd.MultiIndex):
+        nifty_df = nifty_df.xs("^NSEI", axis=1, level=1) if "^NSEI" in nifty_df.columns.levels[1] else nifty_df
+    
+    # Validate downloaded historical NIFTY benchmark with strict session grid validator
+    from engine.market_validator import MarketValidator
+    val_nifty = MarketValidator.validate_historical_replay_data(nifty_df, candle_duration_seconds=300, allow_partial_final_session=True)
+    if not val_nifty.get("is_valid", False):
+        print(f"[REJECTED] Benchmark NIFTY 50 feed failed historical session-grid validation: {val_nifty.get('reason')}")
+        return stats
+    print(f"[VALIDATED] Benchmark NIFTY 50 feed passed validation ({val_nifty.get('total_sessions')} sessions).")
     
     # Realistic Indian Intraday Equity/Futures Statutory Friction:
     # Brokerage (₹20/order or 0.03%), STT (0.025% on sell side for equity intraday / 0.0125% for futures),
@@ -487,12 +490,13 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
                 max_fav = (actual_entry - min(in_trade_lows[:exit_offset+1])) / actual_entry * 100
                 max_adv = (max(in_trade_highs[:exit_offset+1]) - actual_entry) / actual_entry * 100
 
-            # Realistic Statutory Turnover Costs (Item F):
+            # Realistic Statutory Turnover Costs for Indian Intraday Equity/Futures (Item F):
             # Brokerage: min(₹20, 0.03% of turnover) each side
-            # STT: 0.025% on sell side (equity intraday)
-            # Exchange charge: 0.00325% on both sides
-            # GST: 18% on (Brokerage + Exchange)
-            # Stamp duty: 0.003% on buy side
+            # STT: 0.025% on sell side (equity intraday) / 0.0125% for futures
+            # Exchange charge: 0.00325% on total turnover
+            # SEBI turnover fee: ₹10 per crore (0.0001% of turnover)
+            # GST: 18% on (Brokerage + Exchange + SEBI)
+            # Stamp duty: 0.003% on buy side (equity) / 0.002% (futures)
             entry_turnover_rs = actual_entry * trade_qty
             exit_turnover_rs = exit_price_actual * trade_qty
             total_turnover_rs = entry_turnover_rs + exit_turnover_rs
@@ -500,9 +504,10 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
             brokerage_rs = min(20.0, entry_turnover_rs * 0.0003) + min(20.0, exit_turnover_rs * 0.0003)
             stt_rs = (exit_turnover_rs if direction == "BULLISH" else entry_turnover_rs) * 0.00025
             exch_turnover_fee_rs = total_turnover_rs * 0.0000325
-            gst_rs = (brokerage_rs + exch_turnover_fee_rs) * 0.18
+            sebi_charges_rs = total_turnover_rs * 0.000001
+            gst_rs = (brokerage_rs + exch_turnover_fee_rs + sebi_charges_rs) * 0.18
             stamp_duty_rs = (entry_turnover_rs if direction == "BULLISH" else exit_turnover_rs) * 0.00003
-            total_friction_rs = brokerage_rs + stt_rs + exch_turnover_fee_rs + gst_rs + stamp_duty_rs
+            total_friction_rs = brokerage_rs + stt_rs + exch_turnover_fee_rs + sebi_charges_rs + gst_rs + stamp_duty_rs
 
             gross_realized_rs = (exit_price_actual - actual_entry) * trade_qty if direction == "BULLISH" else (actual_entry - exit_price_actual) * trade_qty
             net_realized_rs = gross_realized_rs - total_friction_rs
@@ -584,9 +589,15 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
             stats["in_sample_trades"] += 1
             if pos["net_realized_rs"] > 0:
                 stats["in_sample_wins"] += 1
-            stats["in_sample_trades"] += 1
-            if pos["net_pnl"] > 0:
-                stats["in_sample_wins"] += 1
+
+    active_portfolio_positions = []
+
+    # Final Realized Portfolio Equity Append (Item P1):
+    # Appends final cash balance to equity curve and calculates true portfolio net return
+    final_equity_pct = round((cash_balance_rs / initial_capital_rs) * 100.0, 2)
+    stats["equity_curve"].append(final_equity_pct)
+    stats["final_cash_rs"] = round(cash_balance_rs, 2)
+    stats["portfolio_net_return_pct"] = round(final_equity_pct - 100.0, 2)
 
     # Evaluate Direction-Matched Pre-Move Event Recall & Lead Times across all symbols
     for sym, s_data in symbol_data.items():
@@ -669,18 +680,18 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
         drawdowns = (np.array(eq_curve) - peaks) / peaks * 100
         max_drawdown_pct = round(abs(float(np.min(drawdowns))), 2)
 
-        print("\n--- TRADE EXECUTION & PERFORMANCE (AFTER 0.10% COSTS) ---")
+        print("\n--- TRADE EXECUTION & PERFORMANCE (STATUTORY TURNOVER COSTS) ---")
         print(f"Win Rate:                    {win_rate}% ({stats['wins']} Wins / {stats['losses']} Losses)")
         print(f"Setup Expansion Rate (MFE):  {expansion_rate}% (MFE >= 0.70%)")
         print(f"Non-Expanding Trigger Rate:  {fpr_expansion}%")
         print(f"Average MFE (In-Trade):      +{avg_mfe}%")
         print(f"Average MAE (In-Trade):      -{avg_mae}%")
-        print(f"Gross PnL (Before Costs):    {round(stats['gross_pnl_pct'], 2)}%")
-        print(f"Net Realized PnL (Sum):      {round(stats['total_pnl_pct'], 2)}%")
-        print(f"Compounded Equity Return:    {compounded_return_pct}% (20% alloc per trade)")
+        print(f"Trade-Level Gross PnL (Sum): {round(stats['gross_pnl_pct'], 2)}%")
+        print(f"Trade-Level Net PnL (Sum):   {round(stats['total_pnl_pct'], 2)}%")
+        print(f"Portfolio Net Cash Return:   {stats['portfolio_net_return_pct']}% (Final Cash: ₹{stats['final_cash_rs']:,.2f})")
         print(f"Maximum Portfolio Drawdown:  {max_drawdown_pct}%")
         print(f"Profit Factor:               {profit_factor}")
-        print(f"Expectancy Per Trade:        +{expectancy_pct}%")
+        print(f"Trade Expectancy Per Trade:  +{expectancy_pct}%")
         print(f"Average Realized R:          {avg_r}R")
         
         if stats["in_sample_trades"] > 0:

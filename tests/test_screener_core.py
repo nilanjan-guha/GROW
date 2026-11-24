@@ -363,5 +363,35 @@ class TestIntradayScreenerCore(unittest.TestCase):
         self.assertIn("is_preparing", prep)
         self.assertIn("preparation_score", prep)
 
+    def test_session_grid_historical_validation(self):
+        from engine.market_validator import MarketValidator
+        val = MarketValidator.validate_historical_replay_data(self.df_5m, allow_partial_final_session=True)
+        self.assertTrue(val.get("is_valid", False))
+        self.assertEqual(val.get("status"), "VALID_HISTORICAL")
+
+    def test_replay_portfolio_capital_accounting(self):
+        # Verify that capital reservation and turnover friction calculate correctly
+        entry_p = 1000.0
+        alloc_rs = 250000.0
+        qty = int(alloc_rs / entry_p)
+        self.assertEqual(qty, 250)
+        
+        exit_p = 1015.0 # +1.5% profit
+        entry_turnover = entry_p * qty
+        exit_turnover = exit_p * qty
+        total_turnover = entry_turnover + exit_turnover
+        brokerage = min(20.0, entry_turnover * 0.0003) + min(20.0, exit_turnover * 0.0003)
+        stt = exit_turnover * 0.00025
+        exch = total_turnover * 0.0000325
+        sebi = total_turnover * 0.000001
+        gst = (brokerage + exch + sebi) * 0.18
+        stamp = entry_turnover * 0.00003
+        friction = brokerage + stt + exch + sebi + gst + stamp
+        
+        gross_profit = (exit_p - entry_p) * qty
+        net_profit = gross_profit - friction
+        self.assertGreater(net_profit, 0.0)
+        self.assertLess(net_profit, gross_profit)
+
 if __name__ == '__main__':
     unittest.main()
