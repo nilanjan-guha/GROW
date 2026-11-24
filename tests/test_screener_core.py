@@ -1,5 +1,6 @@
 import unittest
 import os
+import json
 import tempfile
 import sqlite3
 import time
@@ -16,6 +17,9 @@ import core.storage as storage
 class TestIntradayScreenerCore(unittest.TestCase):
 
     def setUp(self):
+        # Isolate test credentials so tests never depend on or contaminate production secrets
+        os.environ.setdefault("TEST_ADAPTER_AUTH_SECRET", "TEST_ISOLATED_ADAPTER_AUTH_KEY_2026")
+
         # Create an isolated temporary SQLite database for test execution
         self.temp_db_fd, self.temp_db_path = tempfile.mkstemp(suffix=".db")
         self.orig_db_path = storage.DB_PATH
@@ -64,6 +68,13 @@ class TestIntradayScreenerCore(unittest.TestCase):
     def tearDown(self):
         from core.contract_master import ContractMaster
         ContractMaster._DYNAMIC_CONTRACTS.clear()
+        try:
+            import groww_terminal_app as gta
+            gta.screener_state.pop("ranked_opportunities", None)
+            gta.screener_state.pop("ranked_candle_ts", None)
+            gta.screener_state.pop("raw_market_cache", None)
+        except Exception:
+            pass
         storage.DB_PATH = self.orig_db_path
         os.close(self.temp_db_fd)
         try:
@@ -2170,35 +2181,42 @@ class TestIntradayScreenerCore(unittest.TestCase):
         self.assertTrue(ContractMaster.is_synthetic_instrument_id(""))
         self.assertTrue(ContractMaster.is_synthetic_instrument_id("FUT-TEST-EXP"))
 
-        # 2. Nearest-expiry sorting test
+        # 2. Nearest-expiry sorting test with environment isolation
         import os
+        old_secret = os.environ.get("BROKER_ADAPTER_AUTH_SECRET")
         test_secret = "TEST_SEC_AUTH_KEY_2026"
         os.environ["BROKER_ADAPTER_AUTH_SECRET"] = test_secret
-        today = datetime.date.today()
-        far_exp = str(today + datetime.timedelta(days=60))
-        near_exp = str(today + datetime.timedelta(days=10))
+        try:
+            today = datetime.date.today()
+            far_exp = str(today + datetime.timedelta(days=60))
+            near_exp = str(today + datetime.timedelta(days=10))
 
-        # Register far expiry first, then near expiry with realistic broker tokens (no forbidden TEST/SYNTH substrings)
-        ContractMaster.register_dynamic_contracts({
-            f"TESTEXP:{far_exp}": {
-                "lot_size": 200, "expiry": far_exp, "instrument_id": "NSE_GROWW_38291",
-                "source": "GROWW_API", "update_date": str(today)
-            },
-            f"TESTEXP:{near_exp}": {
-                "lot_size": 150, "expiry": near_exp, "instrument_id": "NSE_GROWW_38290",
-                "source": "GROWW_API", "update_date": str(today)
-            },
-            # Explicit default should be near expiry
-            "TESTEXP": {
-                "lot_size": 150, "expiry": near_exp, "instrument_id": "NSE_GROWW_38290",
-                "source": "GROWW_API", "update_date": str(today)
-            }
-        }, adapter_secret=test_secret)
+            # Register far expiry first, then near expiry with realistic broker tokens (no forbidden TEST/SYNTH substrings)
+            ContractMaster.register_dynamic_contracts({
+                f"TESTEXP:{far_exp}": {
+                    "lot_size": 200, "expiry": far_exp, "instrument_id": "NSE_GROWW_38291",
+                    "source": "GROWW_API", "update_date": str(today)
+                },
+                f"TESTEXP:{near_exp}": {
+                    "lot_size": 150, "expiry": near_exp, "instrument_id": "NSE_GROWW_38290",
+                    "source": "GROWW_API", "update_date": str(today)
+                },
+                # Explicit default should be near expiry
+                "TESTEXP": {
+                    "lot_size": 150, "expiry": near_exp, "instrument_id": "NSE_GROWW_38290",
+                    "source": "GROWW_API", "update_date": str(today)
+                }
+            }, adapter_secret=test_secret)
 
-        spec = ContractMaster.get_contract_spec("TESTEXP")
-        self.assertEqual(str(spec["expiry"]), near_exp)
-        self.assertEqual(spec["lot_size"], 150)
-        self.assertEqual(spec["instrument_id"], "NSE_GROWW_38290")
+            spec = ContractMaster.get_contract_spec("TESTEXP")
+            self.assertEqual(str(spec["expiry"]), near_exp)
+            self.assertEqual(spec["lot_size"], 150)
+            self.assertEqual(spec["instrument_id"], "NSE_GROWW_38290")
+        finally:
+            if old_secret is not None:
+                os.environ["BROKER_ADAPTER_AUTH_SECRET"] = old_secret
+            else:
+                os.environ.pop("BROKER_ADAPTER_AUTH_SECRET", None)
 
     def test_unmapped_stock_excluded_from_sector_rankings(self):
         # UNMAPPED stocks must not be assigned to NIFTY INFRA or influence sector scores
@@ -2206,6 +2224,147 @@ class TestIntradayScreenerCore(unittest.TestCase):
         unmapped_res = gta.classify_stock_sector("UNKNOWNXYZ99")
         self.assertEqual(unmapped_res, "UNMAPPED")
         self.assertNotEqual(unmapped_res, "NIFTY INFRA")
+
+        # Prove that an UNMAPPED stock has no aligned sector index to inflate its score
+        # When sector is UNMAPPED and no sector_df is available, is_sector_aligned is False
+        from engine.opportunity_ranking_engine import OpportunityRankingEngine
+        rs_res = OpportunityRankingEngine.calculate_relative_strength_acceleration(
+            self.df_5m, nifty_df=self.df_5m, sector_change_pct=0.0
+        )
+        self.assertFalse(rs_res.get("is_sector_aligned", False))
+        self.assertIsNone(rs_res.get("sector_change_pct"))
+
+    def test_log_confirmed_rejects_missing_stock_feed(self):
+        # HTTP 409 rejection when target stock is missing from raw_market_cache
+        import groww_terminal_app as gta
+        from engine.market_validator import MarketValidator
+        orig_is_open = MarketValidator.is_market_open
+        MarketValidator.is_market_open = staticmethod(lambda dt=None: True)
+        try:
+            with gta.app.test_client() as client:
+                now_ts = datetime.datetime.now().timestamp()
+                nifty_val = MarketValidator.validate_feed_freshness(self.df_5m, max_delay_seconds=300, candle_duration_seconds=300)
+                is_comp = nifty_val.get("is_completed_candle", False)
+                eval_nifty = self.df_5m if is_comp else self.df_5m.iloc[:-1]
+                c_ts = str(eval_nifty.index[-1])
+
+                gta.screener_state.setdefault("raw_market_cache", {})["^NSEI"] = {
+                    "timestamp": now_ts, "df": self.df_5m
+                }
+                # Ensure MISSING_STK is NOT in raw_market_cache
+                gta.screener_state["raw_market_cache"].pop("MISSING_STK", None)
+                gta.screener_state["raw_market_cache"].pop("MISSING_STK.NS", None)
+
+                gta.screener_state["ranked_opportunities"] = {
+                    "top_bullish": [{
+                        "symbol": "MISSING_STK", "action": "BUY", "direction": "BULLISH",
+                        "current_price": 500.0, "suggested_sl": 490.0, "suggested_tp1": 520.0,
+                        "candle_ts": c_ts, "is_actionable": True, "stage": "CONFIRMED"
+                    }],
+                    "top_bearish": []
+                }
+                gta.screener_state["ranked_candle_ts"] = c_ts
+
+                resp = client.post("/api/signals/log-confirmed", json={
+                    "symbol": "MISSING_STK", "action": "BUY", "direction": "BULLISH", "candle_ts": c_ts
+                })
+                self.assertEqual(resp.status_code, 409)
+                resp_data = json.loads(resp.data)
+                self.assertIn("missing from cache", resp_data.get("error", ""))
+        finally:
+            MarketValidator.is_market_open = orig_is_open
+
+    def test_log_confirmed_rejects_stock_market_timestamp_mismatch(self):
+        # HTTP 409 rejection when stock completed candle is out of sync with NIFTY market baseline
+        import groww_terminal_app as gta
+        from engine.market_validator import MarketValidator
+        orig_is_open = MarketValidator.is_market_open
+        MarketValidator.is_market_open = staticmethod(lambda dt=None: True)
+        try:
+            with gta.app.test_client() as client:
+                now_ts = datetime.datetime.now().timestamp()
+                nifty_val = MarketValidator.validate_feed_freshness(self.df_5m, max_delay_seconds=300, candle_duration_seconds=300)
+                is_comp = nifty_val.get("is_completed_candle", False)
+                eval_nifty = self.df_5m if is_comp else self.df_5m.iloc[:-1]
+                nifty_ts = str(eval_nifty.index[-1])
+
+                gta.screener_state.setdefault("raw_market_cache", {})["^NSEI"] = {
+                    "timestamp": now_ts, "df": self.df_5m
+                }
+                # Stock candle is 1 bar behind the evaluated NIFTY completed candle
+                stale_stock_df = eval_nifty.iloc[:-1].copy()
+                gta.screener_state["raw_market_cache"]["STALE_STK"] = {
+                    "timestamp": now_ts, "df": stale_stock_df
+                }
+
+                gta.screener_state["ranked_opportunities"] = {
+                    "top_bullish": [{
+                        "symbol": "STALE_STK", "action": "BUY", "direction": "BULLISH",
+                        "current_price": 500.0, "suggested_sl": 490.0, "suggested_tp1": 520.0,
+                        "candle_ts": nifty_ts, "is_actionable": True, "stage": "CONFIRMED"
+                    }],
+                    "top_bearish": []
+                }
+                gta.screener_state["ranked_candle_ts"] = nifty_ts
+
+                resp = client.post("/api/signals/log-confirmed", json={
+                    "symbol": "STALE_STK", "action": "BUY", "direction": "BULLISH", "candle_ts": nifty_ts
+                })
+                self.assertEqual(resp.status_code, 409)
+                resp_data = json.loads(resp.data)
+                self.assertIn("out of sync", resp_data.get("error", ""))
+        finally:
+            MarketValidator.is_market_open = orig_is_open
+
+    def test_duplicate_expiries_preserve_all_contracts(self):
+        # Registering multiple expiries for same symbol preserves each distinct contract spec
+        # under composite key and assigns nearest expiry as default symbol alias
+        import os
+        old_secret = os.environ.get("BROKER_ADAPTER_AUTH_SECRET")
+        test_sec = "TEST_AUTH_SECRET_DUP_EXP_2026"
+        os.environ["BROKER_ADAPTER_AUTH_SECRET"] = test_sec
+        try:
+            today = datetime.date.today()
+            exp_near = str(today + datetime.timedelta(days=7))
+            exp_mid = str(today + datetime.timedelta(days=35))
+            exp_far = str(today + datetime.timedelta(days=63))
+
+            ContractMaster.register_dynamic_contracts({
+                f"DUPTEST:{exp_mid}": {
+                    "lot_size": 250, "expiry": exp_mid, "instrument_id": "NSE_GROWW_7701",
+                    "source": "GROWW_API", "update_date": str(today)
+                },
+                f"DUPTEST:{exp_far}": {
+                    "lot_size": 250, "expiry": exp_far, "instrument_id": "NSE_GROWW_7702",
+                    "source": "GROWW_API", "update_date": str(today)
+                },
+                f"DUPTEST:{exp_near}": {
+                    "lot_size": 250, "expiry": exp_near, "instrument_id": "NSE_GROWW_7700",
+                    "source": "GROWW_API", "update_date": str(today)
+                },
+                # Default symbol alias points to nearest
+                "DUPTEST": {
+                    "lot_size": 250, "expiry": exp_near, "instrument_id": "NSE_GROWW_7700",
+                    "source": "GROWW_API", "update_date": str(today)
+                }
+            }, adapter_secret=test_sec)
+
+            # Test explicit retrieval by composite keys
+            spec_near = ContractMaster.get_contract_spec("DUPTEST", expiry=exp_near)
+            spec_mid = ContractMaster.get_contract_spec("DUPTEST", expiry=exp_mid)
+            spec_far = ContractMaster.get_contract_spec("DUPTEST", expiry=exp_far)
+            default_spec = ContractMaster.get_contract_spec("DUPTEST")
+
+            self.assertEqual(spec_near["instrument_id"], "NSE_GROWW_7700")
+            self.assertEqual(spec_mid["instrument_id"], "NSE_GROWW_7701")
+            self.assertEqual(spec_far["instrument_id"], "NSE_GROWW_7702")
+            self.assertEqual(default_spec["instrument_id"], "NSE_GROWW_7700")
+            self.assertEqual(str(default_spec["expiry"]), exp_near)
+        finally:
+            if old_secret is not None:
+                os.environ["BROKER_ADAPTER_AUTH_SECRET"] = old_secret
+            else:
+                os.environ.pop("BROKER_ADAPTER_AUTH_SECRET", None)
 
 if __name__ == '__main__':
     unittest.main()

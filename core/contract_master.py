@@ -87,13 +87,21 @@ class ContractMaster:
     _DYNAMIC_LOT_SIZES = _DynamicLotSizesProxy()
 
     # Protected registration secret to guarantee contract provenance:
-    # Strictly loaded from environment variable. In test environments without env vars, uses authorized adapter key.
+    # Strictly loaded from environment variables (BROKER_ADAPTER_AUTH_SECRET or TEST_ADAPTER_AUTH_SECRET).
+    # Fails closed if no secret is configured in the environment.
     @classmethod
     def _get_required_registration_secret(cls) -> str:
-        return os.getenv("BROKER_ADAPTER_AUTH_SECRET") or os.getenv("TEST_ADAPTER_AUTH_SECRET") or cls._REGISTRATION_SECRET
+        return (os.getenv("BROKER_ADAPTER_AUTH_SECRET") or os.getenv("TEST_ADAPTER_AUTH_SECRET") or "").strip()
 
-    # Authorized adapter registration key (configurable via BROKER_ADAPTER_AUTH_SECRET)
-    _REGISTRATION_SECRET = os.getenv("BROKER_ADAPTER_AUTH_SECRET") or os.getenv("TEST_ADAPTER_AUTH_SECRET") or "BROKER_INGESTION_ADAPTER_AUTH_KEY_2026"
+    @classmethod
+    def get_adapter_auth_secret(cls) -> str:
+        return cls._get_required_registration_secret()
+
+    class _SecretDescriptor:
+        def __get__(self, obj, objtype=None):
+            return (os.getenv("BROKER_ADAPTER_AUTH_SECRET") or os.getenv("TEST_ADAPTER_AUTH_SECRET") or "").strip()
+
+    _REGISTRATION_SECRET = _SecretDescriptor()
 
     # Whitelist of Trusted Broker / Exchange Provenance Sources for Live Futures Contracts
     TRUSTED_CONTRACT_SOURCES = {

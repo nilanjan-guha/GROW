@@ -158,12 +158,23 @@ def auto_connect_groww():
                             except Exception:
                                 continue
 
-                            # Broker instrument master metadata: NEVER manufacture synthetic IDs or fake expiries!
-                            raw_inst = row.get('groww_symbol') or row.get('trading_symbol') or row.get('instrument_id')
+                            # Broker instrument master metadata: Validate authoritative broker instrument ID!
+                            # Trading symbol alone is NOT an instrument ID. Require authentic broker identifier
+                            # such as exchange_token or numeric/alpha instrument_id from Groww instrument master.
+                            raw_inst = (
+                                row.get('exchange_token') 
+                                or row.get('instrument_id') 
+                                or row.get('groww_symbol')
+                            )
                             if not raw_inst:
                                 continue
                             inst_id = str(raw_inst).strip()
+                            # Reject missing, non-authoritative trading symbol proxy, synthetic or malformed IDs
                             if not inst_id or ContractMaster.is_synthetic_instrument_id(inst_id):
+                                continue
+                            # Ensure instrument ID is not merely an unverified plain trading symbol string like RELIANCE_FUT
+                            u_clean = u_sym.replace(".NS", "").strip()
+                            if inst_id.upper() in (u_clean, f"{u_clean}_FUT", f"NSE_{u_clean}_FUT"):
                                 continue
 
                             raw_exp = row.get('expiry_date') or row.get('expiry')
@@ -204,10 +215,10 @@ def auto_connect_groww():
                     if contract_map:
                         auth_secret = os.getenv("BROKER_ADAPTER_AUTH_SECRET")
                         if not auth_secret:
-                            # Set default internal adapter secret if not explicitly configured in .env
-                            auth_secret = os.environ.setdefault("BROKER_ADAPTER_AUTH_SECRET", "GROWW_BROKER_SECURE_ADAPTER_KEY_2026")
-                        ContractMaster.register_dynamic_contracts(contract_map, adapter_secret=auth_secret)
-                        print(f"Registered {len(contract_map)} dynamic F&O contract lot sizes into ContractMaster via authorized Groww adapter.")
+                            print("[CONTRACT_MASTER] Refusing dynamic contract registration: BROKER_ADAPTER_AUTH_SECRET environment variable is missing (fail closed).")
+                        else:
+                            ContractMaster.register_dynamic_contracts(contract_map, adapter_secret=auth_secret)
+                            print(f"Registered {len(contract_map)} dynamic F&O contract lot sizes into ContractMaster via authorized Groww adapter.")
                 except Exception as c_err:
                     print("ContractMaster dynamic registration notice:", c_err)
 
