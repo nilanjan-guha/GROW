@@ -1111,7 +1111,7 @@ hasBearDOL = useDOLTargets and not na(dolBearTarget) and dolBearTarget < close -
 var int lastInstitScoreBar = -999
 var int lastInstitScore = 0
 
-institutBullScore := 0
+institutBullScore = 0
 institutBullScore := institutBullScore + (triggeredBullShift ? 2 : 0)                 // CHoCH/BOS MSS       (+2)
 institutBullScore := institutBullScore + (sweepLow ? 2 : 0)                            // Liquidity SSL Sweep  (+2)
 institutBullScore := institutBullScore + (sfpBull ? 2 : 0)                             // SFP Swing Failure    (+2)
@@ -1131,7 +1131,7 @@ institutBullScore := institutBullScore + (isInKillzone ? 1 : 0)                 
 institutBullScore := institutBullScore + (isPositiveDelta ? 1 : 0)                     // Order Flow Delta     (+1)
 institutBullScore := institutBullScore + (parentBullConfirmed ? 1 : 0)                 // Index Sync           (+1)
 
-institutBearScore := 0
+institutBearScore = 0
 institutBearScore := institutBearScore + (triggeredBearShift ? 2 : 0)
 institutBearScore := institutBearScore + (sweepHigh ? 2 : 0)
 institutBearScore := institutBearScore + (sfpBear ? 2 : 0)
