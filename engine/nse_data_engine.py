@@ -49,7 +49,7 @@ class NSEDataEngine:
 
         try:
             url = "https://www.nseindia.com/api/fiidiiTradeReact"
-            resp = self.session.get(url, timeout=10)
+            resp = self.session.get(url, timeout=5)
             if resp.status_code == 200:
                 rows = resp.json()
                 # Group by date

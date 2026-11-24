@@ -126,10 +126,10 @@ def auto_connect_groww():
         try:
             df = client.get_all_instruments()
             fno_df = df[df['segment'] == 'FNO']
-            INDEX_SYMBOLS = {'NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'BANKEX', 'SENSEX', 'NIFTYNXT50'}
+            INDEX_SYMBOLS = {'NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'BANKEX', 'SENSEX', 'NIFTYNXT50', 'NIFTYFPI'}
             raw_fno = [
                 s for s in fno_df['underlying_symbol'].dropna().unique() 
-                if s not in INDEX_SYMBOLS and 'TEST' not in s and not s.isdigit() and len(s) >= 2
+                if s not in INDEX_SYMBOLS and 'TEST' not in s and not s.startswith('NIFTY') and not s.isdigit() and len(s) >= 2
             ]
             if raw_fno:
                 screener_state["fno_universe"] = sorted(raw_fno)
