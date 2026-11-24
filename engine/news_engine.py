@@ -90,6 +90,13 @@ class NewsIntelligenceEngine:
                         "link": link,
                         "sentiment": self._analyze_headline_sentiment(title)
                     })
+        except urllib.error.HTTPError as he:
+            if he.code == 429:
+                # Rate limited by Google News RSS: cache existing articles or empty for 60s to prevent spam
+                prev_articles = self.stock_news_cache.get(sym, {}).get("articles", [])
+                self.stock_news_cache[sym] = {"timestamp": now - 240, "articles": prev_articles}
+                return prev_articles
+            print(f"[NEWS ENGINE] HTTP error for {sym}:", he)
         except Exception as e:
             print(f"[NEWS ENGINE] Error fetching targeted news for {sym}:", e)
 
