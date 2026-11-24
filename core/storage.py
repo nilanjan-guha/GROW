@@ -233,6 +233,19 @@ def evaluate_candle_transition(direction, entry, orig_sl, sl, tp1, tp2, tp1_hit_
             "sl": sl, "should_break": False
         }
 
+    # Reject missing, non-finite, or non-positive candle values (corrupted feed protection)
+    import math
+    for val in (entry, orig_sl, sl, tp1, c_open, c_high, c_low):
+        if val is None or not math.isfinite(float(val)) or float(val) <= 0:
+            return {
+                "outcome": "ACTIVE", "final_pnl": 0.0, "net_pnl": 0.0, "brokerage_costs": est_costs,
+                "tp1_hit": 1 if tp1_hit_prior else 0, "tp1_hit_time": None, "tp2_hit": 0, "tp2_hit_time": None,
+                "sl": sl, "should_break": False
+            }
+
+    if tp2 is not None and (not math.isfinite(float(tp2)) or float(tp2) <= 0):
+        tp2 = None
+
     direction = norm_dir
     outcome = "ACTIVE"
     final_pnl = 0.0

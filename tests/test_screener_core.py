@@ -1175,6 +1175,33 @@ class TestIntradayScreenerCore(unittest.TestCase):
         self.assertEqual(res_invalid["outcome"], "ACTIVE")
         self.assertFalse(res_invalid["should_break"])
 
+        # 6. Missing or invalid non-finite/negative OHLC -> Reject candle, remain ACTIVE
+        res_corrupt_price = evaluate_candle_transition(
+            direction="BUY", entry=1000.0, orig_sl=990.0, sl=990.0, tp1=1020.0, tp2=1040.0,
+            tp1_hit_prior=False, c_open=-50.0, c_high=1025.0, c_low=995.0, c_ts=1700000000.0, est_costs=1.5
+        )
+        self.assertEqual(res_corrupt_price["outcome"], "ACTIVE")
+        self.assertFalse(res_corrupt_price["should_break"])
+
+        # 7. Same-candle TP1 and TP2 touched -> Conservative sequence (TP1 win, remaining leg evaluated conservatively)
+        res_tp1_tp2_same = evaluate_candle_transition(
+            direction="BUY", entry=1000.0, orig_sl=990.0, sl=990.0, tp1=1020.0, tp2=1040.0,
+            tp1_hit_prior=False, c_open=1002.0, c_high=1045.0, c_low=1001.0, c_ts=1700000000.0, est_costs=1.5
+        )
+        self.assertEqual(res_tp1_tp2_same["outcome"], "WIN_FULL")
+        self.assertEqual(res_tp1_tp2_same["tp1_hit"], 1)
+        self.assertEqual(res_tp1_tp2_same["tp2_hit"], 1)
+
+        # 8. Same-candle TP1 and breakeven stop touched -> Conservative stop-first (partial win, not full win)
+        res_tp1_be_same = evaluate_candle_transition(
+            direction="BUY", entry=1000.0, orig_sl=990.0, sl=990.0, tp1=1020.0, tp2=1040.0,
+            tp1_hit_prior=False, c_open=1002.0, c_high=1025.0, c_low=999.0, c_ts=1700000000.0, est_costs=1.5
+        )
+        self.assertEqual(res_tp1_be_same["outcome"], "WIN_PARTIAL")
+        self.assertEqual(res_tp1_be_same["tp1_hit"], 1)
+        self.assertEqual(res_tp1_be_same["tp2_hit"], 0)
+        self.assertEqual(res_tp1_be_same["final_pnl"], 10.0)  # 0.5 * (1020-1000) + 0.5 * (1000-1000) = 10.0
+
     def test_nifty_benchmark_fail_closed_gate(self):
         # Verify that compute_and_update_ranked_opportunities fails-closed when NIFTY feed is corrupted
         import groww_terminal_app as gta
