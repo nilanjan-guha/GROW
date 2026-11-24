@@ -112,7 +112,9 @@ class TestIntradayScreenerCore(unittest.TestCase):
         conn = storage.get_db_connection()
         c = conn.cursor()
         c.execute("SELECT timestamp FROM historical_signals WHERE id = ?", (sig_id,))
-        now_ts = float(c.fetchone()["timestamp"])
+        now_ts = (int(float(c.fetchone()["timestamp"])) // 300) * 300
+        c.execute("UPDATE historical_signals SET timestamp = ?, signal_candle_close_time = ? WHERE id = ?", (now_ts, now_ts, sig_id))
+        conn.commit()
 
         # Candle 1 reaches TP1 (High 512, Low 502) -> TP1 hit, stop moved to breakeven (500)
         c1 = {"open": 505.0, "high": 512.0, "low": 502.0, "timestamp": now_ts + 300, "is_completed": True}
@@ -150,7 +152,9 @@ class TestIntradayScreenerCore(unittest.TestCase):
         conn = storage.get_db_connection()
         c = conn.cursor()
         c.execute("SELECT timestamp FROM historical_signals WHERE id = ?", (sig_id,))
-        now_ts = float(c.fetchone()["timestamp"])
+        now_ts = (int(float(c.fetchone()["timestamp"])) // 300) * 300
+        c.execute("UPDATE historical_signals SET timestamp = ?, signal_candle_close_time = ? WHERE id = ?", (now_ts, now_ts, sig_id))
+        conn.commit()
 
         # Candle 1 reaches TP1 for SELL (High 498, Low 488) -> TP1 hit, stop moved to breakeven (500)
         c1 = {"open": 495.0, "high": 498.0, "low": 488.0, "timestamp": now_ts + 300, "is_completed": True}
@@ -186,7 +190,9 @@ class TestIntradayScreenerCore(unittest.TestCase):
         conn = storage.get_db_connection()
         c = conn.cursor()
         c.execute("SELECT timestamp FROM historical_signals WHERE id = ?", (sig_id,))
-        now_ts = float(c.fetchone()["timestamp"])
+        now_ts = (int(float(c.fetchone()["timestamp"])) // 300) * 300
+        c.execute("UPDATE historical_signals SET timestamp = ?, signal_candle_close_time = ? WHERE id = ?", (now_ts, now_ts, sig_id))
+        conn.commit()
 
         # Candle touches BOTH TP1 (High 518 >= 515) and original SL (Low 488 <= 490) in the same bar
         c_ambiguous = {"open": 500.0, "high": 518.0, "low": 488.0, "timestamp": now_ts + 300, "is_completed": True}
@@ -214,7 +220,9 @@ class TestIntradayScreenerCore(unittest.TestCase):
         conn = storage.get_db_connection()
         c = conn.cursor()
         c.execute("SELECT timestamp FROM historical_signals WHERE id = ?", (sig_id,))
-        now_ts = float(c.fetchone()["timestamp"])
+        now_ts = (int(float(c.fetchone()["timestamp"])) // 300) * 300
+        c.execute("UPDATE historical_signals SET timestamp = ?, signal_candle_close_time = ? WHERE id = ?", (now_ts, now_ts, sig_id))
+        conn.commit()
 
         # Candle 1 hits TP1
         c1 = {"open": 502.0, "high": 512.0, "low": 502.0, "timestamp": now_ts + 300, "is_completed": True}
@@ -245,7 +253,9 @@ class TestIntradayScreenerCore(unittest.TestCase):
         conn = storage.get_db_connection()
         c = conn.cursor()
         c.execute("SELECT timestamp FROM historical_signals WHERE id = ?", (sig_id,))
-        now_ts = float(c.fetchone()["timestamp"])
+        now_ts = (int(float(c.fetchone()["timestamp"])) // 300) * 300
+        c.execute("UPDATE historical_signals SET timestamp = ?, signal_candle_close_time = ? WHERE id = ?", (now_ts, now_ts, sig_id))
+        conn.commit()
 
         c1 = {"open": 500.0, "high": 505.0, "low": 498.0, "timestamp": now_ts + 300, "is_completed": True}
         storage.evaluate_open_outcomes({sym: c1}, evaluation_time=now_ts + 600)
@@ -625,7 +635,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
         conn = storage.get_db_connection()
         c = conn.cursor()
         # Set signal timestamp and last_candle_time to 1 hour ago so test candles are guaranteed completed
-        one_hour_ago = time.time() - 3600
+        one_hour_ago = (int(time.time() - 3600) // 300) * 300
         c.execute("UPDATE historical_signals SET timestamp = ?, last_candle_time = ? WHERE id = ?", (one_hour_ago, one_hour_ago, sig_id))
         conn.commit()
         conn.close()
@@ -669,7 +679,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
 
         conn = storage.get_db_connection()
         c = conn.cursor()
-        one_hour_ago = time.time() - 3600
+        one_hour_ago = (int(time.time() - 3600) // 300) * 300
         c.execute("UPDATE historical_signals SET timestamp = ?, last_candle_time = ? WHERE id = ?", (one_hour_ago, one_hour_ago, sig_id))
         conn.commit()
         conn.close()
@@ -712,7 +722,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
 
         conn = storage.get_db_connection()
         c = conn.cursor()
-        one_hour_ago = time.time() - 3600
+        one_hour_ago = (int(time.time() - 3600) // 300) * 300
         c.execute("UPDATE historical_signals SET timestamp = ?, last_candle_time = ? WHERE id = ?", (one_hour_ago, one_hour_ago, sig_id))
         conn.commit()
         conn.close()
@@ -755,7 +765,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
 
         conn = storage.get_db_connection()
         c = conn.cursor()
-        one_hour_ago = time.time() - 3600
+        one_hour_ago = (int(time.time() - 3600) // 300) * 300
         c.execute("UPDATE historical_signals SET timestamp = ?, last_candle_time = ? WHERE id = ?", (one_hour_ago, one_hour_ago, sig_id))
         conn.commit()
         conn.close()
@@ -802,7 +812,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
 
         conn = storage.get_db_connection()
         c = conn.cursor()
-        one_hour_ago = time.time() - 3600
+        one_hour_ago = (int(time.time() - 3600) // 300) * 300
         c.execute("UPDATE historical_signals SET timestamp = ?, last_candle_time = ? WHERE id = ?", (one_hour_ago, one_hour_ago, sig_id))
         conn.commit()
         conn.close()
@@ -843,7 +853,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
 
         conn = storage.get_db_connection()
         c = conn.cursor()
-        one_hour_ago = time.time() - 3600
+        one_hour_ago = (int(time.time() - 3600) // 300) * 300
         c.execute("UPDATE historical_signals SET timestamp = ?, last_candle_time = ? WHERE id = ?", (one_hour_ago, one_hour_ago, sig_id))
         conn.commit()
         conn.close()
@@ -881,7 +891,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
 
         conn = storage.get_db_connection()
         c = conn.cursor()
-        one_hour_ago = time.time() - 3600
+        one_hour_ago = (int(time.time() - 3600) // 300) * 300
         c.execute("UPDATE historical_signals SET timestamp = ?, last_candle_time = ? WHERE id = ?", (one_hour_ago, one_hour_ago, sig_id))
         conn.commit()
         conn.close()
@@ -919,7 +929,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
 
         conn = storage.get_db_connection()
         c = conn.cursor()
-        one_hour_ago = time.time() - 3600
+        one_hour_ago = (int(time.time() - 3600) // 300) * 300
         c.execute("UPDATE historical_signals SET timestamp = ?, last_candle_time = ? WHERE id = ?", (one_hour_ago, one_hour_ago, sig_id))
         conn.commit()
         conn.close()
@@ -949,7 +959,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
         # In the market feed, this candle's index timestamp is base_epoch (which is < base_epoch + 3.0).
         # Outcome evaluator MUST NOT skip this first candle!
         now_epoch = time.time()
-        base_epoch = now_epoch - 1800  # 30 minutes ago today
+        base_epoch = (int(now_epoch - 1800) // 300) * 300  # 30 minutes ago today
         sig_id = storage.log_signal({
             "symbol": "TEST_FIRST_BAR.NS",
             "direction": "BUY",
@@ -996,7 +1006,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
     def test_quantity_and_instrument_type_cost_scaling(self):
         # Verify that different quantities scale brokerage and statutory fees properly
         from engine.cost_engine import IndianMarketCosts
-        one_hour_ago = time.time() - 3600
+        one_hour_ago = (int(time.time() - 3600) // 300) * 300
         sig_100_id = storage.log_signal({
             "symbol": "COST_100.NS", "direction": "BUY", "strategy": "TEST_STRAT",
             "entry_price": 1000.0, "stop_loss": 990.0, "target_1": 1020.0, "target_2": 1020.0, "quantity": 100,
@@ -1394,7 +1404,10 @@ class TestIntradayScreenerCore(unittest.TestCase):
         conn = storage.get_db_connection()
         c = conn.cursor()
         c.execute("SELECT timestamp FROM historical_signals WHERE id = ?", (sig1,))
-        ts1 = float(c.fetchone()["timestamp"])
+        ts1 = (int(float(c.fetchone()["timestamp"])) // 300) * 300
+        c.execute("UPDATE historical_signals SET timestamp = ?, signal_candle_close_time = ? WHERE id = ?", (ts1, ts1, sig1))
+        c.execute("UPDATE historical_signals SET timestamp = ?, signal_candle_close_time = ? WHERE id = ?", (ts1, ts1, sig2))
+        conn.commit()
 
         # Feed map: sym1 has corrupted string OHLC, sym2 has valid TP1-hitting candle
         data_map = {
@@ -1459,8 +1472,16 @@ class TestIntradayScreenerCore(unittest.TestCase):
         hist_spec = ContractMaster.get_contract_spec(sym, as_of_date=datetime.date(2023, 1, 1))
         self.assertEqual(hist_spec["lot_size"], 250)
 
-        # Register dynamic live contract with new lot size 300
-        ContractMaster.register_dynamic_contracts({sym: 300})
+        # Register dynamic live contract with new lot size 300 and valid broker identity
+        ContractMaster.register_dynamic_contracts({
+            sym: {
+                "lot_size": 300,
+                "expiry": str(datetime.date.today() + datetime.timedelta(days=7)),
+                "instrument_id": "FUT-RELIANCE-TEST",
+                "source": "BROKER_FEED",
+                "update_date": str(datetime.date.today())
+            }
+        })
 
         # For today (current session), dynamic takes precedence
         current_spec = ContractMaster.get_contract_spec(sym, as_of_date=datetime.date.today())
@@ -1715,7 +1736,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
     def test_dataframe_every_candle_completion_enforcement(self):
         # Every candle in DataFrame must have closed (c_ts + 300 <= now)
         sym = "DF_ALL_CANDLES_TEST.NS"
-        now_ts = time.time()
+        now_ts = (int(time.time()) // 300) * 300
         sig_id = storage.log_signal({
             "symbol": sym, "direction": "BUY", "strategy": "BOS",
             "entry_price": 100.0, "stop_loss": 90.0, "target_1": 110.0,
@@ -1954,6 +1975,58 @@ class TestIntradayScreenerCore(unittest.TestCase):
         row = c.fetchone()
         conn.close()
 
+        self.assertEqual(row["outcome"], "ACTIVE")
+        self.assertEqual(row["tp1_hit"], 0)
+
+    def test_untrusted_source_and_scalar_contract_registration_rejected(self):
+        today = datetime.date.today()
+        # 1. Reject scalar contract registration (no synthetic IDs allowed)
+        ContractMaster.register_dynamic_contracts({"SCALAR_SYM": 250})
+        self.assertNotIn(("SCALAR_SYM", today), ContractMaster._DYNAMIC_CONTRACTS)
+        self.assertNotIn(("SCALAR_SYM", "CURRENT"), ContractMaster._DYNAMIC_CONTRACTS)
+
+        # 2. Reject untrusted / arbitrary source labels
+        ContractMaster.register_dynamic_contracts({
+            "FAKE_SOURCE_SYM": {
+                "lot_size": 250,
+                "expiry": str(today + datetime.timedelta(days=14)),
+                "instrument_id": "FUT-FAKE-1",
+                "source": "ARBITRARY_SOURCE_LABEL",
+                "update_date": str(today)
+            }
+        })
+        self.assertNotIn(("FAKE_SOURCE_SYM", today + datetime.timedelta(days=14)), ContractMaster._DYNAMIC_CONTRACTS)
+
+    def test_dataframe_unaligned_5m_grid_rejected_unconditionally(self):
+        # Even without explicit flags, DataFrame candles off the 300s grid must be rejected
+        sym = "DF_GRID_REJECT.NS"
+        now_ts = (int(time.time()) // 300) * 300
+        sig_id = storage.log_signal({
+            "symbol": sym, "direction": "BUY", "strategy": "BOS",
+            "entry_price": 100.0, "stop_loss": 90.0, "target_1": 110.0,
+            "signal_candle_start": now_ts - 1200,
+            "signal_candle_close_time": now_ts - 900
+        })
+
+        # Candle off-grid by 83 seconds (starts at now_ts - 600 + 83)
+        offgrid_time = pd.to_datetime(now_ts - 600 + 83, unit='s', utc=True).tz_convert('Asia/Kolkata')
+        df_offgrid = pd.DataFrame({
+            "Open": [100.0],
+            "High": [115.0],  # Would hit TP1 if processed
+            "Low": [99.0],
+            "Close": [112.0],
+            "Volume": [10000]
+        }, index=pd.DatetimeIndex([offgrid_time]))
+
+        storage.evaluate_open_outcomes({sym: df_offgrid}, evaluation_time=now_ts)
+
+        conn = storage.get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT outcome, tp1_hit FROM historical_signals WHERE id = ?", (sig_id,))
+        row = c.fetchone()
+        conn.close()
+
+        # TP1 must NOT be hit because off-grid candle was rejected unconditionally
         self.assertEqual(row["outcome"], "ACTIVE")
         self.assertEqual(row["tp1_hit"], 0)
 

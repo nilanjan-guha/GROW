@@ -85,6 +85,16 @@ class ContractMaster:
 
     _DYNAMIC_LOT_SIZES = _DynamicLotSizesProxy()
 
+    # Strict Whitelist of Trusted Broker / Exchange Provenance Sources for Live Futures Contracts
+    TRUSTED_CONTRACT_SOURCES = {
+        "GROWW_API",
+        "GROWW_LIVE",
+        "NSE_CIRCULAR",
+        "NSE_MASTER",
+        "BROKER_FEED",
+        "BROKER_LIVE"
+    }
+
     @classmethod
     def register_dynamic_contracts(cls, lot_size_map: dict):
         """
@@ -93,9 +103,13 @@ class ContractMaster:
         
         Strictly validates:
         - Symbol must be non-empty string.
-        - Lot size must be strictly positive int.
+        - Contract record must be a dict containing broker-sourced instrument identity.
+        - Raw scalar integers without broker metadata are rejected for futures contract registration.
+        - Lot size must be strictly positive int (rejecting booleans).
         - Margin percentage must be between 0.05 (5%) and 1.0 (100%).
-        - Expiry date, instrument token/identifier, source, and ingestion timestamp are tracked and validated.
+        - Expiry date, instrument_id, source, and update_date are mandatory.
+        - Source must be within TRUSTED_CONTRACT_SOURCES.
+        - Synthetic IDs (e.g. FUT-{sym}-...) or fabricated update_date values are strictly rejected.
         """
         if not isinstance(lot_size_map, dict):
             return
@@ -119,30 +133,10 @@ class ContractMaster:
                 except Exception:
                     continue  # Reject unparseable explicit expiry in composite key
 
-            # Reject boolean types (in Python, isinstance(True, int) is True!)
-            if type(val) is bool:
-                continue
-
-            if type(val) is int:
-                if val <= 0:
-                    continue
-                # If explicit_expiry is provided in key, ensure it is unexpired
-                if explicit_expiry is not None and explicit_expiry < today_date:
-                    continue
-
-                spec_record = {
-                    "symbol": clean,
-                    "lot_size": val,
-                    "estimated_margin_pct": 0.20,
-                    "expiry": explicit_expiry,
-                    "instrument_id": f"FUT-{clean}-{explicit_expiry or 'CURRENT'}",
-                    "source": "BROKER_FEED",
-                    "update_date": today_date,
-                    "circular_ref": "NSE/FAOP/LIVE"
-                }
-                exp_key = explicit_expiry or 'CURRENT'
-                cls._DYNAMIC_CONTRACTS[(clean, exp_key)] = spec_record
-            elif isinstance(val, dict):
+            # P0: REJECT SCALAR LOT SIZES.
+            # Never manufacture synthetic instrument_id, synthetic source, or fake today_date!
+            # Live futures contracts require full broker-verified metadata dicts.
+            if isinstance(val, dict):
                 try:
                     raw_lot = val.get("lot_size")
                     # Reject booleans or missing lot size
@@ -160,18 +154,18 @@ class ContractMaster:
                         margin_pct = 0.20
 
                     expiry = val.get("expiry") or explicit_expiry
-                    if expiry is not None:
-                        try:
-                            expiry = pd.to_datetime(expiry).date()
-                        except Exception:
-                            continue  # Reject unparseable expiry date
-                        # Reject expired contracts
-                        if expiry < today_date:
-                            continue
+                    if expiry is None:
+                        continue  # Expiry is mandatory for live futures contracts
+                    try:
+                        expiry = pd.to_datetime(expiry).date()
+                    except Exception:
+                        continue  # Reject unparseable expiry date
+                    # Reject expired contracts
+                    if expiry < today_date:
+                        continue
 
                     # STRICT BROKER IDENTITY ENFORCEMENT:
-                    # Require an explicit instrument_id, expiry, source, and update_date from the broker feed.
-                    # Never manufacture synthetic instrument IDs or fake today_date freshness!
+                    # Require an explicit instrument_id from the broker feed.
                     raw_inst_id = val.get("instrument_id")
                     if raw_inst_id is None:
                         continue
@@ -179,12 +173,12 @@ class ContractMaster:
                     if not inst_id:
                         continue  # Reject empty instrument_id
 
-                    # Source validation: must be an authoritative broker feed
+                    # Source validation: must be in the trusted whitelist of broker/exchange sources
                     raw_source = val.get("source")
                     if raw_source is None:
                         continue
                     source = str(raw_source).strip()
-                    if not source:
+                    if not source or source.upper() not in cls.TRUSTED_CONTRACT_SOURCES:
                         continue
 
                     # Update date validation: strictly required from broker feed (no manufactured today_date)
@@ -208,12 +202,11 @@ class ContractMaster:
                         "estimated_margin_pct": margin_pct,
                         "expiry": expiry,
                         "instrument_id": inst_id,
-                        "source": source,
+                        "source": source.upper(),
                         "update_date": update_dt,
                         "circular_ref": str(val.get("circular_ref", "NSE/FAOP/LIVE"))
                     }
-                    exp_key = expiry or 'CURRENT'
-                    cls._DYNAMIC_CONTRACTS[(clean, exp_key)] = spec_record
+                    cls._DYNAMIC_CONTRACTS[(clean, expiry)] = spec_record
                 except (ValueError, TypeError):
                     continue
 

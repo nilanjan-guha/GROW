@@ -470,13 +470,13 @@ def evaluate_candle_transition(direction, entry, orig_sl, sl, tp1, tp2, tp1_hit_
         "should_break": should_break
     }
 
-def validate_candle_record(c_ts, raw_open, raw_high, raw_low, now_ts, is_completed_flag=None, enforce_grid=False):
+def validate_candle_record(c_ts, raw_open, raw_high, raw_low, now_ts, is_completed_flag=None, enforce_grid=True):
     """
     Unified authoritative validator for single 5-minute candles across both DataFrame and Dictionary paths.
     
     Strict guarantees:
     1. Timestamp must be a positive, finite float.
-    2. 5-Minute Grid: when enforce_grid=True (or unaligned feed flagged), candle timestamp must align with 5-minute multiples (300 seconds), allowing 1.5s clock jitter.
+    2. 5-Minute Grid: candle timestamp must align with 5-minute multiples (300 seconds), allowing 1.5s clock jitter.
     3. Physical Clock Completion: candle cannot be in the future (c_ts + 300 <= now_ts).
     4. Completion Flag:
        - If omitted (None), candle is considered complete because clock has passed (c_ts + 300 <= now_ts).
@@ -497,8 +497,8 @@ def validate_candle_record(c_ts, raw_open, raw_high, raw_low, now_ts, is_complet
     except (ValueError, TypeError):
         return False, None, None, None, None
 
-    # 1. 5-Minute exchange grid alignment (multiples of 300 seconds)
-    # When enforce_grid is True, strictly reject timestamps off the 300s grid.
+    # 1. Mandatory 5-Minute exchange grid alignment (multiples of 300 seconds)
+    # When enforce_grid is True (default), strictly reject timestamps off the 300s grid.
     if enforce_grid:
         grid_rem = round(ts) % 300
         if 2 <= grid_rem <= 298:
@@ -809,10 +809,9 @@ def evaluate_open_outcomes(data_map, force_eod=False, evaluation_time=None):
                 raw_high = data.get("high")
                 raw_low = data.get("low")
                 raw_is_comp = data.get("is_completed")
-                enforce_grid = data.get("enforce_grid", False)
 
-                # Unified authoritative candle validation: enforces positive finite ts, 5-min grid, completion (ts + 300 <= now), completion flag, and OHLC integrity
-                is_valid, c_ts, c_open, c_high, c_low = validate_candle_record(raw_ts, raw_open, raw_high, raw_low, now, is_completed_flag=raw_is_comp, enforce_grid=enforce_grid)
+                # Unified authoritative candle validation: enforces positive finite ts, mandatory 5-min grid, completion (ts + 300 <= now), completion flag, and OHLC integrity
+                is_valid, c_ts, c_open, c_high, c_low = validate_candle_record(raw_ts, raw_open, raw_high, raw_low, now, is_completed_flag=raw_is_comp, enforce_grid=True)
                 if not is_valid:
                     continue
 
