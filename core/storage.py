@@ -470,6 +470,79 @@ def evaluate_candle_transition(direction, entry, orig_sl, sl, tp1, tp2, tp1_hit_
         "should_break": should_break
     }
 
+def validate_candle_record(c_ts, raw_open, raw_high, raw_low, now_ts, is_completed_flag=None, enforce_grid=False):
+    """
+    Unified authoritative validator for single 5-minute candles across both DataFrame and Dictionary paths.
+    
+    Strict guarantees:
+    1. Timestamp must be a positive, finite float.
+    2. 5-Minute Grid: when enforce_grid=True (or unaligned feed flagged), candle timestamp must align with 5-minute multiples (300 seconds), allowing 1.5s clock jitter.
+    3. Physical Clock Completion: candle cannot be in the future (c_ts + 300 <= now_ts).
+    4. Completion Flag:
+       - If omitted (None), candle is considered complete because clock has passed (c_ts + 300 <= now_ts).
+       - If provided, it must be strictly a boolean True (or truthy int 1); False, 0, or strings like "false" are rejected.
+    5. Structural OHLC integrity:
+       - Open, High, Low must be positive, finite numbers.
+       - Strictly Low <= Open <= High and High >= Low.
+       
+    Returns (True, c_ts, c_open, c_high, c_low) if valid, otherwise (False, None, None, None, None).
+    """
+    import math
+    if c_ts is None:
+        return False, None, None, None, None
+    try:
+        ts = float(c_ts)
+        if not math.isfinite(ts) or ts <= 0:
+            return False, None, None, None, None
+    except (ValueError, TypeError):
+        return False, None, None, None, None
+
+    # 1. 5-Minute exchange grid alignment (multiples of 300 seconds)
+    # When enforce_grid is True, strictly reject timestamps off the 300s grid.
+    if enforce_grid:
+        grid_rem = round(ts) % 300
+        if 2 <= grid_rem <= 298:
+            return False, None, None, None, None
+
+    # 2. Clock completion check: candle close (ts + 300) must be <= authoritative now
+    if ts + 300 > now_ts:
+        return False, None, None, None, None
+
+    # 3. Explicit completion flag validation: reject non-boolean / string false values
+    if is_completed_flag is not None:
+        if isinstance(is_completed_flag, str) and is_completed_flag.lower().strip() in ("false", "0", "no"):
+            return False, None, None, None, None
+        if is_completed_flag is False or is_completed_flag == 0:
+            return False, None, None, None, None
+        # Must be boolean True or integer 1 (reject arbitrary numbers like 1.5, 2)
+        if type(is_completed_flag) is bool:
+            if not is_completed_flag:
+                return False, None, None, None, None
+        elif isinstance(is_completed_flag, int):
+            if is_completed_flag != 1:
+                return False, None, None, None, None
+        else:
+            return False, None, None, None, None
+
+    # 4. OHLC structural integrity
+    if raw_open is None or raw_high is None or raw_low is None:
+        return False, None, None, None, None
+    try:
+        o = float(raw_open)
+        h = float(raw_high)
+        l = float(raw_low)
+    except (ValueError, TypeError):
+        return False, None, None, None, None
+
+    if not (math.isfinite(o) and math.isfinite(h) and math.isfinite(l)):
+        return False, None, None, None, None
+    if o <= 0 or h <= 0 or l <= 0:
+        return False, None, None, None, None
+    if not (l <= o <= h) or (h < l):
+        return False, None, None, None, None
+
+    return True, ts, o, h, l
+
 def evaluate_open_outcomes(data_map, force_eod=False, evaluation_time=None):
     """
     Evaluates all ACTIVE signals against chronological 5-minute OHLC candles formed strictly AFTER signal candle close.
@@ -680,41 +753,21 @@ def evaluate_open_outcomes(data_map, force_eod=False, evaluation_time=None):
                 now_ts = time.time()
                 for idx, (c_dt, row) in enumerate(df.iterrows()):
                     try:
-                        c_ts = c_dt.timestamp() if hasattr(c_dt, 'timestamp') else float(c_dt)
-                        if not math.isfinite(c_ts) or c_ts <= 0:
-                            continue
+                        raw_c_ts = c_dt.timestamp() if hasattr(c_dt, 'timestamp') else float(c_dt)
                     except Exception:
                         continue
 
-                    if (c_ts - last_candle_time) <= 1e-3 or (c_ts - eval_min_time) < -1e-3:
-                        continue
-
-                    # STRICT COMPLETION CHECK FOR EVERY CANDLE:
-                    # In live market evaluation (now), no future candle can be processed.
-                    # Every candle must have completed: c_ts + 300 <= now.
-                    candle_close_ts = c_ts + 300
-                    if candle_close_ts > now:
-                        continue
-
-                    # Safe extraction and structural validation of OHLC before any state or MFE/MAE update
+                    # Safe extraction of OHLC
                     raw_open = row.get('Open')
                     raw_high = row.get('High')
                     raw_low = row.get('Low')
-                    if raw_open is None or raw_high is None or raw_low is None:
-                        continue
-                    try:
-                        c_open = float(raw_open)
-                        c_high = float(raw_high)
-                        c_low = float(raw_low)
-                    except (ValueError, TypeError):
+
+                    # Unified candle validation: enforces positive finite ts, 5-min grid, completion (ts + 300 <= now), and OHLC integrity
+                    is_valid, c_ts, c_open, c_high, c_low = validate_candle_record(raw_c_ts, raw_open, raw_high, raw_low, now)
+                    if not is_valid:
                         continue
 
-                    # Pre-validate candle integrity: positive, finite, and strictly Low <= Open <= High
-                    if not (math.isfinite(c_open) and math.isfinite(c_high) and math.isfinite(c_low)):
-                        continue
-                    if c_open <= 0 or c_high <= 0 or c_low <= 0:
-                        continue
-                    if not (c_low <= c_open <= c_high) or (c_high < c_low):
+                    if (c_ts - last_candle_time) <= 1e-3 or (c_ts - eval_min_time) < -1e-3:
                         continue
 
                     newest_candle_time = max(newest_candle_time, c_ts)
@@ -751,65 +804,19 @@ def evaluate_open_outcomes(data_map, force_eod=False, evaluation_time=None):
 
             # Case B: Single candle dictionary
             elif isinstance(data, dict):
-                try:
-                    raw_ts = data.get("timestamp")
-                    if raw_ts is None:
-                        # Fail-closed: missing candle timestamp is strictly invalid for completed candle evaluation
-                        continue
-                    c_ts = float(raw_ts)
-                    if not math.isfinite(c_ts) or c_ts <= 0:
-                        continue
-                except (ValueError, TypeError):
-                    continue
-
-                # STRICT CANDLE COMPLETION & 5-MINUTE BOUNDARY ENFORCEMENT:
-                # 1. 5-Minute Grid check:
-                # Candles must be aligned to the 300-second grid. If explicitly flagged with enforce_grid=True,
-                # or when timestamp has non-zero remainder not near multiple of 300, reject unaligned feeds.
-                if data.get("enforce_grid", False):
-                    if (round(c_ts) % 300) > 1 and (round(c_ts) % 300) < 299:
-                        continue
-
-                # 2. Physical clock check: candle cannot be in the future.
-                #    A candle is strictly closed only after c_ts + 300 <= now.
-                #    Setting is_completed=True can NEVER bypass the physical clock (c_ts + 300 <= now).
-                if c_ts + 300 > now:
-                    continue
-
-                # 3. Completion flag handling:
-                #    - If raw_is_comp is omitted (None), candle is considered complete because clock passed (c_ts + 300 <= now).
-                #    - If explicitly provided, reject string falsy values (e.g. "false", "0", False)
+                raw_ts = data.get("timestamp")
+                raw_open = data.get("open")
+                raw_high = data.get("high")
+                raw_low = data.get("low")
                 raw_is_comp = data.get("is_completed")
-                if raw_is_comp is not None:
-                    if isinstance(raw_is_comp, str) and raw_is_comp.lower().strip() in ("false", "0", "no"):
-                        continue
-                    if raw_is_comp is False or raw_is_comp == 0:
-                        continue
-                    if type(raw_is_comp) is not bool and not isinstance(raw_is_comp, (int, float)):
-                        continue
+                enforce_grid = data.get("enforce_grid", False)
+
+                # Unified authoritative candle validation: enforces positive finite ts, 5-min grid, completion (ts + 300 <= now), completion flag, and OHLC integrity
+                is_valid, c_ts, c_open, c_high, c_low = validate_candle_record(raw_ts, raw_open, raw_high, raw_low, now, is_completed_flag=raw_is_comp, enforce_grid=enforce_grid)
+                if not is_valid:
+                    continue
 
                 if c_ts > last_candle_time and c_ts >= eval_min_time:
-                    raw_open = data.get("open")
-                    raw_high = data.get("high")
-                    raw_low = data.get("low")
-                    if raw_open is None or raw_high is None or raw_low is None:
-                        # Require complete OHLC data; do NOT fabricate missing open from low
-                        continue
-                    try:
-                        c_open = float(raw_open)
-                        c_high = float(raw_high)
-                        c_low = float(raw_low)
-                    except (ValueError, TypeError):
-                        continue
-
-                    # Pre-validate candle integrity: positive, finite, and strictly Low <= Open <= High
-                    if not (math.isfinite(c_open) and math.isfinite(c_high) and math.isfinite(c_low)):
-                        continue
-                    if c_open <= 0 or c_high <= 0 or c_low <= 0:
-                        continue
-                    if not (c_low <= c_open <= c_high) or (c_high < c_low):
-                        continue
-
                     newest_candle_time = c_ts
 
                     tp1_hit_prior = bool(tp1_hit)

@@ -416,15 +416,16 @@ header {
 
 .sector-card .active-radar-badge {
     display: none;
-    font-size: 0.60rem;
+    font-size: 0.58rem;
     font-weight: 800;
     color: #00f0ff;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.4px;
     background: rgba(0, 240, 255, 0.2);
     border: 1px solid rgba(0, 240, 255, 0.6);
-    padding: 1px 6px;
+    padding: 1px 5px;
     border-radius: 3px;
-    margin-left: 6px;
+    margin-left: 2px;
+    white-space: nowrap;
     text-shadow: 0 0 6px rgba(0, 240, 255, 0.5);
     animation: radarPulse 2s infinite ease-in-out;
 }

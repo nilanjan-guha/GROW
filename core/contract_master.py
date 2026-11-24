@@ -169,32 +169,38 @@ class ContractMaster:
                         if expiry < today_date:
                             continue
 
+                    # STRICT BROKER IDENTITY ENFORCEMENT:
+                    # Require an explicit instrument_id, expiry, source, and update_date from the broker feed.
+                    # Never manufacture synthetic instrument IDs or fake today_date freshness!
                     raw_inst_id = val.get("instrument_id")
-                    if raw_inst_id is not None:
-                        inst_id = str(raw_inst_id).strip()
-                        if not inst_id:
-                            continue  # Reject empty instrument_id
-                    else:
-                        inst_id = f"FUT-{clean}-{expiry or 'CURRENT'}"
+                    if raw_inst_id is None:
+                        continue
+                    inst_id = str(raw_inst_id).strip()
+                    if not inst_id:
+                        continue  # Reject empty instrument_id
 
-                    source = str(val.get("source", "BROKER_FEED")).strip()
+                    # Source validation: must be an authoritative broker feed
+                    raw_source = val.get("source")
+                    if raw_source is None:
+                        continue
+                    source = str(raw_source).strip()
                     if not source:
-                        source = "BROKER_FEED"
+                        continue
 
+                    # Update date validation: strictly required from broker feed (no manufactured today_date)
                     raw_update_dt = val.get("update_date")
-                    if raw_update_dt is not None:
-                        try:
-                            update_dt = pd.to_datetime(raw_update_dt).date()
-                        except Exception:
-                            continue  # Reject invalid update_date
-                        # Reject update_date in the future (data corruption / clock skew)
-                        if update_dt > today_date:
-                            continue
-                        # Freshness policy: Reject stale broker contract records older than 7 calendar days
-                        if (today_date - update_dt).days > 7:
-                            continue
-                    else:
-                        update_dt = today_date
+                    if raw_update_dt is None:
+                        continue  # Reject missing update_date
+                    try:
+                        update_dt = pd.to_datetime(raw_update_dt).date()
+                    except Exception:
+                        continue  # Reject invalid update_date
+                    # Reject update_date in the future (data corruption / clock skew)
+                    if update_dt > today_date:
+                        continue
+                    # Freshness policy: Reject stale broker contract records older than 7 calendar days
+                    if (today_date - update_dt).days > 7:
+                        continue
 
                     spec_record = {
                         "symbol": clean,

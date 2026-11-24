@@ -1583,13 +1583,17 @@ class TestIntradayScreenerCore(unittest.TestCase):
                 "lot_size": 250,
                 "estimated_margin_pct": 0.22,
                 "expiry": str(exp_near),
-                "instrument_id": f"FUT-MULTI_TEST-{exp_near}"
+                "instrument_id": f"FUT-MULTI_TEST-{exp_near}",
+                "source": "BROKER_FEED",
+                "update_date": str(today)
             },
             f"MULTI_TEST:{exp_far}": {
                 "lot_size": 250,
                 "estimated_margin_pct": 0.25,
                 "expiry": str(exp_far),
-                "instrument_id": f"FUT-MULTI_TEST-{exp_far}"
+                "instrument_id": f"FUT-MULTI_TEST-{exp_far}",
+                "source": "BROKER_FEED",
+                "update_date": str(today)
             }
         })
 
@@ -1652,7 +1656,9 @@ class TestIntradayScreenerCore(unittest.TestCase):
             f"FAIL_CLOSED_TEST::{today + datetime.timedelta(days=7)}": {
                 "lot_size": 150,
                 "expiry": str(today + datetime.timedelta(days=7)),
-                "instrument_id": f"FUT-FAIL_CLOSED_TEST-{today + datetime.timedelta(days=7)}"
+                "instrument_id": f"FUT-FAIL_CLOSED_TEST-{today + datetime.timedelta(days=7)}",
+                "source": "BROKER_FEED",
+                "update_date": str(today)
             }
         })
 
@@ -1892,11 +1898,64 @@ class TestIntradayScreenerCore(unittest.TestCase):
                 "lot_size": 300,
                 "expiry": str(today + datetime.timedelta(days=14)),
                 "update_date": str(stale_date),
-                "instrument_id": "FUT-STALE-1"
+                "instrument_id": "FUT-STALE-1",
+                "source": "BROKER_FEED"
             }
         })
         # Freshness policy must reject stale broker records
         self.assertNotIn(("STALE_BROKER_SYM", today + datetime.timedelta(days=14)), ContractMaster._DYNAMIC_CONTRACTS)
+
+    def test_missing_update_date_and_missing_source_rejected(self):
+        today = datetime.date.today()
+        # 1. Reject record with missing update_date (no manufactured freshness)
+        ContractMaster.register_dynamic_contracts({
+            "NO_UPDATE_DT_SYM": {
+                "lot_size": 100,
+                "expiry": str(today + datetime.timedelta(days=14)),
+                "instrument_id": "FUT-NO-DT-1",
+                "source": "BROKER_FEED"
+            }
+        })
+        self.assertNotIn(("NO_UPDATE_DT_SYM", today + datetime.timedelta(days=14)), ContractMaster._DYNAMIC_CONTRACTS)
+
+        # 2. Reject record with missing source
+        ContractMaster.register_dynamic_contracts({
+            "NO_SOURCE_SYM": {
+                "lot_size": 100,
+                "expiry": str(today + datetime.timedelta(days=14)),
+                "instrument_id": "FUT-NO-SRC-1",
+                "update_date": str(today)
+            }
+        })
+        self.assertNotIn(("NO_SOURCE_SYM", today + datetime.timedelta(days=14)), ContractMaster._DYNAMIC_CONTRACTS)
+
+    def test_non_boolean_numeric_completion_flags_rejected(self):
+        sym = "NUM_COMPLETION_TEST.NS"
+        now_ts = time.time()
+        base_grid = (int(now_ts) // 300) * 300
+        sig_id = storage.log_signal({
+            "symbol": sym, "direction": "BUY", "strategy": "BOS",
+            "entry_price": 100.0, "stop_loss": 90.0, "target_1": 110.0, "target_2": 120.0,
+            "signal_candle_start": base_grid - 1200,
+            "signal_candle_close_time": base_grid - 900
+        })
+
+        # Candle with float completion flag like 1.5 or int 2 must fail validation
+        candle_bad_flag = {
+            "open": 101.0, "high": 115.0, "low": 100.5, "close": 112.0,
+            "timestamp": base_grid - 300,
+            "is_completed": 1.5
+        }
+        storage.evaluate_open_outcomes({sym: candle_bad_flag}, evaluation_time=base_grid)
+
+        conn = storage.get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT outcome, tp1_hit FROM historical_signals WHERE id = ?", (sig_id,))
+        row = c.fetchone()
+        conn.close()
+
+        self.assertEqual(row["outcome"], "ACTIVE")
+        self.assertEqual(row["tp1_hit"], 0)
 
 if __name__ == '__main__':
     unittest.main()
