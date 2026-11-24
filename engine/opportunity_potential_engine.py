@@ -273,8 +273,8 @@ class OpportunityPotentialEngine:
                 if imm_dist_pct < dynamic_clearance_pct:
                     immediate_clearance_blocked = True
 
-            # STRICT > 1.0% UNROUNDED POTENTIAL GATE + STRICT UNROUNDED RR >= 1.5 GATE
-            is_viable = (raw_room_to_tp1_pct > 1.0) and (raw_rr_ratio >= 1.5) and not is_exhausted and not reversal_detected and not immediate_clearance_blocked
+            # INTRADAY RISK:REWARD GATE (RR >= 1.25, Potential Room > 0.70%)
+            is_viable = (raw_room_to_tp1_pct >= 0.70) and (raw_rr_ratio >= 1.25) and not is_exhausted and not reversal_detected and not immediate_clearance_blocked
             rr_ratio = round(raw_rr_ratio, 2)
 
             exhaustion_level = "HIGH" if is_exhausted else ("MODERATE" if range_exhaustion_ratio >= 1.2 else "LOW")
@@ -286,10 +286,10 @@ class OpportunityPotentialEngine:
                     reason = f"Intraday move exhausted: Daily range ({range_exhaustion_ratio}x Daily ATR) already consumed."
                 elif immediate_clearance_blocked:
                     reason = f"Entry blocked by immediate overhead ceiling: {obstacles[0][0]} @ ₹{obstacles[0][1]:.1f} ({imm_dist_pct:.2f}% away < {dynamic_clearance_pct:.2f}% dynamic threshold)."
-                elif raw_rr_ratio < 1.5:
-                    reason = f"Insufficient Risk:Reward ratio (RR: 1:{rr_ratio:.2f} < 1:1.50 required)."
+                elif raw_rr_ratio < 1.25:
+                    reason = f"Insufficient Risk:Reward ratio (RR: 1:{rr_ratio:.2f} < 1:1.25 required)."
                 else:
-                    reason = f"Insufficient upside clearance: Nearest resistance ({nearest_name} @ ₹{tp1:.1f}) is only +{room_to_tp1_pct}% away (Strictly > 1.0% required)."
+                    reason = f"Insufficient upside clearance: Nearest resistance ({nearest_name} @ ₹{tp1:.1f}) is only +{room_to_tp1_pct}% away (Strictly >= 0.70% required)."
             else:
                 reason = f"Clear expansion room: +{room_to_tp1_pct}% to {nearest_name} (₹{tp1:.1f}) [{tp1_type}], RR: 1:{rr_ratio}."
 
@@ -381,8 +381,8 @@ class OpportunityPotentialEngine:
                 if imm_dist_pct < dynamic_clearance_pct:
                     immediate_clearance_blocked = True
 
-            # STRICT > 1.0% UNROUNDED POTENTIAL GATE + STRICT UNROUNDED RR >= 1.5 GATE
-            is_viable = (raw_room_to_tp1_pct > 1.0) and (raw_rr_ratio >= 1.5) and not is_exhausted and not reversal_detected and not immediate_clearance_blocked
+            # INTRADAY RISK:REWARD GATE (RR >= 1.25, Potential Room > 0.70%)
+            is_viable = (raw_room_to_tp1_pct >= 0.70) and (raw_rr_ratio >= 1.25) and not is_exhausted and not reversal_detected and not immediate_clearance_blocked
             rr_ratio = round(raw_rr_ratio, 2)
 
             exhaustion_level = "HIGH" if is_exhausted else ("MODERATE" if range_exhaustion_ratio >= 1.2 else "LOW")
@@ -394,10 +394,10 @@ class OpportunityPotentialEngine:
                     reason = f"Downside move exhausted: Daily range ({range_exhaustion_ratio}x Daily ATR) already consumed."
                 elif immediate_clearance_blocked:
                     reason = f"Entry blocked by immediate floor support: {obstacles[0][0]} @ ₹{obstacles[0][1]:.1f} ({imm_dist_pct:.2f}% away < {dynamic_clearance_pct:.2f}% dynamic threshold)."
-                elif raw_rr_ratio < 1.5:
-                    reason = f"Insufficient Risk:Reward ratio (RR: 1:{rr_ratio:.2f} < 1:1.50 required)."
+                elif raw_rr_ratio < 1.25:
+                    reason = f"Insufficient Risk:Reward ratio (RR: 1:{rr_ratio:.2f} < 1:1.25 required)."
                 else:
-                    reason = f"Insufficient downside clearance: Nearest support ({nearest_name} @ ₹{tp1:.1f}) is only -{room_to_tp1_pct}% away (Strictly > 1.0% required)."
+                    reason = f"Insufficient downside clearance: Nearest support ({nearest_name} @ ₹{tp1:.1f}) is only -{room_to_tp1_pct}% away (Strictly >= 0.70% required)."
             else:
                 reason = f"Clear downside expansion room: -{room_to_tp1_pct}% to {nearest_name} (₹{tp1:.1f}) [{tp1_type}], RR: 1:{rr_ratio}."
 

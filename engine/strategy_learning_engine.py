@@ -216,7 +216,7 @@ class StrategyLearningEngine:
         return 1.0
 
     @staticmethod
-    def get_combined_multiplier(strategy: str, market_regime: str = None, time_bucket: str = None) -> float:
+    def get_combined_multiplier(strategy: str, market_regime: str = None, time_bucket: str = None, as_of_ts=None) -> float:
         """
         Combines learned multipliers across dimensions safely:
         - Primary Strategy (0.50x to 1.50x)
@@ -224,10 +224,31 @@ class StrategyLearningEngine:
         - Time of Day (0.70x to 1.30x)
         Only applies dimensions with statistically validated sample size.
         Bounds overall multiplier between 0.40x and 1.60x to prevent uncontrolled compounding.
+        If as_of_ts is provided (historical replay), strictly calculates point-in-time multipliers
+        using only signals that completed at or before as_of_ts, preventing future learning leakage!
         """
         try:
             conn = get_db_connection()
             c = conn.cursor()
+
+            # If historical replay cutoff provided, query point-in-time closed trades up to as_of_ts
+            if as_of_ts is not None:
+                as_of_str = str(as_of_ts)
+                c.execute("""
+                    SELECT strategy, outcome 
+                    FROM historical_signals 
+                    WHERE outcome IS NOT NULL AND outcome != 'ACTIVE' AND timestamp <= ? AND strategy = ?
+                """, (as_of_str, strategy))
+                hist_rows = c.fetchall()
+                conn.close()
+                if len(hist_rows) < StrategyLearningEngine.MIN_OBSERVATIONS:
+                    return 1.0
+                wins = sum(1 for r in hist_rows if 'WIN' in str(r['outcome']))
+                wr = wins / len(hist_rows)
+                # Calibrate multiplier: 50% baseline -> 1.0, 70% -> 1.25, 30% -> 0.75
+                strat_mult = max(0.50, min(1.50, 1.0 + (wr - 0.50) * 1.25))
+                return round(strat_mult, 2)
+
             keys = [strategy]
             if market_regime:
                 keys.append(f"REGIME_{market_regime}")

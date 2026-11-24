@@ -624,12 +624,38 @@ def update_strategy_performance(cursor, strategy, signal_id=None):
             updated_at = excluded.updated_at
         """, (strat, total, wins, losses, win_rate, avg_rr, profit_factor, net_profit_factor, total_gross_pnl, total_net_pnl, time.time()))
 
-def get_strategy_performance_stats():
+def get_strategy_performance_stats(as_of_ts=None):
+    """
+    Returns strategy performance statistics.
+    If as_of_ts is provided (point-in-time backtesting/replay), strictly excludes
+    any trades or learning signals that closed or occurred AFTER as_of_ts to prevent lookahead leakage.
+    """
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM strategy_performance ORDER BY total_signals DESC")
-        rows = [dict(r) for r in cursor.fetchall()]
+        if as_of_ts is not None:
+            as_of_str = str(as_of_ts)
+            cursor.execute("""
+                SELECT 
+                    strategy,
+                    COUNT(*) as total_signals,
+                    SUM(CASE WHEN outcome LIKE '%WIN%' THEN 1 ELSE 0 END) as wins,
+                    SUM(CASE WHEN outcome = 'LOSS' THEN 1 ELSE 0 END) as losses,
+                    AVG(net_pnl) as avg_pnl
+                FROM historical_signals 
+                WHERE outcome IS NOT NULL AND outcome != 'ACTIVE' AND timestamp <= ?
+                GROUP BY strategy
+            """, (as_of_str,))
+            rows = []
+            for r in cursor.fetchall():
+                d = dict(r)
+                tot = d.get("total_signals", 0)
+                w = d.get("wins", 0)
+                d["win_rate"] = round((w / tot * 100), 1) if tot > 0 else 50.0
+                rows.append(d)
+        else:
+            cursor.execute("SELECT * FROM strategy_performance ORDER BY total_signals DESC")
+            rows = [dict(r) for r in cursor.fetchall()]
         conn.close()
         return rows
     except Exception:

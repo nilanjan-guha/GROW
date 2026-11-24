@@ -1090,7 +1090,7 @@ def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
 
     raw_items = screener_state.get("raw_market_cache", {})
     for sym, item in raw_items.items():
-        if sym == "^NSEI" or item.get("df") is None:
+        if not item or not isinstance(item, dict) or sym == "^NSEI" or item.get("df") is None:
             continue
         clean_sym = sym.replace(".NS", "").upper()
         if norm_fno_set and clean_sym not in norm_fno_set:
@@ -1118,20 +1118,22 @@ def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
         # Prioritize top sector constituents, BUT allow stocks with exceptional 5m momentum/coils (pre_coil or high RVOL)
         # CRITICAL: Verify that the standalone setup data matches the EXACT current completed candle timestamp!
         # Both evaluated_completed_candle_ts and rvol_candle_ts must match stock_candle_ts.
-        fno_data_item = item.get("fno_filter_data", {})
+        item_dict = item if isinstance(item, dict) else {}
+        fno_data_raw = item_dict.get("fno_filter_data")
+        fno_data_item = fno_data_raw if isinstance(fno_data_raw, dict) else {}
         fno_eval_ts = fno_data_item.get("evaluated_completed_candle_ts")
         fno_rvol_ts = fno_data_item.get("rvol_candle_ts")
         
         # Mandatory freshness: must have valid evaluated candle timestamp equal to current completed candle
-        is_fno_fresh = (fno_eval_ts == stock_candle_ts) and (fno_rvol_ts is None or fno_rvol_ts == stock_candle_ts)
+        is_fno_fresh = bool(fno_eval_ts and fno_eval_ts == stock_candle_ts and (fno_rvol_ts is None or fno_rvol_ts == stock_candle_ts))
 
-        has_standalone_setup = (
+        has_standalone_setup = bool(
             is_fno_fresh and (
                 fno_data_item.get("is_pre_coil", False) or 
                 fno_data_item.get("rvol", 0.0) >= 1.5 or 
                 fno_data_item.get("velocity", 0.0) >= 2.0
             )
-        ) if fno_data_item else False
+        )
 
         if sector_constituents and sym not in sector_constituents and f"{clean_sym}.NS" not in sector_constituents:
             # If outside top sectors, only evaluate if it has a validated, FRESH standalone pre-breakout setup

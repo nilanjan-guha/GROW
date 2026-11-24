@@ -29,7 +29,8 @@ class ScreenerPipeline:
         prev_close=None,
         time_slot_rvol=None,
         rvol_obs=0,
-        is_replay=False
+        is_replay=False,
+        sector_df=None
     ):
         """
         Executes complete institutional + opportunity ranking analysis on a single stock's 5m history.
@@ -135,7 +136,8 @@ class ScreenerPipeline:
             opp_eval=opp_eval,
             time_slot_rvol=time_slot_rvol,
             rvol_obs=rvol_obs,
-            is_liquid=True
+            is_liquid=True,
+            sector_df=sector_df
         )
 
         return {

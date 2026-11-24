@@ -452,7 +452,7 @@ class OpportunityRankingEngine:
         # 1. SL and TP must be finite, positive numbers (not NaN or Inf)
         # 2. For BUY: SL < curr_c and TP1 > curr_c
         # 3. For SELL: SL > curr_c and TP1 < curr_c
-        # 4. Computed RR = (reward / risk) >= 1.30 without lossy premature rounding
+        # 4. Computed RR = (reward / risk) >= 1.25 without lossy premature rounding
         import math
         computed_rr = 0.0
         has_valid_structural_risk = False
@@ -467,14 +467,14 @@ class OpportunityRankingEngine:
                         risk = curr_c_val - sl_val
                         reward = tp1_val - curr_c_val
                         raw_rr = reward / risk if risk > 0 else 0.0
-                        if math.isfinite(raw_rr) and raw_rr >= 1.30:
+                        if math.isfinite(raw_rr) and raw_rr >= 1.25:
                             computed_rr = round(raw_rr, 2)
                             has_valid_structural_risk = True
                     elif direction == "BEARISH" and sl_val > curr_c_val and tp1_val < curr_c_val:
                         risk = sl_val - curr_c_val
                         reward = curr_c_val - tp1_val
                         raw_rr = reward / risk if risk > 0 else 0.0
-                        if math.isfinite(raw_rr) and raw_rr >= 1.30:
+                        if math.isfinite(raw_rr) and raw_rr >= 1.25:
                             computed_rr = round(raw_rr, 2)
                             has_valid_structural_risk = True
             except (ValueError, TypeError):
@@ -647,6 +647,10 @@ class OpportunityRankingEngine:
         rvol_confidence = "HIGH" if rvol_obs >= 3 else ("MEDIUM" if rvol_obs >= 1 else "LOW")
         latest_candle_timestamp = str(stock_df.index[-1]) if stock_df is not None and not stock_df.empty else ""
 
+        # Explicit actionability flag: strictly requires confirmed stage with validated risk
+        # IGNITION, PREPARING, and OBSERVING are strictly watch-only (is_actionable = False)
+        is_actionable = bool(stage == "CONFIRMED" and has_valid_structural_risk and computed_rr >= 1.20)
+
         return {
             "symbol": symbol,
             "candle_ts": latest_candle_timestamp,
@@ -658,6 +662,7 @@ class OpportunityRankingEngine:
             "early_opportunity_score": early_bull_score if direction == "BULLISH" else early_bear_score,
             "confirmation_score": conf_bull_score if direction == "BULLISH" else conf_bear_score,
             "stage": stage,
+            "is_actionable": is_actionable,
             "stage_desc": stage_desc,
             "entry_trigger": entry_trigger,
             "invalidation_level": bull_invalidation if direction == "BULLISH" else bear_invalidation,
