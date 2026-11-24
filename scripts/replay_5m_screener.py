@@ -478,6 +478,7 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
             active_portfolio_positions.append({
                 "symbol": sym,
                 "direction": direction,
+                "entry_price": actual_entry,
                 "entry_ts": current_ts,
                 "exit_ts": exit_ts,
                 "net_pnl": net_pnl,
