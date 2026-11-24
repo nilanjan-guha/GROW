@@ -1627,7 +1627,10 @@ def log_confirmed_signal_endpoint():
             "signal_candle_close_time": c_close_ts,
             "signal_generated_at": time.time(),
             "quantity": intended_qty,
-            "instrument_type": intended_inst
+            "instrument_type": intended_inst,
+            "instrument_id": contract_spec.get("instrument_id") if contract_spec else None,
+            "contract_expiry": str(contract_spec.get("expiry")) if contract_spec and contract_spec.get("expiry") else None,
+            "contract_source": contract_spec.get("source") if contract_spec else None
         })
 
         # Cache in memory

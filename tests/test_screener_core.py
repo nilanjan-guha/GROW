@@ -10,6 +10,7 @@ import pytz
 
 from engine.opportunity_potential_engine import OpportunityPotentialEngine
 from strategies.institutional_engine import InstitutionalStrategyEngine
+from core.contract_master import ContractMaster
 import core.storage as storage
 
 class TestIntradayScreenerCore(unittest.TestCase):
@@ -1643,6 +1644,141 @@ class TestIntradayScreenerCore(unittest.TestCase):
 
         self.assertEqual(row["outcome"], "ACTIVE")
         self.assertEqual(row["tp1_hit"], 0)
+
+    def test_explicit_expiry_lookup_fails_closed(self):
+        # Explicitly requesting an unregistered or expired expiry must strictly return None, never fall back
+        today = datetime.date.today()
+        ContractMaster.register_dynamic_contracts({
+            f"FAIL_CLOSED_TEST::{today + datetime.timedelta(days=7)}": {
+                "lot_size": 150,
+                "expiry": str(today + datetime.timedelta(days=7)),
+                "instrument_id": f"FUT-FAIL_CLOSED_TEST-{today + datetime.timedelta(days=7)}"
+            }
+        })
+
+        # Requesting a non-existent explicit expiry fails closed
+        spec_missing = ContractMaster.get_contract_spec("FAIL_CLOSED_TEST", expiry=str(today + datetime.timedelta(days=35)))
+        self.assertIsNone(spec_missing)
+
+        # Requesting an invalid string expiry fails closed
+        spec_invalid = ContractMaster.get_contract_spec("FAIL_CLOSED_TEST", expiry="INVALID-DATE")
+        self.assertIsNone(spec_invalid)
+
+        # Requesting an expired date fails closed
+        past_date = str(today - datetime.timedelta(days=5))
+        spec_expired = ContractMaster.get_contract_spec("FAIL_CLOSED_TEST", expiry=past_date)
+        self.assertIsNone(spec_expired)
+
+        # Requesting the exact registered expiry succeeds
+        spec_exact = ContractMaster.get_contract_spec("FAIL_CLOSED_TEST", expiry=str(today + datetime.timedelta(days=7)))
+        self.assertIsNotNone(spec_exact)
+        self.assertEqual(spec_exact["lot_size"], 150)
+
+    def test_dynamic_contract_registration_rejects_invalid_types_and_future_updates(self):
+        today = datetime.date.today()
+        # 1. Reject boolean lot sizes (True/False)
+        ContractMaster.register_dynamic_contracts({"BOOL_LOT_TEST": True})
+        self.assertNotIn(("BOOL_LOT_TEST", "CURRENT"), ContractMaster._DYNAMIC_CONTRACTS)
+
+        ContractMaster.register_dynamic_contracts({
+            "BOOL_DICT_TEST": {"lot_size": True, "expiry": str(today + datetime.timedelta(days=7))}
+        })
+        self.assertNotIn(("BOOL_DICT_TEST", today + datetime.timedelta(days=7)), ContractMaster._DYNAMIC_CONTRACTS)
+
+        # 2. Reject future update_date (clock skew/corruption)
+        future_dt = str(today + datetime.timedelta(days=2))
+        ContractMaster.register_dynamic_contracts({
+            "FUTURE_DATE_TEST": {
+                "lot_size": 200,
+                "expiry": str(today + datetime.timedelta(days=7)),
+                "update_date": future_dt
+            }
+        })
+        self.assertNotIn(("FUTURE_DATE_TEST", today + datetime.timedelta(days=7)), ContractMaster._DYNAMIC_CONTRACTS)
+
+        # 3. Reject empty instrument_id
+        ContractMaster.register_dynamic_contracts({
+            "EMPTY_INST_TEST": {
+                "lot_size": 200,
+                "expiry": str(today + datetime.timedelta(days=7)),
+                "instrument_id": "   "
+            }
+        })
+        self.assertNotIn(("EMPTY_INST_TEST", today + datetime.timedelta(days=7)), ContractMaster._DYNAMIC_CONTRACTS)
+
+    def test_dataframe_every_candle_completion_enforcement(self):
+        # Every candle in DataFrame must have closed (c_ts + 300 <= now)
+        sym = "DF_ALL_CANDLES_TEST.NS"
+        now_ts = time.time()
+        sig_id = storage.log_signal({
+            "symbol": sym, "direction": "BUY", "strategy": "BOS",
+            "entry_price": 100.0, "stop_loss": 90.0, "target_1": 110.0,
+            "signal_candle_start": now_ts - 1200,
+            "signal_candle_close_time": now_ts - 900
+        })
+
+        # Candle 1: closed 600s ago
+        # Candle 2: in the future (starts at now_ts + 100)
+        c1_time = pd.to_datetime(now_ts - 600, unit='s', utc=True).tz_convert('Asia/Kolkata')
+        c2_time = pd.to_datetime(now_ts + 100, unit='s', utc=True).tz_convert('Asia/Kolkata')
+
+        df = pd.DataFrame({
+            "Open": [100.0, 100.0],
+            "High": [105.0, 115.0],  # Candle 2 would hit TP1 if processed
+            "Low": [98.0, 99.0],
+            "Close": [104.0, 112.0],
+            "Volume": [10000, 10000]
+        }, index=pd.DatetimeIndex([c1_time, c2_time]))
+
+        storage.evaluate_open_outcomes({sym: df}, evaluation_time=now_ts)
+
+        conn = storage.get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT outcome, tp1_hit, last_candle_time FROM historical_signals WHERE id = ?", (sig_id,))
+        row = c.fetchone()
+        conn.close()
+
+        # TP1 must NOT be hit because future candle was rejected
+        self.assertEqual(row["outcome"], "ACTIVE")
+        self.assertEqual(row["tp1_hit"], 0)
+        self.assertAlmostEqual(row["last_candle_time"], now_ts - 600, delta=1.0)
+
+    def test_signal_logging_persists_futures_contract_identity(self):
+        today = datetime.date.today()
+        exp_date = today + datetime.timedelta(days=14)
+        ContractMaster.register_dynamic_contracts({
+            f"FUT_LOG_TEST::{exp_date}": {
+                "lot_size": 250,
+                "expiry": str(exp_date),
+                "instrument_id": f"FUT-LOG_TEST-{exp_date}",
+                "source": "BROKER_LIVE"
+            }
+        })
+
+        sig_id = storage.log_signal({
+            "symbol": "FUT_LOG_TEST.NS",
+            "direction": "BUY",
+            "strategy": "MOMENTUM",
+            "entry_price": 500.0,
+            "stop_loss": 490.0,
+            "target_1": 520.0,
+            "quantity": 250,
+            "instrument_type": "FUTURES",
+            "instrument_id": f"FUT-LOG_TEST-{exp_date}",
+            "contract_expiry": str(exp_date),
+            "contract_source": "BROKER_LIVE"
+        })
+
+        conn = storage.get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT instrument_id, contract_expiry, contract_source, quantity FROM historical_signals WHERE id = ?", (sig_id,))
+        row = c.fetchone()
+        conn.close()
+
+        self.assertEqual(row["instrument_id"], f"FUT-LOG_TEST-{exp_date}")
+        self.assertEqual(row["contract_expiry"], str(exp_date))
+        self.assertEqual(row["contract_source"], "BROKER_LIVE")
+        self.assertEqual(row["quantity"], 250)
 
 if __name__ == '__main__':
     unittest.main()

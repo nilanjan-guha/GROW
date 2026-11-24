@@ -117,32 +117,44 @@ class ContractMaster:
                 try:
                     explicit_expiry = pd.to_datetime(parts[1]).date()
                 except Exception:
-                    explicit_expiry = None
+                    continue  # Reject unparseable explicit expiry in composite key
 
-            if isinstance(val, int):
-                if val > 0:
-                    spec_record = {
-                        "symbol": clean,
-                        "lot_size": val,
-                        "estimated_margin_pct": 0.20,
-                        "expiry": explicit_expiry,
-                        "instrument_id": f"FUT-{clean}-{explicit_expiry or 'CURRENT'}",
-                        "source": "BROKER_FEED",
-                        "update_date": today_date,
-                        "circular_ref": "NSE/FAOP/LIVE"
-                    }
-                    exp_key = explicit_expiry or 'CURRENT'
-                    cls._DYNAMIC_CONTRACTS[(clean, exp_key)] = spec_record
+            # Reject boolean types (in Python, isinstance(True, int) is True!)
+            if type(val) is bool:
+                continue
+
+            if type(val) is int:
+                if val <= 0:
+                    continue
+                # If explicit_expiry is provided in key, ensure it is unexpired
+                if explicit_expiry is not None and explicit_expiry < today_date:
+                    continue
+
+                spec_record = {
+                    "symbol": clean,
+                    "lot_size": val,
+                    "estimated_margin_pct": 0.20,
+                    "expiry": explicit_expiry,
+                    "instrument_id": f"FUT-{clean}-{explicit_expiry or 'CURRENT'}",
+                    "source": "BROKER_FEED",
+                    "update_date": today_date,
+                    "circular_ref": "NSE/FAOP/LIVE"
+                }
+                exp_key = explicit_expiry or 'CURRENT'
+                cls._DYNAMIC_CONTRACTS[(clean, exp_key)] = spec_record
             elif isinstance(val, dict):
                 try:
                     raw_lot = val.get("lot_size")
-                    if raw_lot is None:
+                    # Reject booleans or missing lot size
+                    if raw_lot is None or type(raw_lot) is bool:
                         continue
                     lot_size = int(raw_lot)
                     if lot_size <= 0:
                         continue
 
                     raw_margin = val.get("estimated_margin_pct", 0.20)
+                    if type(raw_margin) is bool:
+                        continue
                     margin_pct = float(raw_margin) if raw_margin is not None else 0.20
                     if not (math.isfinite(margin_pct) and 0.05 <= margin_pct <= 1.0):
                         margin_pct = 0.20
@@ -152,14 +164,33 @@ class ContractMaster:
                         try:
                             expiry = pd.to_datetime(expiry).date()
                         except Exception:
-                            expiry = None
+                            continue  # Reject unparseable expiry date
+                        # Reject expired contracts
+                        if expiry < today_date:
+                            continue
 
-                    inst_id = str(val.get("instrument_id", f"FUT-{clean}-{expiry or 'CURRENT'}"))
-                    source = str(val.get("source", "BROKER_FEED"))
-                    raw_update_dt = val.get("update_date", today_date)
-                    try:
-                        update_dt = pd.to_datetime(raw_update_dt).date()
-                    except Exception:
+                    raw_inst_id = val.get("instrument_id")
+                    if raw_inst_id is not None:
+                        inst_id = str(raw_inst_id).strip()
+                        if not inst_id:
+                            continue  # Reject empty instrument_id
+                    else:
+                        inst_id = f"FUT-{clean}-{expiry or 'CURRENT'}"
+
+                    source = str(val.get("source", "BROKER_FEED")).strip()
+                    if not source:
+                        source = "BROKER_FEED"
+
+                    raw_update_dt = val.get("update_date")
+                    if raw_update_dt is not None:
+                        try:
+                            update_dt = pd.to_datetime(raw_update_dt).date()
+                        except Exception:
+                            continue  # Reject invalid update_date
+                        # Reject update_date in the future (data corruption / clock skew)
+                        if update_dt > today_date:
+                            continue
+                    else:
                         update_dt = today_date
 
                     spec_record = {
@@ -218,16 +249,41 @@ class ContractMaster:
 
         is_current_date = (parsed_date is None or parsed_date >= today)
 
-        # 1. Current trading session: Dynamic live broker contracts take precedence if present
-        if is_current_date and cls._DYNAMIC_CONTRACTS:
-            # Parse requested expiry if supplied
-            target_expiry = None
-            if expiry is not None:
-                try:
-                    target_expiry = pd.to_datetime(expiry).date()
-                except Exception:
-                    target_expiry = None
+        # 1. When an explicit futures expiry is requested, FAIL CLOSED:
+        # Strictly return that exact contract from dynamic registry if unexpired.
+        # NEVER silently substitute another expiry or fall back to historical circular tables.
+        if expiry is not None:
+            try:
+                target_expiry = pd.to_datetime(expiry).date()
+            except Exception:
+                return None  # Unparseable expiry fails closed
 
+            # Target expiry must be unexpired relative to evaluation date
+            eval_date = parsed_date or today
+            if target_expiry < eval_date:
+                return None
+
+            # Look up exact match in dynamic contract registry
+            for (s, exp_k), spec in cls._DYNAMIC_CONTRACTS.items():
+                if s == clean_sym and spec.get("expiry") == target_expiry:
+                    return {
+                        "symbol": clean_sym,
+                        "lot_size": spec["lot_size"],
+                        "estimated_margin_pct": spec["estimated_margin_pct"],
+                        "margin_pct": spec["estimated_margin_pct"],
+                        "expiry": spec.get("expiry"),
+                        "instrument_id": spec.get("instrument_id"),
+                        "source": spec.get("source", "BROKER_FEED"),
+                        "update_date": spec.get("update_date", today),
+                        "effective_date": today,
+                        "circular_ref": spec.get("circular_ref", "NSE/FAOP/LIVE")
+                    }
+
+            # If exact expiry is requested but not found in registered contracts, fail closed!
+            return None
+
+        # 2. Current trading session without explicit expiry: Dynamic live broker contracts take precedence if present
+        if is_current_date and cls._DYNAMIC_CONTRACTS:
             # Filter dynamic contracts matching this symbol
             matching_dyn = []
             for (s, exp_k), spec in cls._DYNAMIC_CONTRACTS.items():
@@ -235,23 +291,15 @@ class ContractMaster:
                     matching_dyn.append(spec)
 
             if matching_dyn:
-                chosen_dyn = None
-                if target_expiry is not None:
-                    # Find exact expiry match
-                    for m in matching_dyn:
-                        if m.get("expiry") == target_expiry:
-                            chosen_dyn = m
-                            break
+                # Sort by expiry, favoring unexpired upcoming contracts over expired
+                unexpired = [m for m in matching_dyn if m.get("expiry") and m.get("expiry") >= today]
+                if unexpired:
+                    unexpired.sort(key=lambda x: x["expiry"])
+                    chosen_dyn = unexpired[0]
                 else:
-                    # Sort by expiry, favoring unexpired upcoming contracts over expired
-                    unexpired = [m for m in matching_dyn if m.get("expiry") and m.get("expiry") >= today]
-                    if unexpired:
-                        unexpired.sort(key=lambda x: x["expiry"])
-                        chosen_dyn = unexpired[0]
-                    else:
-                        # Fallback to 'CURRENT' or first available
-                        curr_specs = [m for m in matching_dyn if m.get("expiry") is None]
-                        chosen_dyn = curr_specs[0] if curr_specs else matching_dyn[0]
+                    # Fallback to 'CURRENT' or first available
+                    curr_specs = [m for m in matching_dyn if m.get("expiry") is None]
+                    chosen_dyn = curr_specs[0] if curr_specs else matching_dyn[0]
 
                 if chosen_dyn:
                     return {
@@ -267,7 +315,7 @@ class ContractMaster:
                         "circular_ref": chosen_dyn.get("circular_ref", "NSE/FAOP/LIVE")
                     }
 
-        # 2. Historical replay or fallback to circular table
+        # 3. Historical replay or fallback to circular table
         if not history:
             return None
 

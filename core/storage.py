@@ -101,7 +101,10 @@ def init_db():
         ("signal_candle_close_time", "REAL"),
         ("signal_generated_at", "REAL"),
         ("quantity", "INTEGER DEFAULT 100"),
-        ("instrument_type", "TEXT DEFAULT 'EQUITY_INTRADAY'")
+        ("instrument_type", "TEXT DEFAULT 'EQUITY_INTRADAY'"),
+        ("instrument_id", "TEXT"),
+        ("contract_expiry", "TEXT"),
+        ("contract_source", "TEXT")
     ]:
         if col_name not in existing_cols:
             try:
@@ -156,9 +159,10 @@ def log_signal(signal_dict):
             timestamp, datetime_str, symbol, direction, strategy, 
             entry_price, signal_price, expected_entry_price, actual_entry_price, entry_timestamp, execution_status,
             signal_candle_start, signal_candle_close_time, signal_generated_at, quantity, instrument_type,
+            instrument_id, contract_expiry, contract_source,
             stop_loss, current_stop_loss, target_1, target_2, score, 
             confidence, catalyst, features_json, market_regime, outcome
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             now,
             time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -176,6 +180,9 @@ def log_signal(signal_dict):
             signal_dict.get("signal_generated_at", now),
             int(signal_dict.get("quantity") or 100),
             signal_dict.get("instrument_type", "EQUITY_INTRADAY"),
+            signal_dict.get("instrument_id"),
+            str(signal_dict.get("contract_expiry")) if signal_dict.get("contract_expiry") is not None else None,
+            signal_dict.get("contract_source"),
             signal_dict.get("stop_loss"),
             signal_dict.get("stop_loss"),
             signal_dict.get("target_1"),
@@ -477,17 +484,41 @@ def evaluate_open_outcomes(data_map, force_eod=False, evaluation_time=None):
     - If a single candle touches both Target and SL, conservatively marks as LOSS/STOPPED OUT.
     """
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM historical_signals WHERE outcome = 'ACTIVE'")
-        active_signals = cursor.fetchall()
-        now = float(evaluation_time) if evaluation_time is not None else time.time()
         import datetime
         import pytz
         import pandas as pd
         import math
         outcomes_changed = False
         from engine.cost_engine import IndianMarketCosts
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM historical_signals WHERE outcome = 'ACTIVE'")
+        active_signals = cursor.fetchall()
+        # Determine effective current evaluation time:
+        # If caller provides evaluation_time, use that.
+        # Otherwise, dynamically account for synthetic/replay feed timestamps in data_map if they exceed system time.
+        if evaluation_time is not None:
+            now = float(evaluation_time)
+        else:
+            now = time.time()
+            # If simulated/replay feed contains timestamps ahead of time.time(), establish authoritative replay time
+            max_feed_ts = 0.0
+            for d in data_map.values():
+                if isinstance(d, dict) and d.get("timestamp"):
+                    try:
+                        max_feed_ts = max(max_feed_ts, float(d["timestamp"]))
+                    except Exception:
+                        pass
+                elif isinstance(d, pd.DataFrame) and not d.empty:
+                    try:
+                        last_idx = d.index[-1]
+                        last_ts = last_idx.timestamp() if hasattr(last_idx, 'timestamp') else float(last_idx)
+                        max_feed_ts = max(max_feed_ts, last_ts)
+                    except Exception:
+                        pass
+            if max_feed_ts > now:
+                now = max_feed_ts + 300.0
 
         # Auto-Squareoff at Market Close: if market is closed (past 15:30 IST or non-trading day),
         # any intraday trade from a previous session or after 15:30 IST is automatically squared off at the latest closing price!
@@ -672,8 +703,11 @@ def evaluate_open_outcomes(data_map, force_eod=False, evaluation_time=None):
                     if (c_ts - last_candle_time) <= 1e-3 or (c_ts - eval_min_time) < -1e-3:
                         continue
 
-                    is_last_candle = (idx == len(df) - 1)
-                    if is_last_candle and (c_ts + 300 > now_ts):
+                    # STRICT COMPLETION CHECK FOR EVERY CANDLE:
+                    # In live market evaluation (now_ts), no future candle can be processed.
+                    # Every candle must have completed: c_ts + 300 <= now_ts (or now).
+                    candle_close_ts = c_ts + 300
+                    if candle_close_ts > now:
                         continue
 
                     # Safe extraction and structural validation of OHLC before any state or MFE/MAE update
@@ -743,16 +777,16 @@ def evaluate_open_outcomes(data_map, force_eod=False, evaluation_time=None):
                     continue
 
                 # STRICT CANDLE COMPLETION & 5-MINUTE BOUNDARY ENFORCEMENT:
-                # 1. In live evaluation (data without explicit completion flag), candle must have closed (now >= c_ts + 300).
+                # 1. Physical clock check: candle cannot be in the future.
+                #    A candle is strictly closed only after c_ts + 300 <= now.
+                #    Setting is_completed=True can NEVER bypass the physical clock (c_ts + 300 <= now).
+                if c_ts + 300 > now:
+                    continue
+
                 # 2. In replay or simulated feeds where is_completed is explicitly passed:
                 #    Reject if is_completed is False.
-                #    If is_completed is True, candle is evaluated as an authoritative closed bar.
                 is_completed = data.get("is_completed")
-                if is_completed is None:
-                    if c_ts + 300 > now:
-                        continue
-                    is_completed = True
-                elif is_completed is False:
+                if is_completed is False:
                     continue
 
                 if is_completed and c_ts > last_candle_time and c_ts >= eval_min_time:

@@ -341,14 +341,14 @@
         let sectorCountdown = 300;
         let activeConfirmedTrades = {};
         try {
-            // Strictly clean out any old hardcoded or demo trades (e.g. dummy entry: 100, sl: 90)
+            // Restore active confirmed trades from localStorage if they have valid numeric attributes
             const saved = localStorage.getItem('activeConfirmedTrades');
             if (saved) {
                 const parsed = JSON.parse(saved);
                 const cleaned = {};
                 for (const [sym, t] of Object.entries(parsed)) {
-                    // Only keep trades with genuine DB signal_id and realistic non-dummy prices
-                    if (t && t.signal_id && t.smc && t.smc.current_price !== 100.0) {
+                    if (t && t.signal_id && typeof t.signal_id === 'number' && t.smc &&
+                        typeof t.smc.entry_price === 'number' && isFinite(t.smc.entry_price) && t.smc.entry_price > 0) {
                         cleaned[sym] = t;
                     }
                 }
@@ -904,21 +904,38 @@
         }
 
         let stockNewsCache = {};
-        let stockNewsIndex = 0;
-        let stockNewsTimer = null;
+        let stockNewsActiveTimer = null;
+        let stockNewsRequestId = 0;
 
         async function loadStockCatalystNews(stockSymbol) {
             const sym = stockSymbol || currentStockSymbol;
             if (!sym) return;
             const cleanSym = sym.replace('.NS', '').toUpperCase();
-            document.getElementById('activeNewsStock').innerText = cleanSym;
+            document.getElementById('activeNewsStock').textContent = cleanSym;
+
+            // Clear old news timer immediately when switching stocks
+            if (stockNewsActiveTimer) {
+                clearInterval(stockNewsActiveTimer);
+                stockNewsActiveTimer = null;
+            }
+
+            // Generate monotonic request ID to discard out-of-order stale responses
+            const thisReqId = ++stockNewsRequestId;
 
             try {
                 const res = await fetch(`/api/news/stock?symbol=${encodeURIComponent(cleanSym)}`);
                 const data = await res.json();
+
+                // Discard stale out-of-order response if user already switched stocks
+                if (thisReqId !== stockNewsRequestId) return;
+                const currentClean = (currentStockSymbol || '').replace('.NS', '').toUpperCase();
+                if (currentClean !== cleanSym) return;
+
                 if (data.success && data.news && data.news.length > 0) {
-                    stockNewsCache[cleanSym] = data.news;
-                    stockNewsIndex = 0;
+                    stockNewsCache[cleanSym] = {
+                        articles: data.news,
+                        index: 0
+                    };
                     displayCurrentStockNews(cleanSym);
 
                     // Mark card with has-news-catalyst amber glow
@@ -930,22 +947,30 @@
                     });
 
                     // Start rotating news articles one by one every 4.5 seconds if multiple news available
-                    if (stockNewsTimer) clearInterval(stockNewsTimer);
                     if (data.news.length > 1) {
-                        stockNewsTimer = setInterval(() => {
-                            if (currentStockSymbol.replace('.NS', '').toUpperCase() === cleanSym) {
-                                const list = stockNewsCache[cleanSym] || [];
-                                if (list.length > 1) {
-                                    stockNewsIndex = (stockNewsIndex + 1) % list.length;
+                        stockNewsActiveTimer = setInterval(() => {
+                            const nowCurrent = (currentStockSymbol || '').replace('.NS', '').toUpperCase();
+                            if (nowCurrent === cleanSym && stockNewsCache[cleanSym]) {
+                                const state = stockNewsCache[cleanSym];
+                                if (state.articles.length > 1) {
+                                    state.index = (state.index + 1) % state.articles.length;
                                     displayCurrentStockNews(cleanSym);
                                 }
                             }
                         }, 4500);
                     }
                 } else {
-                    document.getElementById('activeStockNewsHeadline').innerText = `No major news headlines detected for ${cleanSym} today.`;
-                    document.getElementById('activeNewsSentiment').innerText = 'STABLE';
-                    document.getElementById('activeNewsSentiment').style.color = '#94a3b8';
+                    delete stockNewsCache[cleanSym];
+                    const headlineEl = document.getElementById('activeStockNewsHeadline');
+                    const sentEl = document.getElementById('activeNewsSentiment');
+                    if (headlineEl) {
+                        headlineEl.textContent = `No major news headlines detected for ${cleanSym} today.`;
+                        headlineEl.title = '';
+                    }
+                    if (sentEl) {
+                        sentEl.textContent = 'STABLE';
+                        sentEl.style.color = '#94a3b8';
+                    }
                     document.querySelectorAll('.sector-card').forEach(c => {
                         const cardSym = (c.dataset && c.dataset.symbol) ? c.dataset.symbol.replace('.NS', '').toUpperCase() : '';
                         if (cardSym === cleanSym) {
@@ -953,23 +978,43 @@
                         }
                     });
                 }
-            } catch (e) { }
+            } catch (e) {
+                if (thisReqId === stockNewsRequestId) {
+                    const headlineEl = document.getElementById('activeStockNewsHeadline');
+                    const sentEl = document.getElementById('activeNewsSentiment');
+                    if (headlineEl) headlineEl.textContent = `News feed unavailable for ${cleanSym}.`;
+                    if (sentEl) {
+                        sentEl.textContent = 'ERROR';
+                        sentEl.style.color = '#94a3b8';
+                    }
+                }
+            }
         }
 
         function displayCurrentStockNews(cleanSym) {
-            const list = stockNewsCache[cleanSym];
-            if (!list || list.length === 0) return;
-            const item = list[stockNewsIndex % list.length];
+            const state = stockNewsCache[cleanSym];
+            if (!state || !state.articles || state.articles.length === 0) return;
+            const item = state.articles[state.index % state.articles.length];
             const headlineEl = document.getElementById('activeStockNewsHeadline');
             const sentEl = document.getElementById('activeNewsSentiment');
             if (headlineEl) {
-                const counter = list.length > 1 ? `[${(stockNewsIndex % list.length) + 1}/${list.length}] ` : '';
-                headlineEl.innerHTML = `<span style="color:#00f0ff; font-weight:700;">${counter}</span>${item.title}`;
-                headlineEl.title = item.title;
+                // Safe DOM creation using textContent to prevent XSS from external news titles
+                headlineEl.textContent = '';
+                if (state.articles.length > 1) {
+                    const counterSpan = document.createElement('span');
+                    counterSpan.style.color = '#00f0ff';
+                    counterSpan.style.fontWeight = '700';
+                    counterSpan.style.marginRight = '6px';
+                    counterSpan.textContent = `[${(state.index % state.articles.length) + 1}/${state.articles.length}]`;
+                    headlineEl.appendChild(counterSpan);
+                }
+                const titleNode = document.createTextNode(item.title || '');
+                headlineEl.appendChild(titleNode);
+                headlineEl.title = item.title || '';
             }
             if (sentEl) {
                 const s = item.sentiment || 'NEUTRAL';
-                sentEl.innerText = s;
+                sentEl.textContent = s;
                 sentEl.style.color = s === 'BULLISH' ? 'var(--neon-green)' : (s === 'BEARISH' ? 'var(--neon-red)' : '#94a3b8');
             }
         }
