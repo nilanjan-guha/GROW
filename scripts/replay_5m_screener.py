@@ -180,20 +180,20 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
 
     # Shared Portfolio State:
     # Starting portfolio equity: 100.0 (normalized base)
+    # Total capital available, reserved capital, and continuous mark-to-market tracking
     # Max concurrent positions: 4
-    # Max allocation per trade: 25% of current equity
-    active_portfolio_positions = [] # List of {"symbol": sym, "direction": dir, "entry_ts": ts, "exit_ts": ts, "net_pnl": pnl, "gross_pnl": pnl, "alloc": alloc, ...}
+    # Max allocation per trade: 25% of current equity reserved AT ENTRY
+    portfolio_equity = 100.0
+    active_portfolio_positions = [] # List of active trades with reserved capital and live mark-to-market
 
     for current_ts in all_timestamps:
-        # 1. First, release any active positions whose holding period expired or exited at or before current_ts
+        # 1. Release active positions whose exit_ts has arrived or passed at or before current_ts
         still_active = []
         for pos in active_portfolio_positions:
             if current_ts >= pos["exit_ts"]:
-                # Realize position into shared portfolio equity
+                # Realize position into shared portfolio equity using entry-reserved capital
                 pnl_mult = (pos["net_pnl"] / 100.0) * pos["alloc"]
-                prev_eq = stats["equity_curve"][-1]
-                new_eq = prev_eq * (1.0 + pnl_mult)
-                stats["equity_curve"].append(new_eq)
+                portfolio_equity = portfolio_equity * (1.0 + pnl_mult)
                 stats["trades_executed"] += 1
                 stats["trade_net_pnls"].append(pos["net_pnl"])
                 stats["trade_gross_pnls"].append(pos["gross_pnl"])
@@ -218,6 +218,22 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
                 still_active.append(pos)
         active_portfolio_positions = still_active
 
+        # Compute continuous mark-to-market portfolio equity for this timestamp:
+        # Portfolio Equity = Realized Equity + Sum of current unrealized PnL across active positions
+        unrealized_total_mult = 0.0
+        for pos in active_portfolio_positions:
+            pos_sym = pos["symbol"]
+            pos_df = symbol_data[pos_sym]["df"]
+            if current_ts in pos_df.index:
+                curr_bar_c = float(pos_df.loc[current_ts, "Close"])
+                pos_dir = pos["direction"]
+                entry_p = pos["entry_price"]
+                unrealized_pct = ((curr_bar_c - entry_p) / entry_p * 100) if pos_dir == "BULLISH" else ((entry_p - curr_bar_c) / entry_p * 100)
+                unrealized_total_mult += (unrealized_pct / 100.0) * pos["alloc"]
+        
+        current_mtm_equity = portfolio_equity * (1.0 + unrealized_total_mult)
+        stats["equity_curve"].append(current_mtm_equity)
+
         # 2. Check each candidate symbol for this exact completed candle timestamp
         for sym, s_data in symbol_data.items():
             df = s_data["df"]
@@ -235,6 +251,12 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
             if nifty_sub.empty:
                 continue
 
+            # Strict Completed Candle Timestamp Equality on NIFTY:
+            # Replay requires exact NIFTY completed candle timestamp alignment before calculating relative performance (Item D)
+            latest_nifty_ts = nifty_sub.index[-1]
+            if latest_nifty_ts != signal_candle_ts:
+                continue
+
             sector_df = s_data["sector_df"]
             sector_sub = sector_df[sector_df.index <= signal_candle_ts] if sector_df is not None else None
             daily_df = s_data["daily_df"]
@@ -246,7 +268,7 @@ def run_screener_replay(sample_symbols=None, days="1mo"):
             nifty_day_open = float(nifty_sub[nifty_sub.index.date == signal_candle_ts.date()]["Open"].iloc[0]) if len(nifty_sub[nifty_sub.index.date == signal_candle_ts.date()]) > 0 else float(nifty_sub["Open"].iloc[0])
             nifty_change_pt = round((float(nifty_sub["Close"].iloc[-1]) - nifty_day_open) / nifty_day_open * 100, 2) if nifty_day_open > 0 else 0.0
 
-            # Strict 3-Way Completed Candle Timestamp Alignment for Sector Bias (Item 1):
+            # Strict 3-Way Completed Candle Timestamp Alignment for Sector Bias (Item 1 & D):
             # If sector completed candle timestamp does not match signal candle timestamp, sector bias MUST be NEUTRAL
             sector_change_pt = 0.0
             sector_is_fresh = False

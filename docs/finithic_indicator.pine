@@ -840,39 +840,62 @@ isIndex      = str.contains(tickerUpper, "NIFTY") or str.contains(tickerUpper, "
 // Multi-Chart Parent Index & Option Synchronization Engine
 useIndexSync         = input.bool(true, 'Enable Index & Option Chart Synchronization', group = INDEX_SYNC_GROUP)
 autoIndexSymbol      = input.bool(true, 'Auto-Detect Parent Index (NIFTY / BANKNIFTY / SENSEX / FINNIFTY)', group = INDEX_SYNC_GROUP)
-manualIndexSymbol    = input.symbol('NSE:NIFTY', 'Manual Parent Index Ticker (If not auto-detected)', group = INDEX_SYNC_GROUP)
+manualIndexSymbol    = input.symbol('INDEX:NIFTY', 'Manual Parent Index Ticker (e.g. INDEX:NIFTY or NSE:NIFTY)', group = INDEX_SYNC_GROUP)
 strictIndexAlignment = input.bool(true, 'Require Parent Index Bias to Buy Option (CE=Bull, PE=Bear)', group = INDEX_SYNC_GROUP)
+minOptionMomentumAtr = input.float(1.0, 'Minimum Premium Momentum/Expansion (ATR Multiplier)', minval=0.5, step=0.1, group = INDEX_SYNC_GROUP)
 
-// Resolve the parent index symbol
-detectedIndexTicker = str.contains(tickerUpper, "BANKNIFTY") ? "NSE:BANKNIFTY" : str.contains(tickerUpper, "FINNIFTY") ? "NSE:FINNIFTY" : str.contains(tickerUpper, "MIDCPNIFTY") ? "NSE:MIDCPNIFTY" : str.contains(tickerUpper, "SENSEX") ? "BSE:SENSEX" : "NSE:NIFTY"
+// Resolve the parent index symbol - Handles Dhan platform format (e.g. INDEX:NIFTY or NIFTY) and TradingView format (NSE:NIFTY)
+dhanPrefix          = (syminfo.prefix == "INDEX" or str.contains(syminfo.prefix, "IDX")) ? "INDEX:" : "NSE:"
+detectedIndexTicker = str.contains(tickerUpper, "BANKNIFTY") ? (dhanPrefix + "BANKNIFTY") : str.contains(tickerUpper, "FINNIFTY") ? (dhanPrefix + "FINNIFTY") : str.contains(tickerUpper, "MIDCPNIFTY") ? (dhanPrefix + "MIDCPNIFTY") : str.contains(tickerUpper, "SENSEX") ? "BSE:SENSEX" : (dhanPrefix + "NIFTY")
 parentIndexTicker   = (not autoIndexSymbol and manualIndexSymbol != "") ? manualIndexSymbol : detectedIndexTicker
 
 // Fetch Parent Index Price Action & Market Structure (Only active when viewing an Option Chart)
-[idxOpen, idxHigh, idxLow, idxClose, idxEma50, idxEma200] = request.security(parentIndexTicker, timeframe.period, [open, high, low, close, ta.ema(close, 50), ta.ema(close, 200)], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+// CRITICAL: Request previous COMPLETED candle [1] to avoid provisional/forming candle repainting
+[idxOpenRaw, idxHighRaw, idxLowRaw, idxCloseRaw, idxEma50Raw, idxEma200Raw] = request.security(parentIndexTicker, timeframe.period, [open[1], high[1], low[1], close[1], ta.ema(close, 50)[1], ta.ema(close, 200)[1]], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
 
-// Parent Index Trend & Structural Shift Metrics:
-// 1. Index Trend Alignment
-idxBullTrend = idxClose > idxEma200 and idxEma50 >= idxEma200
-idxBearTrend = idxClose < idxEma200 and idxEma50 <= idxEma200
+// Robust Fallback: If Dhan/Exchange prefix caused NaN, fallback to standard NSE ticker
+idxClose = not na(idxCloseRaw) ? idxCloseRaw : request.security("NSE:NIFTY", timeframe.period, close[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+idxOpen  = not na(idxOpenRaw) ? idxOpenRaw : request.security("NSE:NIFTY", timeframe.period, open[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+idxHigh  = not na(idxHighRaw) ? idxHighRaw : request.security("NSE:NIFTY", timeframe.period, high[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+idxLow   = not na(idxLowRaw) ? idxLowRaw : request.security("NSE:NIFTY", timeframe.period, low[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+idxEma50 = not na(idxEma50Raw) ? idxEma50Raw : request.security("NSE:NIFTY", timeframe.period, ta.ema(close, 50)[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+idxEma200= not na(idxEma200Raw) ? idxEma200Raw : request.security("NSE:NIFTY", timeframe.period, ta.ema(close, 200)[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+
+// Parent Index Trend & Structural Shift Metrics (Computed on Previous Completed Index Candle):
+// 1. Index Trend Alignment (EMA 50 & 200)
+idxBullTrend = idxClose > idxEma50 and idxEma50 >= idxEma200
+idxBearTrend = idxClose < idxEma50 and idxEma50 <= idxEma200
 
 // 2. Index Displacement / Momentum Shift
 idxCandleBody = math.abs(idxClose - idxOpen)
 idxCandleRange = math.max(idxHigh - idxLow, syminfo.mintick)
-idxBullDisplacement = idxClose > idxOpen and (idxCandleBody / idxCandleRange) >= 0.40
-idxBearDisplacement = idxClose < idxOpen and (idxCandleBody / idxCandleRange) >= 0.40
+idxBullDisplacement = idxClose > idxOpen and (idxCandleBody / idxCandleRange) >= 0.35 and idxClose > idxEma50
+idxBearDisplacement = idxClose < idxOpen and (idxCandleBody / idxCandleRange) >= 0.35 and idxClose < idxEma50
 
 // 3. Index Structure Shift (Immediate break of recent highs/lows)
-idxHigh3 = request.security(parentIndexTicker, timeframe.period, ta.highest(high, 3)[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-idxLow3  = request.security(parentIndexTicker, timeframe.period, ta.lowest(low, 3)[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-idxBullBreak = idxClose > idxHigh3
-idxBearBreak = idxClose < idxLow3
+idxHighRaw3 = request.security(parentIndexTicker, timeframe.period, ta.highest(high, 5)[2], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+idxLowRaw3  = request.security(parentIndexTicker, timeframe.period, ta.lowest(low, 5)[2], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+idxHigh3    = not na(idxHighRaw3) ? idxHighRaw3 : request.security("NSE:NIFTY", timeframe.period, ta.highest(high, 5)[2], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+idxLow3     = not na(idxLowRaw3) ? idxLowRaw3 : request.security("NSE:NIFTY", timeframe.period, ta.lowest(low, 5)[2], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
 
-// Parent Index Confirmation Rules for Options:
-// If on CALL option chart: Parent Index must be Bullish (or breaking out upward)
-parentBullConfirmed = not (isCallOption and useIndexSync and strictIndexAlignment) or (idxBullTrend or idxBullDisplacement or idxBullBreak)
+idxBullBreak = not na(idxHigh3) and idxClose > idxHigh3
+idxBearBreak = not na(idxLow3) and idxClose < idxLow3
 
-// If on PUT option chart: Parent Index must be Bearish (or breaking down downward)
-parentBearConfirmed = not (isPutOption and useIndexSync and strictIndexAlignment) or (idxBearTrend or idxBearDisplacement or idxBearBreak)
+// Absolute True Directional Bias of Parent Index:
+indexIsBullish = (idxBullTrend or idxBullDisplacement or idxBullBreak) and (idxClose > idxOpen or idxClose > idxEma50)
+indexIsBearish = (idxBearTrend or idxBearDisplacement or idxBearBreak) and (idxClose < idxOpen or idxClose < idxEma50)
+
+// Parent Index Permission Rules for Options:
+// If on CALL option chart: Parent Index MUST be Bullish. ABSOLUTELY FORBIDDEN if Index is Bearish!
+parentBullConfirmed = not (isCallOption and useIndexSync and strictIndexAlignment) or (indexIsBullish and not indexIsBearish)
+
+// If on PUT option chart: Parent Index MUST be Bearish. ABSOLUTELY FORBIDDEN if Index is Bullish!
+parentBearConfirmed = not (isPutOption and useIndexSync and strictIndexAlignment) or (indexIsBearish and not indexIsBullish)
+
+// Premium Movement & Liquidity Filter:
+// Prevents taking signals when premium is dead/flat-lining or experiencing theta decay with no volume
+premiumRange3       = ta.highest(high, 3) - ta.lowest(low, 3)
+hasPremiumExpansion = not isOption or (premiumRange3 >= atr14 * minOptionMomentumAtr and volume >= ta.ema(volume, 10) * 0.75)
 
 // Recent BOS / Structure Breakout Level Memory
 var float lastBullBreakoutLevel = na
@@ -899,7 +922,7 @@ isBearChochOrBos = triggeredBearShift and close < open
 
 // Complete Trigger: Immediate CHoCH/BOS Shift OR Retest OR Sweep OR OB/FVG touch OR HTF confluence + Order Flow + Parent Index Sync
 optionIndexFilter = isCallOption ? parentBullConfirmed : (isPutOption ? parentBearConfirmed : true)
-sniperBuyTrigger  = orderFlowBullConfirmed and optionIndexFilter and (isBullChochOrBos or (bullTrend and (bullBreakoutRetest or (sweepLow and close > open) or obDemandTouch or fvgDemandRetest)) or htfMajorBuy)
+sniperBuyTrigger  = orderFlowBullConfirmed and optionIndexFilter and hasPremiumExpansion and (isBullChochOrBos or (bullTrend and (bullBreakoutRetest or (sweepLow and close > open) or obDemandTouch or fvgDemandRetest)) or htfMajorBuy)
 sniperSellTrigger = not isOption and orderFlowBearConfirmed and (isBearChochOrBos or (bearTrend and (bearBreakoutRetest or (sweepHigh and close < open) or obSupplyTouch or fvgSupplyRetest)) or htfMajorSell)
 
 // Direct Execution & Retest Management
@@ -912,7 +935,9 @@ if enableSniperEngine and not inTrade and (bar_index - lastExitBar >= cooldownBa
             structLow := math.min(structLow, math.min(low, low[1]))
         if sweepLow and not na(swingLow.currentLevel) and swingLow.currentLevel < structLow
             structLow := swingLow.currentLevel
-        calcSL   = math.min(structLow, low) - (atr14 * 0.15)
+        // Add breathing room buffer (0.35 ATR on options) to prevent 1-minute wick hunting
+        slBuffer = isOption ? (atr14 * 0.40) : (atr14 * 0.15)
+        calcSL   = math.min(structLow, low) - slBuffer
         calcEntry = close
         riskDist = calcEntry - calcSL
 
@@ -941,7 +966,9 @@ if enableSniperEngine and not inTrade and (bar_index - lastExitBar >= cooldownBa
             structHigh := math.max(structHigh, math.max(high, high[1]))
         if sweepHigh and not na(swingHigh.currentLevel) and swingHigh.currentLevel > structHigh
             structHigh := swingHigh.currentLevel
-        calcSL   = math.max(structHigh, high) + (atr14 * 0.15)
+        // Add breathing room buffer (0.35 ATR on options) to prevent 1-minute wick hunting
+        slBuffer = isOption ? (atr14 * 0.40) : (atr14 * 0.15)
+        calcSL   = math.max(structHigh, high) + slBuffer
         calcEntry = close
         riskDist = calcSL - calcEntry
 
@@ -1050,10 +1077,11 @@ if showSniperScoreboard and barstate.islast
 
     // Parent Index Sync HUD Row (for Options Charts)
     if isOption and useIndexSync
-        string idxBiasText = parentBullConfirmed ? "BULLISH (" + parentIndexTicker + ")" : (parentBearConfirmed ? "BEARISH (" + parentIndexTicker + ")" : "NEUTRAL/WAIT")
-        color idxBiasCol   = parentBullConfirmed ? color.teal : (parentBearConfirmed ? color.maroon : color.yellow)
+        string idxBiasText = indexIsBullish ? "BULLISH (" + parentIndexTicker + ")" : (indexIsBearish ? "BEARISH (" + parentIndexTicker + ")" : "NEUTRAL (" + parentIndexTicker + ")")
+        color idxBiasCol   = indexIsBullish ? color.teal : (indexIsBearish ? color.maroon : color.yellow)
+        string optPermit   = (isCallOption and parentBullConfirmed) or (isPutOption and parentBearConfirmed) ? " [ALIGNED]" : " [BLOCKED]"
         table.cell(dash, 0, 7, "Index Sync Status", text_color=color.silver, text_size=size.small)
-        table.cell(dash, 1, 7, idxBiasText, bgcolor=color.new(idxBiasCol, 50), text_color=color.white, text_size=size.small)
+        table.cell(dash, 1, 7, idxBiasText + optPermit, bgcolor=color.new(idxBiasCol, 50), text_color=color.white, text_size=size.small)
     else
         table.cell(dash, 0, 7, "Chart Mode", text_color=color.silver, text_size=size.small)
         table.cell(dash, 1, 7, isIndex ? "SPOT INDEX" : "EQUITY / CASH", bgcolor=color.new(color.blue, 50), text_color=color.white, text_size=size.small)

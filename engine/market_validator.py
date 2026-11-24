@@ -202,7 +202,7 @@ class MarketValidator:
         }
 
     @staticmethod
-    def validate_historical_replay_data(df, candle_duration_seconds=300):
+    def validate_historical_replay_data(df, candle_duration_seconds=300, allow_partial_final_session=True):
         """
         Validates historical data integrity for backtesting/replay (NO current wall-clock checks):
         - Enforces strictly unique, monotonic datetime index ordering.
@@ -210,6 +210,11 @@ class MarketValidator:
         - Enforces strict mathematical OHLC relationships:
           High >= Open, High >= Close, Low <= Open, Low <= Close, High >= Low.
         - Validates volume is non-negative and finite.
+        - Rigorous Session Grid Comparison:
+          Generates the exact expected timestamp list for each completed session and validates that:
+          1. Every candle timestamp matches the exact expected 5m session grid.
+          2. Exactly 75 bars exist for completed full trading days (or the exact count for special sessions).
+          3. Zero missing internal, leading, or trailing session bars exist.
         """
         if df is None or df.empty:
             return {"is_valid": False, "status": "EMPTY_FEED", "reason": "Historical dataframe is empty"}
@@ -260,61 +265,66 @@ class MarketValidator:
             return {"is_valid": False, "status": "NEGATIVE_VOLUME", "reason": "Negative volume values detected in historical slice"}
 
         # Strict OHLC logical relationships
-        # High must be the absolute highest: High >= Low, High >= Open, High >= Close
         if np.any(h < l) or np.any(h < o) or np.any(h < c):
             return {"is_valid": False, "status": "CORRUPT_OHLC_HIGH", "reason": "High price violated boundary (High < Low, High < Open, or High < Close)"}
 
-        # Low must be the absolute lowest: Low <= High, Low <= Open, Low <= Close
         if np.any(l > o) or np.any(l > c):
             return {"is_valid": False, "status": "CORRUPT_OHLC_LOW", "reason": "Low price violated boundary (Low > Open or Low > Close)"}
 
-        # Complete Expected Session Grid Comparison (Item 2):
-        # Generates exact expected NSE 5-minute session timestamps (09:15 to 15:25 start = 75 bars)
-        # Rejects missing internal candles; handles special sessions explicitly.
+        # Exact Expected Session Grid Comparison:
         df_eval['Date'] = df_eval.index.date
-        session_dates = df_eval['Date'].unique()
+        session_dates = list(df_eval['Date'].unique())
         session_stats = []
         has_intraday_data_corruption = False
         corrupt_session_reason = ""
 
-        for s_date in session_dates:
+        ist = pytz.timezone('Asia/Kolkata')
+
+        for idx_date, s_date in enumerate(session_dates):
             s_slice = df_eval[df_eval['Date'] == s_date]
             n_bars = len(s_slice)
+            is_final_session = (idx_date == len(session_dates) - 1)
 
-            # Check special session or standard session expected grid
+            # Generate exact expected timestamp list for this date
             if s_date in SPECIAL_TRADING_SESSIONS:
                 spec = SPECIAL_TRADING_SESSIONS[s_date]
                 start_m = spec.get("start_minute", 1095)
                 end_m = spec.get("end_minute", 1155)
             else:
                 start_m = 555   # 09:15 IST
-                end_m = 925     # 15:25 IST (75 bars: 09:15, 09:20, ..., 15:25)
+                end_m = 925     # 15:25 IST start of bar
 
-            # Check timestamps alignment to exact 5-minute boundaries
-            unaligned_bars = 0
-            for t in s_slice.index:
-                t_mins = t.hour * 60 + t.minute
-                if t.second != 0 or t.microsecond != 0 or (t.minute % 5 != 0):
-                    unaligned_bars += 1
-                elif t_mins < start_m or t_mins > (end_m + 5):
-                    unaligned_bars += 1
-            if unaligned_bars > 0:
+            expected_minutes = list(range(start_m, end_m + 1, 5))
+            expected_count = len(expected_minutes)
+
+            # Check for any timestamps not matching expected session minute grid
+            actual_minutes = [t.hour * 60 + t.minute for t in s_slice.index]
+            off_grid_bars = sum(1 for m in actual_minutes if m not in expected_minutes)
+            if off_grid_bars > 0:
                 has_intraday_data_corruption = True
-                corrupt_session_reason = f"Session {s_date} contains {unaligned_bars} non-5-minute aligned or off-market candle timestamps"
+                corrupt_session_reason = f"Session {s_date} contains {off_grid_bars} candles outside the official NSE 5-minute schedule"
                 break
 
-            # Check for any missing internal candles: interval between consecutive session bars must strictly be 300 seconds
-            if n_bars >= 2:
-                sec_diffs = (s_slice.index[1:] - s_slice.index[:-1]).total_seconds()
-                missing_internal = [d for d in sec_diffs if d > 300]
-                if len(missing_internal) > 0:
+            # If completed session (or not allow_partial_final_session):
+            # Bar count must equal expected_count, and all expected timestamps must be present
+            if not is_final_session or not allow_partial_final_session:
+                if n_bars != expected_count:
                     has_intraday_data_corruption = True
-                    corrupt_session_reason = f"Session {s_date} has {len(missing_internal)} missing internal candles (strictly 0 allowed in completed session)"
+                    corrupt_session_reason = f"Session {s_date} incomplete: expected {expected_count} bars, found {n_bars} (missing {expected_count - n_bars})"
                     break
+            else:
+                # For partial final session, verify consecutive 300s spacing from 09:15
+                if n_bars >= 2:
+                    sec_diffs = (s_slice.index[1:] - s_slice.index[:-1]).total_seconds()
+                    if any(d != 300 for d in sec_diffs):
+                        has_intraday_data_corruption = True
+                        corrupt_session_reason = f"Partial final session {s_date} has internal missing candle gaps"
+                        break
 
             session_stats.append({
                 "date": str(s_date),
-                "candles_count": n_bars
+                "candles_count": n_bars,
+                "expected_count": expected_count
             })
 
         if has_intraday_data_corruption:
