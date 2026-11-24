@@ -815,10 +815,19 @@ atVwapPremium  = close >= vwapUpper2 or (high >= sessionVwap and close < session
 sfpBull = not na(internalLow.currentLevel) and low < internalLow.currentLevel and close > internalLow.currentLevel and close > open
 sfpBear = not na(internalHigh.currentLevel) and high > internalHigh.currentLevel and close < internalHigh.currentLevel and close < open
 
+
+// Higher Trend definition: EMA 50 > EMA 200 and close > EMA 50 (Strong Trend) OR close > EMA 200
+bullTrend = not trendFilterEma or (close > ema200 and ema50 >= ema200)
+bearTrend = not trendFilterEma or (close < ema200 and ema50 <= ema200)
+
 // Trend Continuation Pullback Ignition (Never miss the runaway trend!):
 // When market is in a confirmed strong trend above EMA 50, buying any 1-2 bar shallow dip with green re-acceleration
 bullTrendPullback = bullTrend and (low <= low[1] or low <= ta.ema(close, 20)) and close > open and (barDelta > 0 or isPositiveDelta) and close > ta.ema(close, 20)
 bearTrendPullback = bearTrend and (high >= high[1] or high >= ta.ema(close, 20)) and close < open and (barDelta < 0 or isNegativeDelta) and close < ta.ema(close, 20)
+
+// Trapped Traders Turn (Trapped Breakout Liquidity Cascades)
+trappedSellers = low[1] < ta.lowest(low, 5)[2] and close > open and close > high[1] and (barDelta > 0 or bullishAbsorption)
+trappedBuyers  = high[1] > ta.highest(high, 5)[2] and close < open and close < low[1] and (barDelta < 0 or bearishAbsorption)
 
 // Volume Expansion & Institutional Displacement Filters
 volEma20          = ta.ema(volume, 20)
@@ -857,9 +866,6 @@ sweepSwingLow  = not na(swingLow.currentLevel) and low < swingLow.currentLevel a
 sweepHigh = sweepIntHigh or sweepSwingHigh
 sweepLow  = sweepIntLow or sweepSwingLow
 
-// Higher Trend definition: EMA 50 > EMA 200 and close > EMA 50 (Strong Trend) OR close > EMA 200
-bullTrend = not trendFilterEma or (close > ema200 and ema50 >= ema200)
-bearTrend = not trendFilterEma or (close < ema200 and ema50 <= ema200)
 
 // Multi-Entry Opportunities:
 // 1. Demand/Supply Order Block Pullback Touch

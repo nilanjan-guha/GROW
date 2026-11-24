@@ -214,11 +214,11 @@ class TestIntradayScreenerCore(unittest.TestCase):
         now_ts = float(c.fetchone()["timestamp"])
 
         # Candle 1 hits TP1
-        c1 = {"high": 512.0, "low": 502.0, "timestamp": now_ts + 300, "is_completed": True}
+        c1 = {"open": 502.0, "high": 512.0, "low": 502.0, "timestamp": now_ts + 300, "is_completed": True}
         storage.evaluate_open_outcomes({sym: c1})
 
         # Candle 2 reverses back to entry price (breakeven stop triggered)
-        c2 = {"high": 508.0, "low": 499.0, "timestamp": now_ts + 600, "is_completed": True}
+        c2 = {"open": 505.0, "high": 508.0, "low": 499.0, "timestamp": now_ts + 600, "is_completed": True}
         storage.evaluate_open_outcomes({sym: c2})
 
         c.execute("SELECT outcome, tp1_hit, tp2_hit, final_pnl FROM historical_signals WHERE id = ?", (sig_id,))
@@ -1201,6 +1201,124 @@ class TestIntradayScreenerCore(unittest.TestCase):
         self.assertEqual(res_tp1_be_same["tp1_hit"], 1)
         self.assertEqual(res_tp1_be_same["tp2_hit"], 0)
         self.assertEqual(res_tp1_be_same["final_pnl"], 10.0)  # 0.5 * (1020-1000) + 0.5 * (1000-1000) = 10.0
+
+        # 9. Inconsistent OHLC (High < Low or High < Open) -> Reject candle, remain ACTIVE
+        res_bad_high = evaluate_candle_transition(
+            direction="BUY", entry=1000.0, orig_sl=990.0, sl=990.0, tp1=1020.0, tp2=1040.0,
+            tp1_hit_prior=False, c_open=1005.0, c_high=1000.0, c_low=995.0, c_ts=1700000000.0, est_costs=1.5
+        )
+        self.assertEqual(res_bad_high["outcome"], "ACTIVE")
+        self.assertFalse(res_bad_high["should_break"])
+
+        # 10. String non-numeric corrupted input -> Safe exception handling, remain ACTIVE
+        res_str_corrupt = evaluate_candle_transition(
+            direction="BUY", entry=1000.0, orig_sl=990.0, sl=990.0, tp1=1020.0, tp2=1040.0,
+            tp1_hit_prior=False, c_open="corrupt", c_high=1025.0, c_low=995.0, c_ts=1700000000.0, est_costs=1.5
+        )
+        self.assertEqual(res_str_corrupt["outcome"], "ACTIVE")
+        self.assertFalse(res_str_corrupt["should_break"])
+
+    def test_multi_exit_cost_accounting_no_double_entry_friction(self):
+        # Verify that multi-exit cost accounting counts entry friction (brokerage, stamp duty) exactly ONCE
+        from engine.cost_engine import IndianMarketCosts
+        entry_price = 1000.0
+        tot_qty = 200
+
+        # Case 1: Full exit in 1 order
+        full_res = IndianMarketCosts.calculate_multi_exit_costs(
+            entry_price=entry_price, exits=[(1020.0, 200)], total_quantity=tot_qty, instrument_type="EQUITY_INTRADAY"
+        )
+
+        # Case 2: Partial exits in 2 orders of 100 shares each
+        multi_res = IndianMarketCosts.calculate_multi_exit_costs(
+            entry_price=entry_price, exits=[(1020.0, 100), (1020.0, 100)], total_quantity=tot_qty, instrument_type="EQUITY_INTRADAY"
+        )
+
+        # Stamp duty is on BUY turnover only, so both cases must have identical stamp duty!
+        self.assertEqual(full_res["stamp_duty"], multi_res["stamp_duty"])
+        self.assertEqual(full_res["buy_turnover"], multi_res["buy_turnover"])
+
+        # Brokerage for full exit is 1 buy order + 1 sell order = ₹40 (max)
+        # Brokerage for 2 partial exits is 1 buy order + 2 sell orders = ₹60 (max)
+        self.assertEqual(full_res["brokerage"], 40.0)
+        self.assertEqual(multi_res["brokerage"], 60.0)
+
+    def test_smc_confirmation_endpoint_bearish_and_options_rejection(self):
+        # Integration test verifying BEARISH confirmation and strict OPTIONS rejection without contract data
+        import groww_terminal_app as gta
+        from flask import json
+        client = gta.app.test_client()
+
+        test_sym = "TCS.NS"
+        auth_ts = str(self.df_5m.index[-1])
+        cand = {
+            "symbol": test_sym,
+            "direction": "BEARISH",
+            "current_price": 3500.0,
+            "suggested_sl": 3535.0,
+            "suggested_tp1": 3430.0,
+            "suggested_tp2": 3360.0,
+            "is_actionable": True,
+            "stage": "ENTRY READY",
+            "candle_ts": auth_ts,
+            "conviction_score": 85,
+            "confirmation_score": 90
+        }
+        gta.screener_state["ranked_opportunities"] = {
+            "entry_ready": [cand],
+            "ranked_candle_ts": auth_ts
+        }
+        gta.screener_state["raw_market_cache"] = {
+            "^NSEI": {"timestamp": time.time(), "df": self.df_5m}
+        }
+
+        # 1. Test BEARISH confirmation
+        from unittest.mock import patch
+        mock_now = self.df_5m.index[-1] + pd.Timedelta(seconds=300)
+        with patch("engine.market_validator.MarketValidator.is_market_open", return_value=True), \
+             patch("engine.market_validator.MarketValidator.get_ist_now", return_value=mock_now):
+            resp = client.post("/api/signals/log-confirmed", data=json.dumps({
+                "symbol": test_sym,
+                "action": "BEARISH",
+                "candle_ts": auth_ts,
+                "entry_price": 3500.0,
+                "sl": 3535.0,
+                "tp1": 3430.0,
+                "tp2": 3360.0
+            }), content_type="application/json")
+
+            self.assertEqual(resp.status_code, 200)
+            res_data = json.loads(resp.data)
+            self.assertTrue(res_data.get("success"))
+            sig_id = res_data.get("signal_id")
+            self.assertIsNotNone(sig_id)
+
+            conn = storage.get_db_connection()
+            c = conn.cursor()
+            c.execute("SELECT direction, quantity, instrument_type FROM historical_signals WHERE id = ?", (sig_id,))
+            saved = c.fetchone()
+            conn.close()
+
+            self.assertEqual(saved["direction"], "SELL")
+            self.assertEqual(saved["instrument_type"], "FUTURES")
+            self.assertEqual(saved["quantity"], 175)
+
+            # 2. Test OPTIONS rejection without contract chain data
+            opt_resp = client.post("/api/signals/log-confirmed", data=json.dumps({
+                "symbol": test_sym,
+                "action": "BEARISH",
+                "candle_ts": auth_ts,
+                "instrument_type": "OPTIONS",
+                "entry_price": 3500.0,
+                "sl": 3535.0,
+                "tp1": 3430.0,
+                "tp2": 3360.0
+            }), content_type="application/json")
+
+            self.assertEqual(opt_resp.status_code, 400)
+            opt_data = json.loads(opt_resp.data)
+            self.assertFalse(opt_data.get("success"))
+            self.assertIn("OPTIONS trading mode requires", opt_data.get("error", ""))
 
     def test_nifty_benchmark_fail_closed_gate(self):
         # Verify that compute_and_update_ranked_opportunities fails-closed when NIFTY feed is corrupted

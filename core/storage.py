@@ -259,7 +259,7 @@ def evaluate_candle_transition(direction, entry, orig_sl, sl, tp1, tp2, tp1_hit_
             }
 
     # Structural consistency: High must be >= max(Open, Low), Low must be <= min(Open, High)
-    if f_high < f_open or f_high < f_low or f_low > f_open:
+    if f_high < f_open or f_high < f_low or f_low > f_high:
         return {
             "outcome": "ACTIVE", "final_pnl": 0.0, "net_pnl": 0.0, "brokerage_costs": est_costs,
             "tp1_hit": 1 if tp1_hit_prior else 0, "tp1_hit_time": None, "tp2_hit": 0, "tp2_hit_time": None,
@@ -653,9 +653,9 @@ def evaluate_open_outcomes(data_map, force_eod=False):
                 is_completed = data.get("is_completed", (c_ts + 300 <= now))
                 if is_completed and c_ts > last_candle_time and c_ts >= eval_min_time:
                     newest_candle_time = c_ts
-                    c_open = float(data.get("open", entry))
                     c_high = float(data.get("high", entry))
                     c_low = float(data.get("low", entry))
+                    c_open = float(data.get("open", c_low))
 
                     tp1_hit_prior = bool(tp1_hit)
                     if direction == "BUY":

@@ -136,6 +136,23 @@ def auto_connect_groww():
                 fno_loaded = True
                 print(f"Dynamically discovered {len(raw_fno)} F&O tradeable stocks from Groww API.")
 
+                # Register discovered F&O lot sizes into ContractMaster dynamically
+                try:
+                    from core.contract_master import ContractMaster
+                    lot_map = {}
+                    if 'lot_size' in fno_df.columns:
+                        for _, row in fno_df.dropna(subset=['underlying_symbol', 'lot_size']).iterrows():
+                            u_sym = str(row['underlying_symbol']).strip().upper()
+                            try:
+                                lot_map[u_sym] = int(row['lot_size'])
+                            except Exception:
+                                pass
+                    if lot_map:
+                        ContractMaster.register_dynamic_contracts(lot_map)
+                        print(f"Registered {len(lot_map)} dynamic F&O contract lot sizes into ContractMaster.")
+                except Exception as c_err:
+                    print("ContractMaster dynamic registration notice:", c_err)
+
             # Dynamically extract all official company names from Groww cash segment instruments
             cash_nse = df[(df['exchange'] == 'NSE') & (df['segment'] == 'CASH')].dropna(subset=['trading_symbol', 'name'])
             symbol_to_name = dict(zip(cash_nse['trading_symbol'], cash_nse['name']))
