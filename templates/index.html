@@ -284,8 +284,20 @@
         let sectorCountdown = 300;
         let activeConfirmedTrades = {};
         try {
+            // Strictly clean out any old hardcoded or demo trades (e.g. dummy entry: 100, sl: 90)
             const saved = localStorage.getItem('activeConfirmedTrades');
-            if (saved) activeConfirmedTrades = JSON.parse(saved);
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                const cleaned = {};
+                for (const [sym, t] of Object.entries(parsed)) {
+                    // Only keep trades with genuine DB signal_id and realistic non-dummy prices
+                    if (t && t.signal_id && t.smc && t.smc.current_price !== 100.0) {
+                        cleaned[sym] = t;
+                    }
+                }
+                activeConfirmedTrades = cleaned;
+                localStorage.setItem('activeConfirmedTrades', JSON.stringify(activeConfirmedTrades));
+            }
         } catch(e) {}
 
         // 3D Three.js Background HUD Grid & Starfield

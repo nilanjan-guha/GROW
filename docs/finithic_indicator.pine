@@ -970,9 +970,9 @@ if idxBuySignalRaw
 if idxSellSignalRaw
     lastIdxSellBar := bar_index
 
-// Active window: When Index fired a signal within the last 3 bars, the option MUST search for an immediate sniper entry
-recentIdxBuySignal  = (bar_index - lastIdxBuyBar <= 3)
-recentIdxSellSignal = (bar_index - lastIdxSellBar <= 3)
+// Active window: When Index/Futures fired a signal within the last 15 bars, the option MUST search for an immediate sniper entry at support/discount!
+recentIdxBuySignal  = (bar_index - lastIdxBuyBar <= 15)
+recentIdxSellSignal = (bar_index - lastIdxSellBar <= 15)
 
 // Absolute True Directional Bias of Parent Index:
 indexIsBullish = (idxBullTrend or idxBullDisplacement or idxBullBreak or recentIdxBuySignal) and idxClose >= idxEma50 * 0.999
@@ -1232,8 +1232,10 @@ optionIndexFilter = isCallOption ? parentBullConfirmed : (isPutOption ? parentBe
 // If Parent Index fired BUY, CALL options find the instant entry on a green candle/absorption!
 // If Parent Index fired SELL, PUT options find the instant entry on a green candle/absorption!
 // ═══════════════════════════════════════════════════════════════════════
-callRelayEntry = isCallOption and recentIdxBuySignal and (close > open or lowerWickLen >= candleSpread * 0.3) and not isOverextendedLong
-putRelayEntry  = isPutOption  and recentIdxSellSignal and (close > open or lowerWickLen >= candleSpread * 0.3) and not isOverextendedLong
+// Direct Synchronized Option Entry:
+// When parent index/futures fires a signal, find the entry on the option at support or on a green bar
+callRelayEntry = isCallOption and recentIdxBuySignal and (close > open or lowerWickLen >= candleSpread * 0.2 or atVwapDiscount or sfpBull or sweepLow) and not isOverextendedLong
+putRelayEntry  = isPutOption  and recentIdxSellSignal and (close > open or lowerWickLen >= candleSpread * 0.2 or atVwapDiscount or sfpBull or sweepLow) and not isOverextendedLong
 
 // Master Option Sync Trigger: Direct Execution on Option when Underlying fires!
 // When the parent (Index or Futures) fires a SELL/DOWN signal, the PUT option buys IMMEDIATELY!
@@ -1322,8 +1324,8 @@ if enableSniperEngine and not inTrade and (bar_index - lastExitBar >= math.max(1
         calcSL    = math.min(supportBase, low) - slBuffer
         riskDist  = calcEntry - calcSL
 
-        // Guard against zero/negative or abnormally bloated SL (Must have defined, small risk)
-        if riskDist >= syminfo.mintick and riskDist <= (atr14 * 3.0)
+        // Guard against zero/negative SL (Remove the artificial 3x ATR cap that blocked large-momentum options)
+        if riskDist >= syminfo.mintick
             inTrade         := true
             tradesToday     += 1
             tradeDir        := 1
@@ -1368,7 +1370,7 @@ if enableSniperEngine and not inTrade and (bar_index - lastExitBar >= math.max(1
         calcSL    = math.max(resistanceBase, high) + slBuffer
         riskDist  = calcSL - calcEntry
 
-        if riskDist >= syminfo.mintick and riskDist <= (atr14 * 3.0)
+        if riskDist >= syminfo.mintick
             inTrade         := true
             tradesToday     += 1
             tradeDir        := -1
