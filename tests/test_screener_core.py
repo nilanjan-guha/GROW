@@ -440,5 +440,44 @@ class TestIntradayScreenerCore(unittest.TestCase):
         self.assertEqual(equity_stt, 25.0)
         self.assertEqual(futures_stt, 12.5)
 
+    def test_atr_no_lookahead_and_early_ob_suppression(self):
+        # A dataframe with < 14 bars should have no active OBs formed since ATR is unavailable
+        short_df = self.df_5m.iloc[:12].copy()
+        strat_res = InstitutionalStrategyEngine.evaluate_strategies(
+            df=short_df,
+            daily_df=self.daily_df
+        )
+        self.assertEqual(len(strat_res.get("active_demand_obs", [])), 0)
+        self.assertEqual(len(strat_res.get("active_supply_obs", [])), 0)
+
+    def test_breaker_rejection_strength_prevents_false_positives(self):
+        # Verify that weak wick touches without firm rejection are not qualified as confirmed breakers
+        strat_res = InstitutionalStrategyEngine.evaluate_strategies(
+            df=self.df_5m,
+            daily_df=self.daily_df
+        )
+        # Check that any confirmed breaker has all 3 required milestone keys:
+        # created_ts, invalidated_ts, and breaker_confirmed_ts
+        for b in strat_res.get("bullish_breaker_obs", []):
+            self.assertEqual(b.get("breaker_state"), "BREAKER_CONFIRMED_REJECTION")
+            self.assertIn("created_ts", b)
+            self.assertIn("invalidated_ts", b)
+            self.assertIn("breaker_confirmed_ts", b)
+
+        for b in strat_res.get("bearish_breaker_obs", []):
+            self.assertEqual(b.get("breaker_state"), "BREAKER_CONFIRMED_REJECTION")
+            self.assertIn("created_ts", b)
+            self.assertIn("invalidated_ts", b)
+            self.assertIn("breaker_confirmed_ts", b)
+
+    def test_live_timeframe_exact_grid_rejection(self):
+        from engine.market_validator import MarketValidator
+        # Construct unaligned 1-minute feed disguised as 5-minute
+        bad_df = self.df_5m.copy()
+        bad_df.index = [t.replace(minute=t.minute + 1) for t in bad_df.index]
+        val = MarketValidator.validate_feed_freshness(bad_df, candle_duration_seconds=300)
+        self.assertFalse(val.get("is_valid", False))
+        self.assertEqual(val.get("status"), "UNALIGNED_CANDLE_TIMESTAMPS")
+
 if __name__ == '__main__':
     unittest.main()

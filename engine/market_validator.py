@@ -152,29 +152,42 @@ class MarketValidator:
 
         is_completed = (now_ts >= candle_end)
 
-        # STRICT 5-MINUTE TIMEFRAME & SESSION GRID ENFORCEMENT (Live P0):
-        # 1. Reject 1-minute, 3-minute, 15-minute or other invalid candle intervals
-        # 2. Enforce seconds == 0 and microseconds == 0
-        # 3. Enforce minutes % 5 == 0
-        if len(df_eval) >= 2:
-            recent_diffs = (df_eval.index[1:] - df_eval.index[:-1]).total_seconds()
-            # If median interval is less than 240 seconds (e.g. 60s for 1m feed) or greater than 360 seconds (15m feed), reject!
-            median_interval = float(np.median(recent_diffs[-10:] if len(recent_diffs) >= 10 else recent_diffs))
-            if abs(median_interval - candle_duration_seconds) > 60:
-                return {
-                    "is_valid": False,
-                    "status": "INVALID_TIMEFRAME",
-                    "reason": f"Feed candle interval {int(median_interval)}s does not match expected {candle_duration_seconds}s (5-minute required; 1-minute strictly rejected)"
-                }
+        # STRICT 5-MINUTE TIMEFRAME & SESSION GRID ENFORCEMENT (Live P0/P1):
+        # 1. Enforce every candle interval in the current session is exactly 300 seconds (distinguishing overnight gaps)
+        # 2. Reject 1-minute, 3-minute, 15-minute or other invalid candle intervals
+        # 3. Enforce seconds == 0 and microseconds == 0 on every candle in the feed
+        # 4. Enforce minutes % 5 == 0 on every candle in the feed
+        # 5. Check against the expected NSE 5-minute session grid (09:15 to 15:25 IST)
+        if len(df_eval) >= 1:
+            for t in df_eval.index:
+                if t.second != 0 or t.microsecond != 0 or (t.minute % 5 != 0):
+                    return {
+                        "is_valid": False,
+                        "status": "UNALIGNED_CANDLE_TIMESTAMPS",
+                        "reason": f"Candle timestamp {t.strftime('%Y-%m-%d %H:%M:%S')} is not aligned to exact 5-minute boundary"
+                    }
+                # Check within NSE official trading hours (09:15 to 15:30)
+                t_m = t.hour * 60 + t.minute
+                if t_m < 555 or t_m > 925:
+                    return {
+                        "is_valid": False,
+                        "status": "OFF_HOURS_CANDLE",
+                        "reason": f"Candle timestamp {t.strftime('%H:%M')} is outside official NSE session hours (09:15 - 15:25 start)"
+                    }
 
-        # Check timestamp alignment on recent candles
-        for t in df_eval.index[-5:]:
-            if t.second != 0 or t.microsecond != 0 or (t.minute % 5 != 0):
-                return {
-                    "is_valid": False,
-                    "status": "UNALIGNED_CANDLE_TIMESTAMPS",
-                    "reason": f"Candle timestamp {t.strftime('%Y-%m-%d %H:%M:%S')} is not aligned to exact 5-minute boundary"
-                }
+        # Check consecutive intervals strictly: intra-session intervals must be exactly candle_duration_seconds (300s)
+        if len(df_eval) >= 2:
+            for idx_c in range(1, len(df_eval)):
+                t_prev = df_eval.index[idx_c - 1]
+                t_curr = df_eval.index[idx_c]
+                if t_prev.date() == t_curr.date():
+                    int_diff = (t_curr - t_prev).total_seconds()
+                    if int_diff != candle_duration_seconds:
+                        return {
+                            "is_valid": False,
+                            "status": "INVALID_TIMEFRAME",
+                            "reason": f"Intra-session candle interval between {t_prev.strftime('%H:%M')} and {t_curr.strftime('%H:%M')} is {int(int_diff)}s (strictly {candle_duration_seconds}s expected; 1m/3m feeds rejected)"
+                        }
 
         # Session freshness check
         if MarketValidator.is_market_open(now):

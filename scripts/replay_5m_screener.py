@@ -57,6 +57,9 @@ def run_screener_replay(sample_symbols=None, days="1mo", instrument_type="EQUITY
         "detected_bearish_events": 0,
         "bullish_lead_times": [],
         "bearish_lead_times": [],
+        "preparing_to_ignition_leads": [],
+        "missed_bullish_events": 0,
+        "missed_bearish_events": 0,
         "in_sample_wins": 0,
         "in_sample_trades": 0,
         "out_of_sample_wins": 0,
@@ -392,8 +395,23 @@ def run_screener_replay(sample_symbols=None, days="1mo", instrument_type="EQUITY
                 stats["watch_only_candidates"] += 1
                 continue
 
+            # Approximate lot sizes for standard F&O stocks (used when instrument_type in ('FUTURES', 'OPTIONS'))
+            STOCK_LOT_SIZES = {
+                "RELIANCE": 250, "TCS": 175, "HDFCBANK": 550, "INFY": 400, "ICICIBANK": 700,
+                "SBIN": 750, "BHARTIARTL": 475, "ITC": 1600, "LT": 150, "AXISBANK": 625,
+                "KOTAKBANK": 400, "HINDUNILVR": 300, "BAJFINANCE": 125, "MARUTI": 50
+            }
+            clean_sym = sym.replace(".NS", "").upper()
+            lot_size = STOCK_LOT_SIZES.get(clean_sym, 250)
+
             # Compute exact trade quantity from allocated capital
-            trade_qty = int(available_alloc_rs / actual_entry)
+            if instrument_type.upper() in ("FUTURES", "OPTIONS"):
+                # Round to nearest lot size
+                num_lots = max(1, int(available_alloc_rs / (actual_entry * lot_size)))
+                trade_qty = num_lots * lot_size
+            else:
+                trade_qty = int(available_alloc_rs / actual_entry)
+
             if trade_qty <= 0:
                 continue
             actual_allocated_rs = trade_qty * actual_entry
@@ -490,37 +508,58 @@ def run_screener_replay(sample_symbols=None, days="1mo", instrument_type="EQUITY
                 max_fav = (actual_entry - min(in_trade_lows[:exit_offset+1])) / actual_entry * 100
                 max_adv = (max(in_trade_highs[:exit_offset+1]) - actual_entry) / actual_entry * 100
 
-            # Realistic Statutory Turnover Costs for Indian Intraday Equity / Futures:
-            # Equity Intraday:
-            # - Brokerage: min(₹20, 0.03% of turnover) each side
-            # - STT: 0.025% on sell side only
-            # - Exchange turnover charge: 0.00325% on total turnover
-            # - SEBI turnover fee: ₹10 per crore (0.0001% of turnover)
-            # - Stamp duty: 0.003% on buy side only
-            # - GST: 18% on (Brokerage + Exchange + SEBI)
+            # Realistic Statutory Turnover Costs for Indian Intraday Equity / Futures / Options:
+            # - Equity Intraday:
+            #   * Brokerage: min(₹20, 0.03% of turnover) each side
+            #   * STT: 0.025% on sell side only
+            #   * Exchange turnover charge: 0.00325% on total turnover
+            #   * SEBI turnover fee: ₹10 per crore (0.0001% of turnover)
+            #   * Stamp duty: 0.003% on buy side only
+            #   * GST: 18% on (Brokerage + Exchange + SEBI)
             #
-            # Futures Intraday:
-            # - Brokerage: min(₹20, 0.03% of turnover) each side
-            # - STT: 0.0125% on sell side only
-            # - Exchange turnover charge: 0.0019% on total turnover
-            # - SEBI turnover fee: ₹10 per crore (0.0001% of turnover)
-            # - Stamp duty: 0.002% on buy side only
-            # - GST: 18% on (Brokerage + Exchange + SEBI)
+            # - Futures Intraday:
+            #   * Brokerage: min(₹20, 0.03% of turnover) each side
+            #   * STT: 0.0125% on sell side only
+            #   * Exchange turnover charge: 0.0019% on total turnover
+            #   * SEBI turnover fee: ₹10 per crore (0.0001% of turnover)
+            #   * Stamp duty: 0.002% on buy side only
+            #   * GST: 18% on (Brokerage + Exchange + SEBI)
+            #
+            # - Options Intraday (Long Option Proxy on Premium):
+            #   * Assuming ATM/near-ATM premium ~ 1.5% of underlying price
+            #   * Brokerage: flat ₹20 per executed order each side
+            #   * STT: 0.0625% on sell side premium turnover
+            #   * Exchange turnover charge: 0.053% on premium turnover
+            #   * SEBI turnover fee: ₹10 per crore (0.0001% of turnover)
+            #   * Stamp duty: 0.003% on buy side premium turnover
+            #   * GST: 18% on (Brokerage + Exchange + SEBI)
             entry_turnover_rs = actual_entry * trade_qty
             exit_turnover_rs = exit_price_actual * trade_qty
             total_turnover_rs = entry_turnover_rs + exit_turnover_rs
 
-            brokerage_rs = min(20.0, entry_turnover_rs * 0.0003) + min(20.0, exit_turnover_rs * 0.0003)
-            if instrument_type.upper() == "FUTURES":
+            if instrument_type.upper() == "OPTIONS":
+                # Proxy option premium: ~1.5% of spot, simulated with flat ₹20 brokerage
+                opt_prem_entry = entry_turnover_rs * 0.015
+                opt_prem_exit = max(0.0, opt_prem_entry + ((exit_turnover_rs - entry_turnover_rs) * 0.50)) # 0.50 delta proxy
+                opt_total_turnover = opt_prem_entry + opt_prem_exit
+                brokerage_rs = 40.0  # ₹20 entry + ₹20 exit
+                stt_rs = (opt_prem_exit if direction == "BULLISH" else opt_prem_entry) * 0.000625
+                exch_turnover_fee_rs = opt_total_turnover * 0.00053
+                stamp_duty_rs = (opt_prem_entry if direction == "BULLISH" else opt_prem_exit) * 0.00003
+                sebi_charges_rs = opt_total_turnover * 0.000001
+            elif instrument_type.upper() == "FUTURES":
+                brokerage_rs = min(20.0, entry_turnover_rs * 0.0003) + min(20.0, exit_turnover_rs * 0.0003)
                 stt_rs = (exit_turnover_rs if direction == "BULLISH" else entry_turnover_rs) * 0.000125
                 exch_turnover_fee_rs = total_turnover_rs * 0.000019
                 stamp_duty_rs = (entry_turnover_rs if direction == "BULLISH" else exit_turnover_rs) * 0.00002
+                sebi_charges_rs = total_turnover_rs * 0.000001
             else:
+                brokerage_rs = min(20.0, entry_turnover_rs * 0.0003) + min(20.0, exit_turnover_rs * 0.0003)
                 stt_rs = (exit_turnover_rs if direction == "BULLISH" else entry_turnover_rs) * 0.00025
                 exch_turnover_fee_rs = total_turnover_rs * 0.0000325
                 stamp_duty_rs = (entry_turnover_rs if direction == "BULLISH" else exit_turnover_rs) * 0.00003
+                sebi_charges_rs = total_turnover_rs * 0.000001
             
-            sebi_charges_rs = total_turnover_rs * 0.000001
             gst_rs = (brokerage_rs + exch_turnover_fee_rs + sebi_charges_rs) * 0.18
             total_friction_rs = brokerage_rs + stt_rs + exch_turnover_fee_rs + sebi_charges_rs + gst_rs + stamp_duty_rs
 
@@ -619,25 +658,53 @@ def run_screener_replay(sample_symbols=None, days="1mo", instrument_type="EQUITY
         scanned_history = s_data["scanned_history"]
         for b_idx in s_data["bullish_event_indices"]:
             stats["bullish_events"] += 1
+            found_early = False
+            prep_idx = None
+            ign_idx = None
             for lead in range(1, 7):
                 c_idx = b_idx - lead
                 entry = scanned_history.get(c_idx, {})
-                if entry.get("direction") == "BULLISH" and entry.get("stage") in ("ENTRY READY", "IGNITION", "PREPARING", "OBSERVING"):
-                    stats["detected_bullish_events"] += 1
-                    stats["bullish_lead_times"].append(lead)
-                    break
+                if entry.get("direction") == "BULLISH":
+                    stg = entry.get("stage")
+                    if stg in ("ENTRY READY", "IGNITION", "PREPARING", "OBSERVING"):
+                        if not found_early:
+                            stats["detected_bullish_events"] += 1
+                            stats["bullish_lead_times"].append(lead)
+                            found_early = True
+                    if stg == "PREPARING" and prep_idx is None:
+                        prep_idx = c_idx
+                    if stg in ("IGNITION", "ENTRY READY") and ign_idx is None:
+                        ign_idx = c_idx
+
+            if prep_idx is not None and ign_idx is not None and ign_idx > prep_idx:
+                stats["preparing_to_ignition_leads"].append((ign_idx - prep_idx) * 5)
+            if not found_early:
+                stats["missed_bullish_events"] += 1
 
         for s_idx in s_data["bearish_event_indices"]:
             stats["bearish_events"] += 1
+            found_early = False
+            prep_idx = None
+            ign_idx = None
             for lead in range(1, 7):
                 c_idx = s_idx - lead
                 entry = scanned_history.get(c_idx, {})
-                if entry.get("direction") == "BEARISH" and entry.get("stage") in ("ENTRY READY", "IGNITION", "PREPARING", "OBSERVING"):
-                    stats["detected_bearish_events"] += 1
-                    stats["bearish_lead_times"].append(lead)
-                    break
-                    stats["bearish_lead_times"].append(lead)
-                    break
+                if entry.get("direction") == "BEARISH":
+                    stg = entry.get("stage")
+                    if stg in ("ENTRY READY", "IGNITION", "PREPARING", "OBSERVING"):
+                        if not found_early:
+                            stats["detected_bearish_events"] += 1
+                            stats["bearish_lead_times"].append(lead)
+                            found_early = True
+                    if stg == "PREPARING" and prep_idx is None:
+                        prep_idx = c_idx
+                    if stg in ("IGNITION", "ENTRY READY") and ign_idx is None:
+                        ign_idx = c_idx
+
+            if prep_idx is not None and ign_idx is not None and ign_idx > prep_idx:
+                stats["preparing_to_ignition_leads"].append((ign_idx - prep_idx) * 5)
+            if not found_early:
+                stats["missed_bearish_events"] += 1
 
     print("\n" + "="*55)
     print("        5-MINUTE SCREENER REPLAY REPORT")
@@ -662,7 +729,11 @@ def run_screener_replay(sample_symbols=None, days="1mo", instrument_type="EQUITY
         print(f"Pre-Move Recall (Matched):   {recall_pct}% ({total_detected}/{total_events} detected before expansion)")
         print(f"  • Bullish Recall:          {bull_recall}% ({stats['detected_bullish_events']}/{stats['bullish_events']})")
         print(f"  • Bearish Recall:          {bear_recall}% ({stats['detected_bearish_events']}/{stats['bearish_events']})")
+        print(f"Missed Moves (False Neg):    {stats['missed_bullish_events'] + stats['missed_bearish_events']} ({round((stats['missed_bullish_events'] + stats['missed_bearish_events'])/total_events*100, 1)}%)")
         print(f"Average Pre-Move Lead Time:  {avg_lead_min} minutes before start")
+        if stats["preparing_to_ignition_leads"]:
+            avg_prep_to_ign = round(float(np.mean(stats["preparing_to_ignition_leads"])), 1)
+            print(f"PREPARING-to-IGNITION Lead:  {avg_prep_to_ign} minutes average warning time")
 
     # Trade Quality & Precision
     if stats["trades_executed"] > 0:

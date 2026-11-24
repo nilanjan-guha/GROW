@@ -111,8 +111,10 @@ class InstitutionalStrategyEngine:
         rsi = float(100 - (100 / (1 + rs)).iloc[-1])
 
         tr = pd.concat([h - l, (h - c.shift(1)).abs(), (l - c.shift(1)).abs()], axis=1).max(axis=1)
-        rolling_atr_series = tr.rolling(14).mean().bfill()
-        atr14 = float(rolling_atr_series.iloc[-1]) or (curr_c * 0.01)
+        # Point-in-time ATR without backfilling: early candles (< 14 bars) remain NaN
+        # Strictly avoids future observation leakage into historical OB identification
+        rolling_atr_series = tr.rolling(14).mean()
+        atr14 = float(rolling_atr_series.iloc[-1]) if np.isfinite(rolling_atr_series.iloc[-1]) else (curr_c * 0.01)
 
         # UNIFIED TIME-OF-DAY RVOL (Across Anomaly and Institutional Engine)
         from engine.anomaly_engine import AnomalyDetector
@@ -175,12 +177,15 @@ class InstitutionalStrategyEngine:
         # 2. Incremental order block lifecycle state machine:
         # States: CREATED -> ACTIVE -> PARTIALLY_MITIGATED -> FULLY_MITIGATED -> INVALIDATED
         # Requires displacement (expansion candle range >= 1.25x ATR at formation or RVOL >= 1.20)
+        # Strictly skip OB formation for bars k < 14 until valid historical ATR exists (NO forward leakage or bfill)
         active_bull_obs = []
         active_bear_obs = []
         vol_series = v.values
         atr_values = rolling_atr_series.values
+        max_ob_age_candles = 60  # Active OB expiration horizon (~5 hours on 5m)
+        max_breaker_age_candles = 40 # Breaker flip retest expiration horizon (~3.3 hours on 5m)
         
-        for k in range(1, len(hist_df)):
+        for k in range(14, len(hist_df)):
             c_prev = float(c.iloc[k-1])
             o_prev = float(o.iloc[k-1])
             h_prev = float(h.iloc[k-1])
@@ -192,8 +197,10 @@ class InstitutionalStrategyEngine:
             v_curr = float(v.iloc[k])
             curr_rng = h_curr - l_curr
             
-            # Point-in-time ATR at candle k (prevents lookahead distortion across volatility regimes)
-            k_atr = float(atr_values[k]) if k < len(atr_values) and np.isfinite(atr_values[k]) and atr_values[k] > 0 else (atr14 or (curr_c * 0.01))
+            # Point-in-time ATR at candle k (strictly local, never using future atr14 fallback)
+            k_atr = float(atr_values[k]) if k < len(atr_values) and np.isfinite(atr_values[k]) and atr_values[k] > 0 else None
+            if k_atr is None or k_atr <= 0:
+                continue
 
             # 15-period volume mean up to bar k-1 for local RVOL
             past_vols = vol_series[max(0, k-15):k]
@@ -203,6 +210,7 @@ class InstitutionalStrategyEngine:
             # Displacement check on confirming candle k using formation-time ATR (k_atr):
             # Body must expand with significant movement (range >= 1.20x k_atr OR bar RVOL >= 1.20)
             has_displacement = (curr_rng >= (k_atr * 1.20)) or (bar_rvol >= 1.20) or (abs(c_curr - o_curr) >= (k_atr * 0.8))
+            displacement_ratio = max(curr_rng / k_atr, bar_rvol)
             
             # Bullish Demand OB: Down candle followed by displacement breaking above its high
             if c_prev < o_prev and c_curr > h_prev and has_displacement:
@@ -212,6 +220,7 @@ class InstitutionalStrategyEngine:
                     "mid": (h_prev + l_prev) / 2.0,
                     "created_at_idx": k,
                     "created_ts": str(d_times[k]),
+                    "displacement_ratio": round(float(displacement_ratio), 2),
                     "state": "ACTIVE"  # CREATED -> ACTIVE
                 })
             
@@ -223,6 +232,7 @@ class InstitutionalStrategyEngine:
                     "mid": (h_prev + l_prev) / 2.0,
                     "created_at_idx": k,
                     "created_ts": str(d_times[k]),
+                    "displacement_ratio": round(float(displacement_ratio), 2),
                     "state": "ACTIVE"
                 })
             
@@ -235,13 +245,19 @@ class InstitutionalStrategyEngine:
             # Breaker Block State Progression:
             # Once INVALIDATED, an OB enters the Breaker Block lifecycle:
             # 1. BREAKER_PENDING_RETEST: Price has breached the zone, waiting for a pullback to retest the flip boundary.
-            # 2. BREAKER_CONFIRMED_REJECTION: Subsequent candle touches the flip zone and closes rejecting away from it.
+            # 2. BREAKER_CONFIRMED_REJECTION: Subsequent candle touches the flip zone and closes with strong rejection away from it.
             for ob in active_bull_obs:
                 if ob["created_at_idx"] < k:
-                    if ob["state"] not in ("INVALIDATED", "BREAKER_PENDING_RETEST", "BREAKER_CONFIRMED_REJECTION"):
+                    # Check age expiration on un-invalidated OB
+                    if ob["state"] in ("ACTIVE", "PARTIALLY_MITIGATED") and (k - ob["created_at_idx"] > max_ob_age_candles):
+                        ob["state"] = "EXPIRED"
+                        continue
+
+                    if ob["state"] not in ("INVALIDATED", "BREAKER_PENDING_RETEST", "BREAKER_CONFIRMED_REJECTION", "EXPIRED"):
                         if c_curr < ob["bottom"]:
                             ob["state"] = "INVALIDATED"
                             ob["invalidated_at_idx"] = k
+                            ob["invalidated_ts"] = str(d_times[k])
                             ob["breaker_type"] = "BEARISH_BREAKER" # Invalidated Demand OB becomes a Bearish Breaker Block
                             ob["breaker_state"] = "BREAKER_PENDING_RETEST"
                         elif l_curr < ob["bottom"]:
@@ -250,17 +266,35 @@ class InstitutionalStrategyEngine:
                             if ob["state"] == "ACTIVE":
                                 ob["state"] = "PARTIALLY_MITIGATED"
                     elif ob.get("breaker_state") == "BREAKER_PENDING_RETEST" and k > ob["invalidated_at_idx"]:
-                        # Test if price pulled back into the flip zone (bottom to top) and closed below top (bearish rejection)
-                        if h_curr >= ob["bottom"] and c_curr <= ob["top"] and c_curr < o_curr:
+                        # Expire breaker retest if it takes too long to retest
+                        if k - ob["invalidated_at_idx"] > max_breaker_age_candles:
+                            ob["breaker_state"] = "BREAKER_EXPIRED"
+                            continue
+
+                        # Strengthened Bearish Breaker Rejection:
+                        # 1. High must actually penetrate into the flip zone: h_curr >= ob["bottom"]
+                        # 2. Close must firmly reject and close below the flip zone or in lower 40% of candle:
+                        #    c_curr < o_curr AND (c_curr <= ob["bottom"] * 1.002 or (h_curr - c_curr) >= 0.5 * curr_rng)
+                        # 3. Candle range must show non-trivial rejection >= 0.5 * k_atr
+                        penetrated_zone = h_curr >= (ob["bottom"] * 0.998)
+                        strong_bear_rejection = (c_curr < o_curr) and (c_curr <= ob["top"]) and ((h_curr - c_curr) >= 0.40 * curr_rng) and (curr_rng >= 0.50 * k_atr)
+                        if penetrated_zone and strong_bear_rejection:
                             ob["breaker_state"] = "BREAKER_CONFIRMED_REJECTION"
                             ob["breaker_confirmed_at_idx"] = k
+                            ob["breaker_confirmed_ts"] = str(d_times[k])
             
             for ob in active_bear_obs:
                 if ob["created_at_idx"] < k:
-                    if ob["state"] not in ("INVALIDATED", "BREAKER_PENDING_RETEST", "BREAKER_CONFIRMED_REJECTION"):
+                    # Check age expiration on un-invalidated OB
+                    if ob["state"] in ("ACTIVE", "PARTIALLY_MITIGATED") and (k - ob["created_at_idx"] > max_ob_age_candles):
+                        ob["state"] = "EXPIRED"
+                        continue
+
+                    if ob["state"] not in ("INVALIDATED", "BREAKER_PENDING_RETEST", "BREAKER_CONFIRMED_REJECTION", "EXPIRED"):
                         if c_curr > ob["top"]:
                             ob["state"] = "INVALIDATED"
                             ob["invalidated_at_idx"] = k
+                            ob["invalidated_ts"] = str(d_times[k])
                             ob["breaker_type"] = "BULLISH_BREAKER" # Invalidated Supply OB becomes a Bullish Breaker Block
                             ob["breaker_state"] = "BREAKER_PENDING_RETEST"
                         elif h_curr > ob["top"]:
@@ -269,10 +303,22 @@ class InstitutionalStrategyEngine:
                             if ob["state"] == "ACTIVE":
                                 ob["state"] = "PARTIALLY_MITIGATED"
                     elif ob.get("breaker_state") == "BREAKER_PENDING_RETEST" and k > ob["invalidated_at_idx"]:
-                        # Test if price pulled back into the flip zone (bottom to top) and closed above bottom (bullish rejection)
-                        if l_curr <= ob["top"] and c_curr >= ob["bottom"] and c_curr > o_curr:
+                        # Expire breaker retest if it takes too long to retest
+                        if k - ob["invalidated_at_idx"] > max_breaker_age_candles:
+                            ob["breaker_state"] = "BREAKER_EXPIRED"
+                            continue
+
+                        # Strengthened Bullish Breaker Rejection:
+                        # 1. Low must actually penetrate into the flip zone: l_curr <= ob["top"]
+                        # 2. Close must firmly reject and close above the flip zone or in upper 40% of candle:
+                        #    c_curr > o_curr AND (c_curr >= ob["top"] * 0.998 or (c_curr - l_curr) >= 0.5 * curr_rng)
+                        # 3. Candle range must show non-trivial rejection >= 0.5 * k_atr
+                        penetrated_zone = l_curr <= (ob["top"] * 1.002)
+                        strong_bull_rejection = (c_curr > o_curr) and (c_curr >= ob["bottom"]) and ((c_curr - l_curr) >= 0.40 * curr_rng) and (curr_rng >= 0.50 * k_atr)
+                        if penetrated_zone and strong_bull_rejection:
                             ob["breaker_state"] = "BREAKER_CONFIRMED_REJECTION"
                             ob["breaker_confirmed_at_idx"] = k
+                            ob["breaker_confirmed_ts"] = str(d_times[k])
 
         # Relevant Order Blocks & Institutional Breaker Blocks:
         # Demand OB must be BELOW or touching current price (cannot be above current price for Bullish!)
@@ -288,10 +334,33 @@ class InstitutionalStrategyEngine:
         # Bearish Breaker: Prior demand OB breached by aggressive selling, retested, and confirmed rejecting downwards
         bear_breakers = [ob for ob in active_bull_obs if ob.get("breaker_type") == "BEARISH_BREAKER" and ob.get("breaker_state") == "BREAKER_CONFIRMED_REJECTION" and ob["top"] >= (curr_c * 0.995)]
 
-        near_demand_ob = min(fresh_bull_obs, key=lambda ob: abs(curr_c - ob['top'])) if fresh_bull_obs else None
-        near_supply_ob = min(fresh_bear_obs, key=lambda ob: abs(curr_c - ob['bottom'])) if fresh_bear_obs else None
-        near_bull_breaker = min(bull_breakers, key=lambda ob: abs(curr_c - ob['top'])) if bull_breakers else None
-        near_bear_breaker = min(bear_breakers, key=lambda ob: abs(curr_c - ob['bottom'])) if bear_breakers else None
+        # Multidimensional Scoring & Ranking for OBs and Breakers:
+        # Prioritize: 1) Proximity to price, 2) Freshness/Age (lower bar difference), 3) Unmitigated state, 4) Displacement strength
+        def rank_bull_ob(ob):
+            dist_pct = abs(curr_c - ob['top']) / curr_c
+            age_bars = (len(hist_df) - 1) - ob.get("created_at_idx", 0)
+            freshness_penalty = min(2.0, age_bars / 30.0)
+            mitigation_penalty = 0.5 if ob.get("state") == "PARTIALLY_MITIGATED" else 0.0
+            disp_bonus = min(1.0, ob.get("displacement_ratio", 1.0) / 2.0)
+            return (dist_pct * 100.0) + freshness_penalty + mitigation_penalty - disp_bonus
+
+        def rank_bear_ob(ob):
+            dist_pct = abs(curr_c - ob['bottom']) / curr_c
+            age_bars = (len(hist_df) - 1) - ob.get("created_at_idx", 0)
+            freshness_penalty = min(2.0, age_bars / 30.0)
+            mitigation_penalty = 0.5 if ob.get("state") == "PARTIALLY_MITIGATED" else 0.0
+            disp_bonus = min(1.0, ob.get("displacement_ratio", 1.0) / 2.0)
+            return (dist_pct * 100.0) + freshness_penalty + mitigation_penalty - disp_bonus
+
+        fresh_bull_obs.sort(key=rank_bull_ob)
+        fresh_bear_obs.sort(key=rank_bear_ob)
+        bull_breakers.sort(key=lambda b: abs(curr_c - b['top']) + ((len(hist_df) - 1 - b.get("breaker_confirmed_at_idx", 0)) * 0.05))
+        bear_breakers.sort(key=lambda b: abs(curr_c - b['bottom']) + ((len(hist_df) - 1 - b.get("breaker_confirmed_at_idx", 0)) * 0.05))
+
+        near_demand_ob = fresh_bull_obs[0] if fresh_bull_obs else None
+        near_supply_ob = fresh_bear_obs[0] if fresh_bear_obs else None
+        near_bull_breaker = bull_breakers[0] if bull_breakers else None
+        near_bear_breaker = bear_breakers[0] if bear_breakers else None
 
         # 3. Institutional Liquidity Inducement (Retail Double Tops/Bottoms & Liquidity Clusters):
         # Equal Highs (EQH) / Equal Lows (EQL) within 0.15% threshold attract retail breakout/stop orders
@@ -688,6 +757,7 @@ class InstitutionalStrategyEngine:
             "volume_profile_poc": round(poc_price, 2),
             "volume_profile_vah": round(vah_price, 2),
             "volume_profile_val": round(val_price, 2),
+            "volume_profile_type": "ESTIMATED_PROXY",
             "is_above_poc": is_above_poc,
             "is_below_poc": is_below_poc,
             "is_outside_value_area": is_outside_value_area,
