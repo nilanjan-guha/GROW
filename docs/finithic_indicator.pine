@@ -370,7 +370,7 @@ getCurrentStructure(int size, bool equalHighLow = false, bool internal = false) 
             if showSwingsInput and not internal and not equalHighLow
                 drawLabel(time[size], p_ivot.currentLevel, p_ivot.currentLevel > p_ivot.lastLevel ? 'HH' : 'LH', swingBearishColor, label.style_label_down)
 
-// Enhanced Crisp & Distinct BOS / CHoCH Rendering
+// Clean, Minimalist Institutional Structure Rendering (Eliminates Text Clutter)
 drawStructure(pivot p_ivot, string tag, color structureColor, string lineStyle, string labelStyle, string labelSize) =>    
     var line l_ine   = line.new(na,na,na,na,xloc = xloc.bar_time)
     var label l_abel = label.new(na,na)
@@ -379,12 +379,13 @@ drawStructure(pivot p_ivot, string tag, color structureColor, string lineStyle, 
         l_ine.delete()
         l_abel.delete()
 
-    midX = math.round(0.5*(p_ivot.barIndex + bar_index))
-    l_ine := line.new(chart.point.new(p_ivot.barTime, na, p_ivot.currentLevel), chart.point.new(time, na, p_ivot.currentLevel), xloc.bar_time, color=structureColor, style=lineStyle, width=2)
-    // Clean transparent bold text without solid background badge
-    cleanTag = "--- " + tag + " ---"
-    l_abel := label.new(chart.point.new(na, midX, p_ivot.currentLevel), cleanTag, xloc.bar_index, 
-                        color=color(na), textcolor=structureColor, style=labelStyle, size=size.small)
+    // Draw clean, subtle structural line (no giant intrusive banners)
+    l_ine := line.new(chart.point.new(p_ivot.barTime, na, p_ivot.currentLevel), chart.point.new(time, na, p_ivot.currentLevel), xloc.bar_time, color=color.new(color.gray, 60), style=line.style_dotted, width=1)
+    
+    // Only label Major CHoCH (trend change) — suppress repetitive BOS text noise across the whole screen
+    if tag == CHOCH
+        l_abel := label.new(chart.point.new(na, bar_index, p_ivot.currentLevel), "CHoCH", xloc.bar_index, 
+                            color=color(na), textcolor=color.new(structureColor, 20), style=labelStyle, size=size.tiny)
 
 deleteOrderBlocks(bool internal = false) =>
     array<orderBlock> orderBlocks = internal ? internalOrderBlocks : swingOrderBlocks
@@ -1257,7 +1258,14 @@ sniperSellTrigger =
      )
 
 // Direct Execution & Retest Management
-if enableSniperEngine and not inTrade and (bar_index - lastExitBar >= cooldownBarsInput)
+// Anti-Overtrading Filter: Limits maximum 2 clean sniper trades per day and enforces 15-bar breathing room
+var int tradesToday = 0
+if isNewSession
+    tradesToday := 0
+
+canTradeToday = tradesToday < 3
+
+if enableSniperEngine and not inTrade and (bar_index - lastExitBar >= math.max(12, cooldownBarsInput)) and canTradeToday
     // ── LONG ENTRY ──
     if sniperBuyTrigger and not pendingOrder
         // Precision Support Origin & Tight Risk Calibration:
@@ -1285,6 +1293,7 @@ if enableSniperEngine and not inTrade and (bar_index - lastExitBar >= cooldownBa
         // Guard against zero/negative or abnormally bloated SL (Must have defined, small risk)
         if riskDist >= syminfo.mintick and riskDist <= (atr14 * 3.0)
             inTrade         := true
+            tradesToday     += 1
             tradeDir        := 1
             entryBarIdx     := bar_index
             entryPrice      := calcEntry
@@ -1329,6 +1338,7 @@ if enableSniperEngine and not inTrade and (bar_index - lastExitBar >= cooldownBa
 
         if riskDist >= syminfo.mintick and riskDist <= (atr14 * 3.0)
             inTrade         := true
+            tradesToday     += 1
             tradeDir        := -1
             entryBarIdx     := bar_index
             entryPrice      := calcEntry
