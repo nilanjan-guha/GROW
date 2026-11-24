@@ -112,7 +112,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
         now_ts = float(c.fetchone()["timestamp"])
 
         # Candle 1 reaches TP1 (High 512, Low 502) -> TP1 hit, stop moved to breakeven (500)
-        c1 = {"high": 512.0, "low": 502.0, "timestamp": now_ts + 300, "is_completed": True}
+        c1 = {"open": 505.0, "high": 512.0, "low": 502.0, "timestamp": now_ts + 300, "is_completed": True}
         storage.evaluate_open_outcomes({sym: c1})
 
         c.execute("SELECT outcome, tp1_hit, tp2_hit, current_stop_loss FROM historical_signals WHERE id = ?", (sig_id,))
@@ -123,7 +123,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
         self.assertEqual(row["current_stop_loss"], entry)
 
         # Candle 2 reaches TP2 (High 525, Low 508) -> WIN_FULL
-        c2 = {"high": 525.0, "low": 508.0, "timestamp": now_ts + 600, "is_completed": True}
+        c2 = {"open": 510.0, "high": 525.0, "low": 508.0, "timestamp": now_ts + 600, "is_completed": True}
         storage.evaluate_open_outcomes({sym: c2})
 
         c.execute("SELECT outcome, tp1_hit, tp2_hit, final_pnl, net_pnl FROM historical_signals WHERE id = ?", (sig_id,))
@@ -150,7 +150,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
         now_ts = float(c.fetchone()["timestamp"])
 
         # Candle 1 reaches TP1 for SELL (High 498, Low 488) -> TP1 hit, stop moved to breakeven (500)
-        c1 = {"high": 498.0, "low": 488.0, "timestamp": now_ts + 300, "is_completed": True}
+        c1 = {"open": 495.0, "high": 498.0, "low": 488.0, "timestamp": now_ts + 300, "is_completed": True}
         storage.evaluate_open_outcomes({sym: c1})
 
         c.execute("SELECT outcome, tp1_hit, current_stop_loss FROM historical_signals WHERE id = ?", (sig_id,))
@@ -159,7 +159,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
         self.assertEqual(row["current_stop_loss"], entry)
 
         # Candle 2 reaches TP2 for SELL (High 492, Low 475) -> WIN_FULL
-        c2 = {"high": 492.0, "low": 475.0, "timestamp": now_ts + 600, "is_completed": True}
+        c2 = {"open": 485.0, "high": 492.0, "low": 475.0, "timestamp": now_ts + 600, "is_completed": True}
         storage.evaluate_open_outcomes({sym: c2})
 
         c.execute("SELECT outcome, tp2_hit, final_pnl, net_pnl FROM historical_signals WHERE id = ?", (sig_id,))
@@ -186,7 +186,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
         now_ts = float(c.fetchone()["timestamp"])
 
         # Candle touches BOTH TP1 (High 518 >= 515) and original SL (Low 488 <= 490) in the same bar
-        c_ambiguous = {"high": 518.0, "low": 488.0, "timestamp": now_ts + 300, "is_completed": True}
+        c_ambiguous = {"open": 500.0, "high": 518.0, "low": 488.0, "timestamp": now_ts + 300, "is_completed": True}
         storage.evaluate_open_outcomes({sym: c_ambiguous})
 
         c.execute("SELECT outcome, tp1_hit, final_pnl, net_pnl FROM historical_signals WHERE id = ?", (sig_id,))
@@ -244,7 +244,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
         c.execute("SELECT timestamp FROM historical_signals WHERE id = ?", (sig_id,))
         now_ts = float(c.fetchone()["timestamp"])
 
-        c1 = {"high": 505.0, "low": 498.0, "timestamp": now_ts + 300, "is_completed": True}
+        c1 = {"open": 500.0, "high": 505.0, "low": 498.0, "timestamp": now_ts + 300, "is_completed": True}
         storage.evaluate_open_outcomes({sym: c1})
         # Feed the exact same candle again
         storage.evaluate_open_outcomes({sym: c1})
@@ -1494,6 +1494,76 @@ class TestIntradayScreenerCore(unittest.TestCase):
         # Friction must be computed at actual exit turnover (550 * 200), not just entry price
         self.assertGreater(row["brokerage_costs"], 0.0)
         self.assertAlmostEqual(row["net_pnl"], row["final_pnl"] - row["brokerage_costs"], places=2)
+
+    def test_eod_squareoff_does_not_fabricate_breakeven_when_closing_price_missing(self):
+        # Verify that EOD square-off leaves the signal ACTIVE rather than fabricating entry price as exit
+        sym = "TEST_EOD_MISSING.NS"
+        entry = 500.0
+        sig_id = storage.log_signal({
+            "symbol": sym, "direction": "BUY", "strategy": "Gap-and-Go",
+            "entry_price": entry, "stop_loss": 490.0, "target_1": 520.0, "quantity": 100
+        })
+
+        # Feed with missing/None close and current_price
+        missing_candle = {"open": 500.0, "high": 505.0, "low": 498.0, "close": None, "current_price": None}
+        storage.evaluate_open_outcomes({sym: missing_candle}, force_eod=True)
+
+        conn = storage.get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT outcome, final_pnl FROM historical_signals WHERE id = ?", (sig_id,))
+        row = c.fetchone()
+        conn.close()
+
+        # Signal must remain ACTIVE, not falsely closed at breakeven!
+        self.assertEqual(row["outcome"], "ACTIVE")
+
+    def test_odd_quantity_partial_exit_exact_remainder_accounting(self):
+        # Verify that odd quantities (e.g. 101 or 1) allocate exact remainder without dropping or duplicating units
+        from engine.cost_engine import IndianMarketCosts
+
+        # Case 1: Odd quantity 101 split 50/50 -> exit 1 is 50, exit 2 is 51 (sum = 101)
+        res_101 = IndianMarketCosts.calculate_multi_exit_costs(
+            entry_price=100.0, exits=[(110.0, 50), (120.0, 51)], total_quantity=101, instrument_type="EQUITY_INTRADAY"
+        )
+        self.assertEqual(res_101["exited_quantity"], 101)
+        self.assertEqual(res_101["remaining_quantity"], 0)
+
+        # Case 2: Quantity = 1
+        res_1 = IndianMarketCosts.calculate_multi_exit_costs(
+            entry_price=100.0, exits=[(110.0, 1)], total_quantity=1, instrument_type="EQUITY_INTRADAY"
+        )
+        self.assertEqual(res_1["exited_quantity"], 1)
+        self.assertEqual(res_1["remaining_quantity"], 0)
+
+    def test_cost_engine_rejects_non_positive_and_non_finite_inputs(self):
+        # Verify that Cost Engine rejects <= 0 or non-finite entry prices and quantities
+        from engine.cost_engine import IndianMarketCosts
+
+        # 1. Equity
+        with self.assertRaises(ValueError):
+            IndianMarketCosts.calculate_equity_costs(entry_price=-100.0, exit_price=105.0, quantity=100)
+        with self.assertRaises(ValueError):
+            IndianMarketCosts.calculate_equity_costs(entry_price=100.0, exit_price=0.0, quantity=100)
+        with self.assertRaises(ValueError):
+            IndianMarketCosts.calculate_equity_costs(entry_price=100.0, exit_price=105.0, quantity=0)
+
+        # 2. Futures
+        with self.assertRaises(ValueError):
+            IndianMarketCosts.calculate_futures_costs(entry_price=0.0, exit_price=2000.0, lot_size=250)
+        with self.assertRaises(ValueError):
+            IndianMarketCosts.calculate_futures_costs(entry_price=2000.0, exit_price=2050.0, lot_size=-10)
+
+        # 3. Options
+        with self.assertRaises(ValueError):
+            IndianMarketCosts.calculate_options_costs(entry_premium=-5.0, exit_premium=10.0, lot_size=500)
+        with self.assertRaises(ValueError):
+            IndianMarketCosts.calculate_options_costs(entry_premium=10.0, exit_premium=15.0, lot_size=0)
+
+        # 4. Multi-exit
+        with self.assertRaises(ValueError):
+            IndianMarketCosts.calculate_multi_exit_costs(entry_price=float('nan'), exits=[(105.0, 50)], total_quantity=50)
+        with self.assertRaises(ValueError):
+            IndianMarketCosts.calculate_multi_exit_costs(entry_price=100.0, exits=[(105.0, 50)], total_quantity=-5)
 
 if __name__ == '__main__':
     unittest.main()

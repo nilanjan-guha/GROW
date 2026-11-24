@@ -552,9 +552,20 @@ def evaluate_open_outcomes(data_map, force_eod=False):
                 def _calc(exit_tuples):
                     # exit_tuples: list of (exit_price, fraction)
                     raw_exits = []
-                    for ep, frac in exit_tuples:
-                        sub_q = max(1, int(round(quantity * frac)))
-                        raw_exits.append((ep, sub_q))
+                    allocated_qty = 0
+                    for idx, (ep, frac) in enumerate(exit_tuples):
+                        is_last = (idx == len(exit_tuples) - 1)
+                        if is_last:
+                            sub_q = max(0, quantity - allocated_qty)
+                        else:
+                            sub_q = int(round(quantity * frac))
+                            allocated_qty += sub_q
+                        if sub_q > 0:
+                            raw_exits.append((ep, sub_q))
+
+                    if not raw_exits:
+                        return est_costs
+
                     res_cost = IndianMarketCosts.calculate_multi_exit_costs(
                         entry_price=entry_p, exits=raw_exits, total_quantity=quantity, instrument_type=inst
                     )
@@ -573,18 +584,29 @@ def evaluate_open_outcomes(data_map, force_eod=False):
                 should_eod_squareoff = False
 
             if should_eod_squareoff:
-                exit_price = entry
+                exit_price = None
                 if isinstance(data, pd.DataFrame) and not data.empty:
                     try:
-                        exit_price = float(data['Close'].iloc[-1])
+                        raw_c = data['Close'].iloc[-1]
+                        val_c = float(raw_c)
+                        if math.isfinite(val_c) and val_c > 0:
+                            exit_price = val_c
                     except Exception:
-                        exit_price = entry
+                        exit_price = None
                 elif isinstance(data, dict):
                     try:
                         raw_ep = data.get("close", data.get("current_price"))
-                        exit_price = float(raw_ep) if raw_ep is not None else entry
+                        if raw_ep is not None:
+                            val_ep = float(raw_ep)
+                            if math.isfinite(val_ep) and val_ep > 0:
+                                exit_price = val_ep
                     except Exception:
-                        exit_price = entry
+                        exit_price = None
+
+                # CRITICAL: Fail closed. Never fabricate entry price as a fake exit price for EOD square-off!
+                if exit_price is None:
+                    # Keep signal active and do not fabricate a fake breakeven exit
+                    continue
 
                 pnl = round(exit_price - entry if direction == "BUY" else entry - exit_price, 2)
                 outcome = "CLOSED_EOD_SQUAREOFF"
@@ -640,7 +662,7 @@ def evaluate_open_outcomes(data_map, force_eod=False):
                     if is_last_candle and (c_ts + 300 > now_ts):
                         continue
 
-                    # Safe extraction of OHLC without fabricating fake prices
+                    # Safe extraction and structural validation of OHLC before any state or MFE/MAE update
                     raw_open = row.get('Open')
                     raw_high = row.get('High')
                     raw_low = row.get('Low')
@@ -651,6 +673,14 @@ def evaluate_open_outcomes(data_map, force_eod=False):
                         c_high = float(raw_high)
                         c_low = float(raw_low)
                     except (ValueError, TypeError):
+                        continue
+
+                    # Pre-validate candle integrity: positive, finite, and strictly Low <= Open <= High
+                    if not (math.isfinite(c_open) and math.isfinite(c_high) and math.isfinite(c_low)):
+                        continue
+                    if c_open <= 0 or c_high <= 0 or c_low <= 0:
+                        continue
+                    if not (c_low <= c_open <= c_high) or (c_high < c_low):
                         continue
 
                     newest_candle_time = max(newest_candle_time, c_ts)
@@ -690,9 +720,9 @@ def evaluate_open_outcomes(data_map, force_eod=False):
                 try:
                     raw_ts = data.get("timestamp")
                     if raw_ts is None:
-                        c_ts = float(now)
-                    else:
-                        c_ts = float(raw_ts)
+                        # Fail-closed: missing candle timestamp is strictly invalid for completed candle evaluation
+                        continue
+                    c_ts = float(raw_ts)
                     if not math.isfinite(c_ts) or c_ts <= 0:
                         continue
                 except (ValueError, TypeError):
@@ -700,26 +730,26 @@ def evaluate_open_outcomes(data_map, force_eod=False):
 
                 is_completed = data.get("is_completed", (c_ts + 300 <= now))
                 if is_completed and c_ts > last_candle_time and c_ts >= eval_min_time:
+                    raw_open = data.get("open")
                     raw_high = data.get("high")
                     raw_low = data.get("low")
-                    if raw_high is None or raw_low is None:
+                    if raw_open is None or raw_high is None or raw_low is None:
+                        # Require complete OHLC data; do NOT fabricate missing open from low
                         continue
                     try:
+                        c_open = float(raw_open)
                         c_high = float(raw_high)
                         c_low = float(raw_low)
                     except (ValueError, TypeError):
                         continue
 
-                    # If open is explicitly supplied, parse and validate it;
-                    # if omitted in dict feed, use natural candle low as baseline open to preserve structural validity
-                    raw_open = data.get("open")
-                    if raw_open is not None:
-                        try:
-                            c_open = float(raw_open)
-                        except (ValueError, TypeError):
-                            continue
-                    else:
-                        c_open = c_low
+                    # Pre-validate candle integrity: positive, finite, and strictly Low <= Open <= High
+                    if not (math.isfinite(c_open) and math.isfinite(c_high) and math.isfinite(c_low)):
+                        continue
+                    if c_open <= 0 or c_high <= 0 or c_low <= 0:
+                        continue
+                    if not (c_low <= c_open <= c_high) or (c_high < c_low):
+                        continue
 
                     newest_candle_time = c_ts
 

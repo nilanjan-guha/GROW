@@ -81,20 +81,70 @@ class ContractMaster:
     def register_dynamic_contracts(cls, lot_size_map: dict):
         """
         Dynamically registers live contract specifications ingested from broker or exchange instrument masters.
-        lot_size_map: dict mapping symbol (e.g. 'RELIANCE') to lot_size (int) or spec dict.
+        Strictly validates:
+        - Symbol must be non-empty string.
+        - Lot size must be strictly positive int.
+        - Margin percentage must be between 0.05 (5%) and 1.0 (100%).
+        - Expiry date, instrument token/identifier, source, and ingestion timestamp are tracked when provided.
         """
         if not isinstance(lot_size_map, dict):
             return
+        import math
+        today_date = datetime.date.today()
         for sym, val in lot_size_map.items():
+            if not sym or not isinstance(sym, str):
+                continue
             clean = sym.replace(".NS", "").strip().upper()
-            if isinstance(val, int) and val > 0:
-                cls._DYNAMIC_LOT_SIZES[clean] = {"lot_size": val, "estimated_margin_pct": 0.20, "circular_ref": "NSE/FAOP/LIVE"}
-            elif isinstance(val, dict) and "lot_size" in val:
-                cls._DYNAMIC_LOT_SIZES[clean] = {
-                    "lot_size": int(val["lot_size"]),
-                    "estimated_margin_pct": float(val.get("estimated_margin_pct", 0.20)),
-                    "circular_ref": str(val.get("circular_ref", "NSE/FAOP/LIVE"))
-                }
+            if not clean:
+                continue
+
+            if isinstance(val, int):
+                if val > 0:
+                    cls._DYNAMIC_LOT_SIZES[clean] = {
+                        "lot_size": val,
+                        "estimated_margin_pct": 0.20,
+                        "expiry": None,
+                        "instrument_id": f"FUT-{clean}-CURRENT",
+                        "source": "BROKER_FEED",
+                        "update_date": today_date,
+                        "circular_ref": "NSE/FAOP/LIVE"
+                    }
+            elif isinstance(val, dict):
+                try:
+                    raw_lot = val.get("lot_size")
+                    if raw_lot is None:
+                        continue
+                    lot_size = int(raw_lot)
+                    if lot_size <= 0:
+                        continue
+
+                    raw_margin = val.get("estimated_margin_pct", 0.20)
+                    margin_pct = float(raw_margin) if raw_margin is not None else 0.20
+                    if not (math.isfinite(margin_pct) and 0.05 <= margin_pct <= 1.0):
+                        margin_pct = 0.20
+
+                    expiry = val.get("expiry")
+                    if expiry is not None:
+                        try:
+                            expiry = pd.to_datetime(expiry).date()
+                        except Exception:
+                            expiry = None
+
+                    inst_id = str(val.get("instrument_id", f"FUT-{clean}-{expiry or 'CURRENT'}"))
+                    source = str(val.get("source", "BROKER_FEED"))
+                    update_dt = val.get("update_date", today_date)
+
+                    cls._DYNAMIC_LOT_SIZES[clean] = {
+                        "lot_size": lot_size,
+                        "estimated_margin_pct": margin_pct,
+                        "expiry": expiry,
+                        "instrument_id": inst_id,
+                        "source": source,
+                        "update_date": update_dt,
+                        "circular_ref": str(val.get("circular_ref", "NSE/FAOP/LIVE"))
+                    }
+                except (ValueError, TypeError):
+                    continue
 
     @classmethod
     def get_contract_spec(cls, symbol, as_of_date=None):
@@ -142,6 +192,10 @@ class ContractMaster:
                 "lot_size": dyn["lot_size"],
                 "estimated_margin_pct": dyn["estimated_margin_pct"],
                 "margin_pct": dyn["estimated_margin_pct"],
+                "expiry": dyn.get("expiry"),
+                "instrument_id": dyn.get("instrument_id"),
+                "source": dyn.get("source", "BROKER_FEED"),
+                "update_date": dyn.get("update_date", today),
                 "effective_date": today,
                 "circular_ref": dyn.get("circular_ref", "NSE/FAOP/LIVE")
             }

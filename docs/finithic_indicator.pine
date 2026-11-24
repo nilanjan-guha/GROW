@@ -1482,12 +1482,15 @@ if showSniperScoreboard and barstate.islast
     table.cell(dash, 1, 8, po3PhaseText, bgcolor=color.new(po3PhaseCol, 50), text_color=color.white, text_size=size.small)
 
     // Parent Index Sync HUD Row (for Options Charts)
-    if isOption and useIndexSync
+    if isIndexOption and useIndexSync
         string idxBiasText = indexIsBullish ? "BULLISH (" + parentIndexTicker + ")" : (indexIsBearish ? "BEARISH (" + parentIndexTicker + ")" : "NEUTRAL (" + parentIndexTicker + ")")
         color idxBiasCol   = indexIsBullish ? color.teal : (indexIsBearish ? color.maroon : color.yellow)
         string optPermit   = (isCallOption and parentBullConfirmed) or (isPutOption and parentBearConfirmed) ? " [ALIGNED]" : " [BLOCKED]"
         table.cell(dash, 0, 9, "Index Sync", text_color=color.silver, text_size=size.small)
         table.cell(dash, 1, 9, idxBiasText + optPermit, bgcolor=color.new(idxBiasCol, 50), text_color=color.white, text_size=size.small)
+    else if isStockOption
+        table.cell(dash, 0, 9, "Chart Mode", text_color=color.silver, text_size=size.small)
+        table.cell(dash, 1, 9, "STOCK OPTION (SELF-ORDERFLOW)", bgcolor=color.new(color.purple, 40), text_color=color.white, text_size=size.small)
     else
         table.cell(dash, 0, 9, "Chart Mode", text_color=color.silver, text_size=size.small)
         table.cell(dash, 1, 9, isIndex ? "SPOT INDEX" : "EQUITY / CASH", bgcolor=color.new(color.blue, 50), text_color=color.white, text_size=size.small)
