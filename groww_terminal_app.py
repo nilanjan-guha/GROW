@@ -55,6 +55,7 @@ screener_state = {
     "bullish_momentum_watchlist": [],
     "bearish_momentum_watchlist": [],
     "last_screener_update": 0,
+    "persistent_preparing_stocks": {}, # {symbol: {"direction": "...", "trigger_price": 123.4, "first_detected_date": "2026-11-25", "candle_ts": "..."}}
     "raw_market_cache": {},        # 5m OHLCV and raw technicals
     "daily_market_cache": {},      # 1mo 1d OHLC for true Wilder Daily ATR14 calculation
     "enriched_signals_cache": {},  # Full 15-strategy + AI enriched results with timestamps
@@ -639,7 +640,18 @@ def background_screener_worker():
 
                 # Build scanner list from:
                 # 1. Watchlists + Open ACTIVE Signals (high priority)
-                # 2. Rotating batch of 25 stocks from the full F&O universe (ensuring every F&O stock refreshes continuously)
+                # 2. Persistent PREPARING (pre-breakout coil) stocks discovered today - tracked continuously so breakout is never missed!
+                # 3. Rotating batch of 25 stocks from the full F&O universe (ensuring every F&O stock refreshes continuously)
+                today_str = datetime.datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%Y-%m-%d')
+                
+                # Daily purge: reset persistent preparing tracking on a new trading date
+                prep_dict = screener_state.setdefault("persistent_preparing_stocks", {})
+                for p_sym in list(prep_dict.keys()):
+                    if prep_dict[p_sym].get("first_detected_date") != today_str:
+                        del prep_dict[p_sym]
+
+                preparing_tracked_symbols = list(prep_dict.keys())
+
                 watchlist_stks = [x["symbol"] for x in (screener_state["bullish_momentum_watchlist"] + screener_state["bearish_momentum_watchlist"])]
                 active_open_symbols = list(get_active_signal_symbols())
                 
@@ -655,7 +667,7 @@ def background_screener_worker():
                         rotating_batch = [f"{s}.NS" if not s.endswith(".NS") else s for s in (fno_full_list[start_idx:] + fno_full_list[:end_idx % len(fno_full_list)])]
                     fno_universe_index = (fno_universe_index + batch_size) % len(fno_full_list)
 
-                all_stk_symbols = list(dict.fromkeys(watchlist_stks + active_open_symbols + rotating_batch))
+                all_stk_symbols = list(dict.fromkeys(watchlist_stks + active_open_symbols + preparing_tracked_symbols + rotating_batch))
                 
                 # Filter all evaluated candidates strictly to verified F&O instruments
                 valid_fno_set = set(screener_state.get("fno_universe", []))
@@ -1296,11 +1308,15 @@ def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
         # Mandatory freshness: must have valid evaluated candle timestamp equal to current completed candle
         is_fno_fresh = bool(fno_eval_ts and fno_eval_ts == stock_candle_ts and (fno_rvol_ts is None or fno_rvol_ts == stock_candle_ts))
 
+        is_persistent_preparing = bool(sym in screener_state.get("persistent_preparing_stocks", {}) or f"{clean_sym}.NS" in screener_state.get("persistent_preparing_stocks", {}))
+
         has_standalone_setup = bool(
-            is_fno_fresh and (
-                fno_data_item.get("is_pre_coil", False) or 
-                fno_data_item.get("rvol", 0.0) >= 1.5 or 
-                fno_data_item.get("velocity", 0.0) >= 2.0
+            is_persistent_preparing or (
+                is_fno_fresh and (
+                    fno_data_item.get("is_pre_coil", False) or 
+                    fno_data_item.get("rvol", 0.0) >= 1.5 or 
+                    fno_data_item.get("velocity", 0.0) >= 2.0
+                )
             )
         )
 
@@ -1388,6 +1404,23 @@ def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
         }
     else:
         ranked = OpportunityRankingEngine.rank_top_opportunities(candidates, top_n=3)
+
+    # Intraday Persistent PREPARING Tracker:
+    # Any stock identified in PREPARING (pre-breakout coil) is added to intraday persistent tracking
+    # so the background worker continues to scan it on every cycle until breakout or market close.
+    today_str = datetime.datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%Y-%m-%d')
+    persistent_prep = screener_state.setdefault("persistent_preparing_stocks", {})
+    for prep_item in ranked.get("preparing", []):
+        p_sym = prep_item.get("symbol")
+        if p_sym:
+            persistent_prep[p_sym] = {
+                "symbol": p_sym,
+                "direction": prep_item.get("direction"),
+                "entry_trigger": prep_item.get("entry_trigger"),
+                "first_detected_date": today_str,
+                "first_detected_ts": now,
+                "last_seen_candle_ts": current_candle_ts
+            }
 
     screener_state["ranked_opportunities"] = ranked
     screener_state["ranked_opportunities_ts"] = now
