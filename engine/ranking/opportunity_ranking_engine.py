@@ -460,7 +460,7 @@ class OpportunityRankingEngine:
         if rs_accel_6 < -0.2: conf_bear_score += 12.0
 
         # 4. Adaptive Machine Learning Multiplier from historical feedback:
-        from engine.adaptive_trade_learner import AdaptiveTradeLearner
+        from engine.learning.adaptive_trade_learner import AdaptiveTradeLearner
         strat_key = "MOMENTUM_BREAKOUT" if (is_broken_above_orh or is_broken_below_orl) else "INTRADAY_TREND"
         learn_mult_bull = AdaptiveTradeLearner.get_pattern_multiplier(strat_key, "BULLISH")
         learn_mult_bear = AdaptiveTradeLearner.get_pattern_multiplier(strat_key, "BEARISH")

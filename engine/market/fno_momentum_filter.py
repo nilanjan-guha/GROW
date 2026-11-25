@@ -48,7 +48,7 @@ class FNOMomentumFilter:
                 df_temp.index = pd.to_datetime(df_temp.index)
 
             # Determine strictly completed candles using unified 5-minute feed validation (max_delay 300s)
-            from engine.market_validator import MarketValidator
+            from engine.market.market_validator import MarketValidator
             feed_val = MarketValidator.validate_feed_freshness(df_temp, max_delay_seconds=300, candle_duration_seconds=300)
             if not feed_val.get("is_valid", False):
                 return None

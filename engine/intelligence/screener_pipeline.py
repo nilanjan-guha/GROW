@@ -10,10 +10,10 @@ institutional confluence scoring, and opportunity ranking.
 import pandas as pd
 import numpy as np
 from strategies.institutional_engine import InstitutionalStrategyEngine
-from engine.anomaly_engine import AnomalyDetector
-from engine.market_validator import MarketValidator
-from engine.opportunity_ranking_engine import OpportunityRankingEngine
-from engine.market_regime_engine import MarketRegimeEngine
+from engine.intelligence.anomaly_engine import AnomalyDetector
+from engine.market.market_validator import MarketValidator
+from engine.ranking.opportunity_ranking_engine import OpportunityRankingEngine
+from engine.market.market_regime_engine import MarketRegimeEngine
 
 class ScreenerPipeline:
     @staticmethod

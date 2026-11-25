@@ -5,9 +5,9 @@ import traceback
 import pandas as pd
 import yfinance as yf
 from core.storage import evaluate_open_outcomes, get_active_signal_symbols, get_db_connection
-from engine.market_validator import MarketValidator
-from engine.opportunity_potential_engine import OpportunityPotentialEngine
-from engine.adaptive_trade_learner import AdaptiveTradeLearner
+from engine.market.market_validator import MarketValidator
+from engine.ranking.opportunity_potential_engine import OpportunityPotentialEngine
+from engine.learning.adaptive_trade_learner import AdaptiveTradeLearner
 
 class BackgroundContinuousTracker:
     """
