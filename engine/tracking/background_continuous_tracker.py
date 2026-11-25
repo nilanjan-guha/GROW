@@ -79,51 +79,64 @@ class BackgroundContinuousTracker:
                                     if isinstance(df.columns, pd.MultiIndex):
                                         df.columns = df.columns.get_level_values(0)
 
+                                # Establish completed candle validity before any tracker evaluation or promotion (P0)
+                                feed_val = MarketValidator.validate_feed_freshness(df, max_delay_seconds=300, candle_duration_seconds=300)
+                                is_completed = feed_val.get("is_completed_candle", False)
+                                eval_completed_df = df if is_completed else df.iloc[:-1]
+
+                                if eval_completed_df.empty or len(eval_completed_df) < 5:
+                                    continue
+
+                                evaluated_completed_ts = str(eval_completed_df.index[-1])
+                                live_forming_price = float(df['Close'].squeeze().iloc[-1])
+                                completed_c = float(eval_completed_df['Close'].squeeze().iloc[-1])
+
                                 fresh_dfs[sym] = df
                                 fresh_dfs[clean_s] = df
 
-                                # Update shared raw market cache so screener and UI have real-time data
+                                # Update shared raw market cache with strictly validated completed candle timestamp
                                 self.screener_state.setdefault("raw_market_cache", {})[clean_s] = {
                                     "timestamp": now,
                                     "raw_latest_candle_ts": str(df.index[-1]),
-                                    "evaluated_completed_candle_ts": str(df.index[-1]),
+                                    "evaluated_completed_candle_ts": evaluated_completed_ts,
+                                    "live_forming_price": live_forming_price,
                                     "df": df
                                 }
 
-                                # Inspect if this PREPARING stock has broken out
+                                # Inspect if this PREPARING stock has broken out on a completed 5-minute candle
                                 if sym in prep_dict:
                                     prep_info = prep_dict[sym]
-                                    curr_c = float(df['Close'].squeeze().iloc[-1])
                                     entry_trig = str(prep_info.get("entry_trigger") or "")
                                     direction = prep_info.get("direction", "BULLISH")
                                     is_breakout = False
 
+                                    # Mandatory P0 Rule: Signal promotion MUST evaluate completed candle close, not intrabar ticks!
                                     if "Enter above" in entry_trig:
                                         try:
                                             lvl = float(entry_trig.split("₹")[-1].strip())
-                                            if curr_c >= lvl:
+                                            if completed_c >= lvl:
                                                 is_breakout = True
                                         except Exception:
                                             pass
                                     elif "Enter below" in entry_trig:
                                         try:
                                             lvl = float(entry_trig.split("₹")[-1].strip())
-                                            if curr_c <= lvl:
+                                            if completed_c <= lvl:
                                                 is_breakout = True
                                         except Exception:
                                             pass
 
                                     if is_breakout:
-                                        # Evaluate expansion room
+                                        # Evaluate expansion room strictly on completed candle dataframe
                                         direct_eval = OpportunityPotentialEngine.evaluate_potential(
-                                            df=df,
-                                            current_price=curr_c,
+                                            df=eval_completed_df,
+                                            current_price=completed_c,
                                             direction="BUY" if direction == "BULLISH" else "SELL"
                                         )
                                         if direct_eval.get("is_viable", True):
                                             promoted_any = True
                                             self.tracked_stats["promotions_today"] += 1
-                                            print(f"[PRE-BREAKOUT TRIGGERED] {sym} triggered entry above/below level @ ₹{curr_c}!")
+                                            print(f"[PRE-BREAKOUT TRIGGERED] {sym} confirmed 5m close above/below level @ ₹{completed_c} ({evaluated_completed_ts})!")
                         except Exception:
                             pass
                         time.sleep(0.08)

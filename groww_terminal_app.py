@@ -1364,81 +1364,25 @@ def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
             sec_data = screener_state.get("sectors", {}).get(sec_name, {})
             sec_chg = sec_data.get("change", 0.0)
         
-        # Retrieve enriched cache if available; otherwise compute direct opportunity potential on the fly
-        enriched_entry = screener_state.get("enriched_signals_cache", {}).get(sym, {})
-        enriched_candle_ts = str(enriched_entry.get("last_candle_ts", ""))
-        enriched = enriched_entry.get("data", {}) if (enriched_candle_ts and enriched_candle_ts == stock_candle_ts) else {}
-        
-        # Flatten multi-level columns if present and safely extract scalar price
-        if isinstance(eval_df_sym.columns, pd.MultiIndex):
-            eval_df_sym = eval_df_sym.copy()
-            eval_df_sym.columns = eval_df_sym.columns.get_level_values(0)
-
-        from engine.opportunity_potential_engine import OpportunityPotentialEngine
-        c_price = float(eval_df_sym['Close'].squeeze().iloc[-1])
-        c_open = float(eval_df_sym['Open'].squeeze().iloc[-1])
-        guess_dir = "BUY" if c_price >= c_open else "SELL"
-        direct_pot = OpportunityPotentialEngine.evaluate_potential(eval_df_sym, c_price, guess_dir)
-
-        opp_eval = {
-            "is_viable": enriched.get("is_viable") if "is_viable" in enriched else direct_pot.get("is_viable", True),
-            "potential_pct": enriched.get("potential_pct") if "potential_pct" in enriched else direct_pot.get("potential_pct", 0.65),
-            "risk_reward_ratio": enriched.get("risk_reward_ratio") if "risk_reward_ratio" in enriched else direct_pot.get("risk_reward_ratio", 1.25),
-            "stop_loss": enriched.get("suggested_sl") or direct_pot.get("suggested_sl"),
-            "tp1": enriched.get("suggested_tp1") or direct_pot.get("tp1"),
-            "tp2": enriched.get("suggested_tp2") or direct_pot.get("tp2"),
-            "exhaustion_risk": enriched.get("exhaustion_risk") or direct_pot.get("exhaustion_risk", "LOW"),
-            "has_eql_inducement_sweep": enriched.get("has_eql_inducement_sweep", False),
-            "has_eqh_inducement_sweep": enriched.get("has_eqh_inducement_sweep", False),
-            "nearest_bull_breaker": enriched.get("nearest_bull_breaker"),
-            "nearest_bear_breaker": enriched.get("nearest_bear_breaker")
-        }
-
-        # Validate RVOL freshness strictly against evaluated completed candle timestamp (P0)
-        fno_data = item.get("fno_filter_data", {})
-        rvol_candle_ts = item.get("rvol_candle_ts") or (fno_data.get("rvol_candle_ts") if fno_data else None)
-        time_slot_rvol = None
-        rvol_obs = 0
-        if rvol_candle_ts and rvol_candle_ts == stock_candle_ts and fno_data:
-            time_slot_rvol = fno_data.get("rvol")
-            rvol_obs = fno_data.get("rvol_obs", 0)
-
-        # Independent Traded-Value Liquidity Gate on Completed 5-Minute Candles (P1):
-        c_series = eval_df_sym['Close']
-        h_series = eval_df_sym['High']
-        l_series = eval_df_sym['Low']
-        v_series = eval_df_sym['Volume']
-        tp_series = (h_series + l_series + c_series) / 3.0
-        candle_turnover = tp_series * v_series
-        # Use .values.mean() to compute scalar mean directly without pandas single-element Series deprecation warnings:
-        avg_turnover_10 = float(candle_turnover.iloc[-10:].values.mean()) if len(candle_turnover) >= 10 else float(candle_turnover.values.mean())
-        recent_vol_10 = float(v_series.iloc[-10:].values.mean()) if len(v_series) >= 10 else float(v_series.values.mean())
-        if recent_vol_10 < 5000 or avg_turnover_10 < 1500000:
-            continue
-
-        # Resolve official Sector Index candles for live 3-Way Relative Strength
-        sec_ticker = groww_sector_engine.get_sector_index_ticker(sec_name)
-        sec_df = None
-        if sec_ticker:
-            sec_cache_entry = screener_state.get("raw_market_cache", {}).get(sec_ticker)
-            if isinstance(sec_cache_entry, dict) and sec_cache_entry.get("df") is not None:
-                sec_df = sec_cache_entry.get("df")
-
-        eval_res = OpportunityRankingEngine.evaluate_stock_opportunity(
+        # Execute unified analysis via ScreenerPipeline (P0: ensures identical pipeline for live & replay)
+        from engine.intelligence.screener_pipeline import ScreenerPipeline
+        pipe_res = ScreenerPipeline.evaluate_candidate_unified(
             stock_df=eval_df_sym,
             symbol=sym,
             sector_name=sec_name,
             sector_change=sec_chg,
+            sector_bias=screener_state.get("sectors", {}).get(sec_name, {}).get("bias", "NEUTRAL"),
             nifty_df=eval_nifty,
-            vwap=enriched.get("vwap") or (fno_data.get("vwap") if fno_data else None),
-            opp_eval=opp_eval,
+            daily_df=None,
+            prev_close=None,
             time_slot_rvol=time_slot_rvol,
             rvol_obs=rvol_obs,
-            is_liquid=True,
+            is_replay=False,
             sector_df=sec_df
         )
-        if eval_res:
-            candidates.append(eval_res)
+
+        if pipe_res and pipe_res.get("opp_res"):
+            candidates.append(pipe_res["opp_res"])
 
     if not candidates:
         ranked = {

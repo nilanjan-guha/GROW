@@ -134,8 +134,11 @@ class AdaptiveTradeLearner:
                     wins = p_row["win_count"] + (1 if is_win else 0)
                     losses = p_row["loss_count"] + (0 if is_win else 1)
                     win_pct = round((wins / tot) * 100.0, 1)
-                    # Multiplier: 0.75 (heavily failing) up to 1.30 (consistently winning)
-                    mult = round(min(1.30, max(0.75, 0.70 + (win_pct / 100.0 * 0.60))), 2)
+                    # Bayesian shrinkage toward 1.0 based on sample size: N / 10.0
+                    raw_mult = 0.70 + (win_pct / 100.0 * 0.60)
+                    shrinkage = min(1.0, tot / 10.0)
+                    shrunk_mult = round(1.0 + shrinkage * (raw_mult - 1.0), 2)
+                    mult = min(1.25, max(0.80, shrunk_mult))
                     cursor.execute("""
                     UPDATE pattern_learning_weights
                     SET total_samples = ?, win_count = ?, loss_count = ?, success_rate = ?, confidence_multiplier = ?, last_updated = ?
@@ -143,7 +146,10 @@ class AdaptiveTradeLearner:
                     """, (tot, wins, losses, win_pct, mult, time.time(), pattern_key))
                 else:
                     win_pct = 100.0 if is_win else 0.0
-                    mult = 1.15 if is_win else 0.85
+                    # Bayesian shrinkage for N=1: 0.1 weight -> 1.0 + 0.1*(1.3 - 1.0) = 1.03 (win) or 0.97 (loss)
+                    raw_mult = 1.30 if is_win else 0.70
+                    shrinkage = 0.10
+                    mult = round(1.0 + shrinkage * (raw_mult - 1.0), 2)
                     cursor.execute("""
                     INSERT INTO pattern_learning_weights (
                         pattern_key, total_samples, win_count, loss_count, success_rate, confidence_multiplier, last_updated
@@ -157,14 +163,34 @@ class AdaptiveTradeLearner:
             return {"success": False, "error": str(e)}
 
     @staticmethod
-    def get_pattern_multiplier(strategy, direction):
+    def get_pattern_multiplier(strategy, direction, as_of_ts=None):
         """
-        Returns dynamic score multiplier (0.75 - 1.30) learned from historical live market feedback.
+        Returns dynamic score multiplier (0.80 - 1.25) learned from historical live market feedback.
+        Supports point-in-time lookup via as_of_ts to avoid lookahead bias during replay.
         """
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
             pattern_key = f"{strategy}_{direction}"
+
+            if as_of_ts is not None:
+                # Query historical signals closed at or before as_of_ts
+                cursor.execute("""
+                    SELECT outcome, net_pnl FROM historical_signals
+                    WHERE strategy = ? AND direction = ? AND closed_at IS NOT NULL AND closed_at <= ?
+                """, (strategy, direction, as_of_ts))
+                closed_trades = cursor.fetchall()
+                conn.close()
+                if not closed_trades:
+                    return 1.0
+                tot = len(closed_trades)
+                wins = sum(1 for t in closed_trades if "WIN" in (t["outcome"] or "") or (t["net_pnl"] or 0) > 0)
+                win_pct = (wins / tot) * 100.0
+                raw_mult = 0.70 + (win_pct / 100.0 * 0.60)
+                shrinkage = min(1.0, tot / 10.0)
+                shrunk_mult = round(1.0 + shrinkage * (raw_mult - 1.0), 2)
+                return min(1.25, max(0.80, shrunk_mult))
+
             cursor.execute("SELECT confidence_multiplier FROM pattern_learning_weights WHERE pattern_key = ?", (pattern_key,))
             row = cursor.fetchone()
             conn.close()
