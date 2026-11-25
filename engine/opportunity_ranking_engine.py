@@ -468,11 +468,11 @@ class OpportunityRankingEngine:
         rr_ratio = float(opp_eval.get("risk_reward_ratio", 0.0)) if opp_eval else 0.0
         exhaustion_risk = opp_eval.get("exhaustion_risk", "LOW") if opp_eval else "LOW"
 
-        # Quality Gates for CONFIRMED (Consistent across Potential Engine, Ranking, and Replay: potential >= 0.70%, RR >= 1.25):
+        # Quality Gates for CONFIRMED (Calibrated: potential >= 0.45%, RR >= 1.10):
         is_viable_opportunity = (
             opp_eval.get("is_viable", False) and 
-            potential_pct >= 0.70 and 
-            rr_ratio >= 1.25 and 
+            potential_pct >= 0.45 and 
+            rr_ratio >= 1.10 and 
             exhaustion_risk != "HIGH"
         ) if opp_eval else False
 
@@ -480,7 +480,7 @@ class OpportunityRankingEngine:
         # 1. SL and TP must be finite, positive numbers (not NaN or Inf)
         # 2. For BUY: SL < curr_c and TP1 > curr_c
         # 3. For SELL: SL > curr_c and TP1 < curr_c
-        # 4. Computed RR = (reward / risk) >= 1.25 without lossy premature rounding
+        # 4. Computed RR = (reward / risk) >= 1.10 without lossy premature rounding
         import math
         computed_rr = 0.0
         has_valid_structural_risk = False
@@ -495,14 +495,14 @@ class OpportunityRankingEngine:
                         risk = curr_c_val - sl_val
                         reward = tp1_val - curr_c_val
                         raw_rr = reward / risk if risk > 0 else 0.0
-                        if math.isfinite(raw_rr) and raw_rr >= 1.25:
+                        if math.isfinite(raw_rr) and raw_rr >= 1.10:
                             computed_rr = round(raw_rr, 2)
                             has_valid_structural_risk = True
                     elif direction == "BEARISH" and sl_val > curr_c_val and tp1_val < curr_c_val:
                         risk = sl_val - curr_c_val
                         reward = curr_c_val - tp1_val
                         raw_rr = reward / risk if risk > 0 else 0.0
-                        if math.isfinite(raw_rr) and raw_rr >= 1.25:
+                        if math.isfinite(raw_rr) and raw_rr >= 1.10:
                             computed_rr = round(raw_rr, 2)
                             has_valid_structural_risk = True
             except (ValueError, TypeError):
@@ -510,18 +510,18 @@ class OpportunityRankingEngine:
 
         # Stage Classification with Strictly Enforced Directional Quality Gates:
         # A stock can ONLY be CONFIRMED (ENTRY READY) if EVERY condition is met simultaneously:
-        # 1. is_viable_opportunity (opp_eval viable, potential >= 0.70%, RR >= 1.25, not high exhaustion)
-        # 2. Valid structural stop-loss, target, and computed RR >= 1.25
-        # 3. Confirmation score meets threshold (>= 45) strictly aligned with direction
-        # 4. Conviction score >= 50
+        # 1. is_viable_opportunity (opp_eval viable, potential >= 0.45%, RR >= 1.10, not high exhaustion)
+        # 2. Valid structural stop-loss, target, and computed RR >= 1.10
+        # 3. Confirmation score meets threshold (>= 40) strictly aligned with direction
+        # 4. Conviction score >= 45
         is_strictly_confirmed = (
             is_viable_opportunity and 
             has_valid_structural_risk and 
-            potential_pct >= 0.70 and 
+            potential_pct >= 0.45 and 
             exhaustion_risk != "HIGH" and
-            ((direction == "BULLISH" and conf_bull_score >= 45 and curr_c > curr_o) or 
-             (direction == "BEARISH" and conf_bear_score >= 45 and curr_c < curr_o)) and
-            conviction_score >= 50
+            ((direction == "BULLISH" and conf_bull_score >= 40 and curr_c > curr_o) or 
+             (direction == "BEARISH" and conf_bear_score >= 40 and curr_c < curr_o)) and
+            conviction_score >= 45
         )
 
         # Direction-specific IGNITION trigger:
@@ -530,8 +530,8 @@ class OpportunityRankingEngine:
         # 1. Price breaking out of ORH/PDH (Long) or breaking down from ORL/PDL (Short) with closing confirmation
         # 2. Volume expansion: RVOL >= 1.25 or expanding range >= 1.4x ATR
         # 3. STRICT VWAP VALIDATION: Must hold above VWAP for Longs / below VWAP for Shorts. Missing VWAP cannot qualify!
-        # 4. Valid structural risk boundaries: Invalidation level must exist with computed RR >= 1.20
-        has_ignition_risk_gate = has_valid_structural_risk and (computed_rr >= 1.20)
+        # 4. Valid structural risk boundaries: Invalidation level must exist with computed RR >= 1.10
+        has_ignition_risk_gate = has_valid_structural_risk and (computed_rr >= 1.10)
         
         is_bull_ignition = (
             direction == "BULLISH" and 
