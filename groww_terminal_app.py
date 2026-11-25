@@ -1369,6 +1369,14 @@ def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
             sec_data = screener_state.get("sectors", {}).get(sec_name, {})
             sec_chg = sec_data.get("change", 0.0)
         
+        # Sector benchmark DataFrame if available
+        sec_ticker = groww_sector_engine.get_sector_index_ticker(sec_name)
+        sec_df = screener_state.get("raw_market_cache", {}).get(sec_ticker, {}).get("df") if sec_ticker else None
+
+        # Extract time_slot_rvol and observation count from fno_filter_data if present
+        time_slot_rvol = fno_data_item.get("rvol") if is_fno_fresh else None
+        rvol_obs = fno_data_item.get("rvol_obs", 0) if is_fno_fresh else 0
+
         # Execute unified analysis via ScreenerPipeline (P0: ensures identical pipeline for live & replay)
         from engine.intelligence.screener_pipeline import ScreenerPipeline
         pipe_res = ScreenerPipeline.evaluate_candidate_unified(
