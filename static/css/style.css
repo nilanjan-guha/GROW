@@ -264,29 +264,33 @@ header {
 
 /* Sector Cards: Holographic Elevation & 3D Tilt */
 .sector-card {
-    background: #0f1522;
+    background: #0d1424;
     border: 1px solid #1e293b;
-    border-radius: 6px;
-    padding: 8px 10px;
+    border-radius: 7px;
+    padding: 10px 12px;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
     position: relative;
     overflow: hidden;
-    margin-bottom: 6px;
+    margin-bottom: 9px;
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
     justify-content: center;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
 }
 
 .sector-card:hover {
-    border-color: #3b82f6;
-    background: #141d2e;
+    border-color: #38bdf8;
+    background: #131e33;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
 }
 
 .sector-card.selected {
-    border-color: #38bdf8;
-    background: #132238;
+    border-color: #38bdf8 !important;
+    background: #14243b !important;
+    box-shadow: 0 0 16px rgba(56, 189, 248, 0.45), inset 0 0 8px rgba(56, 189, 248, 0.15) !important;
 }
 
 /* 1. When a stock is being scanned: Light Yellow Glow (no text badge, pure clean glow) */

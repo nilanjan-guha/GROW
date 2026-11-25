@@ -266,10 +266,13 @@ class MarketValidator:
                     "reason": f"Feed contains previous session data ({last_date}) during active market hours ({today_date})"
                 }
 
-            # Same-day delay check after 09:30 IST
+            # Same-day delay check after 09:30 IST:
+            # Measure delay from candle close (candle_end) rather than candle open (last_ts)
+            # to allow the standard 5-minute candle to complete plus standard data feed propagation latency.
             curr_min = now.hour * 60 + now.minute
-            if curr_min >= 570 and (now_ts - last_ts > max_delay_seconds):
-                delay_m = int((now_ts - last_ts) / 60)
+            effective_delay = max(0.0, now_ts - candle_end)
+            if curr_min >= 570 and (effective_delay > max_delay_seconds):
+                delay_m = int(effective_delay / 60)
                 return {
                     "is_valid": False,
                     "status": "FEED_STALLED",
