@@ -107,18 +107,18 @@
             position: relative;
             z-index: 10;
             display: grid;
-            grid-template-rows: 58px 1fr 34px;
+            grid-template-rows: 62px 1fr 38px;
             height: 100vh;
             width: 100vw;
-            padding: 8px 12px;
-            gap: 8px;
+            padding: 10px 16px;
+            gap: 12px;
         }
 
         /* Glassmorphic Cyber Panels */
         .cyber-panel {
             background: var(--panel-bg);
             border: 1px solid var(--panel-border);
-            border-radius: 6px;
+            border-radius: 8px;
             box-shadow: var(--panel-glow);
             backdrop-filter: blur(14px);
             position: relative;
@@ -130,8 +130,8 @@
             position: absolute;
             top: 0;
             left: 0;
-            width: 8px;
-            height: 8px;
+            width: 10px;
+            height: 10px;
             border-top: 2px solid var(--neon-cyan);
             border-left: 2px solid var(--neon-cyan);
         }
@@ -141,8 +141,8 @@
             position: absolute;
             bottom: 0;
             right: 0;
-            width: 8px;
-            height: 8px;
+            width: 10px;
+            height: 10px;
             border-bottom: 2px solid var(--neon-cyan);
             border-right: 2px solid var(--neon-cyan);
         }
@@ -152,30 +152,30 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 0 16px;
-            background: rgba(10, 16, 31, 0.90);
-            border-bottom: 1px solid var(--neon-cyan);
+            padding: 0 20px;
+            background: rgba(10, 16, 31, 0.95);
+            border-bottom: 1.5px solid var(--neon-cyan);
             box-shadow: 0 0 20px rgba(0, 240, 255, 0.18);
         }
 
         .hud-brand {
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: 14px;
             font-family: 'Orbitron', sans-serif;
-            font-size: 0.92rem;
-            letter-spacing: 1.5px;
+            font-size: 1.05rem;
+            letter-spacing: 1.8px;
             font-weight: 900;
             color: #fff;
             text-shadow: 0 0 10px rgba(0, 240, 255, 0.8);
         }
 
         .pulse-orb {
-            width: 10px;
-            height: 10px;
+            width: 12px;
+            height: 12px;
             border-radius: 50%;
             background: var(--neon-cyan);
-            box-shadow: 0 0 12px var(--neon-cyan);
+            box-shadow: 0 0 14px var(--neon-cyan);
             animation: pulseGlow 1.8s infinite;
         }
 
@@ -196,37 +196,37 @@
         .hud-badges-group {
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 10px;
         }
 
         .hud-pill {
-            font-size: 0.65rem;
+            font-size: 0.74rem;
             font-weight: 700;
-            padding: 3px 8px;
-            border-radius: 4px;
-            border: 1px solid rgba(255, 255, 255, 0.12);
-            background: rgba(0, 0, 0, 0.45);
+            padding: 5px 12px;
+            border-radius: 5px;
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            background: rgba(0, 0, 0, 0.55);
             letter-spacing: 0.6px;
             display: flex;
             align-items: center;
-            gap: 5px;
+            gap: 6px;
         }
 
         .audio-ctrl-btn {
-            font-size: 0.68rem;
+            font-size: 0.76rem;
             font-weight: 800;
-            padding: 4px 10px;
-            border-radius: 4px;
+            padding: 5px 14px;
+            border-radius: 5px;
             cursor: pointer;
             transition: all 0.2s ease;
             font-family: 'JetBrains Mono', monospace;
             border: 1px solid var(--neon-green);
-            background: rgba(0, 255, 163, 0.12);
+            background: rgba(0, 255, 163, 0.14);
             color: var(--neon-green);
         }
 
         .audio-ctrl-btn:hover {
-            box-shadow: 0 0 12px var(--neon-green);
+            box-shadow: 0 0 14px var(--neon-green);
             background: var(--neon-green);
             color: #000;
         }
@@ -234,9 +234,9 @@
         /* 3-Column Glass Cyber Grid */
         .main-cockpit-grid {
             display: grid;
-            grid-template-columns: 280px 1fr 280px;
-            gap: 8px;
-            height: calc(100vh - 108px);
+            grid-template-columns: 310px 1fr 310px;
+            gap: 12px;
+            height: calc(100vh - 124px);
         }
 
         /* Column Headers */
@@ -244,73 +244,76 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 8px 12px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-            background: rgba(0, 0, 0, 0.25);
-            font-size: 0.72rem;
+            padding: 10px 14px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+            background: rgba(0, 0, 0, 0.35);
+            font-size: 0.82rem;
             font-weight: 800;
-            letter-spacing: 1px;
+            letter-spacing: 1.2px;
         }
 
         /* Stock Cards (3D Tilt effect) */
         .stock-mover-card {
-            background: rgba(15, 23, 42, 0.65);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            border-left: 3px solid #64748b;
-            border-radius: 4px;
-            padding: 7px 10px;
-            margin-bottom: 6px;
+            background: rgba(15, 23, 42, 0.75);
+            border: 1px solid rgba(255, 255, 255, 0.10);
+            border-left: 4px solid #64748b;
+            border-radius: 6px;
+            padding: 9px 12px;
+            margin-bottom: 8px;
             cursor: pointer;
             transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.2s, border-color 0.2s;
         }
 
         .stock-mover-card:hover {
             transform: translateX(4px) scale(1.02);
-            background: rgba(30, 41, 59, 0.85);
+            background: rgba(30, 41, 59, 0.90);
             border-color: var(--neon-cyan);
-            box-shadow: 0 0 16px rgba(0, 240, 255, 0.25);
+            box-shadow: 0 0 18px rgba(0, 240, 255, 0.30);
         }
 
         .stock-mover-card.active-selected {
-            border-left: 4px solid var(--neon-cyan) !important;
-            background: rgba(0, 240, 255, 0.08);
-            box-shadow: 0 0 18px rgba(0, 240, 255, 0.35);
+            border-left: 5px solid var(--neon-cyan) !important;
+            background: rgba(0, 240, 255, 0.12);
+            box-shadow: 0 0 20px rgba(0, 240, 255, 0.40);
         }
 
         /* Center Cockpit Layout */
         .center-stage {
-            display: grid;
-            grid-template-rows: auto auto 1fr auto;
-            gap: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
             overflow-y: auto;
             padding-right: 4px;
+            height: 100%;
         }
 
         /* Real-time 3D Radar Scanner Visualizer Card */
         .radar-scan-canvas-container {
             position: relative;
-            height: 120px;
-            background: radial-gradient(circle at center, rgba(0, 240, 255, 0.08) 0%, rgba(3, 7, 18, 0.95) 75%);
-            border: 1px solid rgba(0, 240, 255, 0.25);
-            border-radius: 6px;
+            min-height: 130px;
+            background: radial-gradient(circle at center, rgba(0, 240, 255, 0.10) 0%, rgba(3, 7, 18, 0.96) 75%);
+            border: 1.5px solid rgba(0, 240, 255, 0.30);
+            border-radius: 8px;
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 12px 20px;
+            padding: 14px 24px;
             overflow: hidden;
+            flex-shrink: 0;
         }
 
         /* Circular Radar HUD Graphic */
         .radar-sweep-dial {
             position: relative;
-            width: 96px;
-            height: 96px;
+            width: 104px;
+            height: 104px;
             border-radius: 50%;
-            border: 1px dashed rgba(0, 240, 255, 0.4);
-            box-shadow: 0 0 18px rgba(0, 240, 255, 0.2);
+            border: 1.5px dashed rgba(0, 240, 255, 0.5);
+            box-shadow: 0 0 22px rgba(0, 240, 255, 0.25);
             display: flex;
             align-items: center;
             justify-content: center;
+            flex-shrink: 0;
         }
 
         .radar-sweep-dial::after {
@@ -319,7 +322,7 @@
             width: 100%;
             height: 100%;
             border-radius: 50%;
-            background: conic-gradient(from 0deg, transparent 0deg, transparent 270deg, rgba(0, 240, 255, 0.5) 360deg);
+            background: conic-gradient(from 0deg, transparent 0deg, transparent 270deg, rgba(0, 240, 255, 0.6) 360deg);
             animation: radarSpin 3.5s linear infinite;
         }
 
@@ -335,45 +338,49 @@
 
         /* Confirmed Trade Execution Box */
         .trade-decision-matrix {
-            background: rgba(0, 0, 0, 0.4);
-            border: 1px solid rgba(255, 255, 255, 0.12);
-            border-radius: 6px;
-            padding: 12px 16px;
+            background: rgba(10, 16, 31, 0.92);
+            border: 1.5px solid rgba(255, 255, 255, 0.14);
+            border-radius: 8px;
+            padding: 14px 18px;
+            flex-shrink: 0;
         }
 
         .metric-tiles-grid {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
-            gap: 8px;
-            margin-top: 10px;
+            gap: 10px;
+            margin-top: 12px;
         }
 
         .m-tile {
-            background: rgba(15, 23, 42, 0.6);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            border-radius: 4px;
-            padding: 8px 10px;
+            background: rgba(15, 23, 42, 0.75);
+            border: 1px solid rgba(255, 255, 255, 0.10);
+            border-radius: 6px;
+            padding: 10px 14px;
         }
 
         .m-tile .label {
-            font-size: 0.60rem;
+            font-size: 0.68rem;
             color: var(--text-muted);
             text-transform: uppercase;
-            letter-spacing: 0.5px;
+            letter-spacing: 0.7px;
+            font-weight: 600;
         }
 
         .m-tile .val {
-            font-size: 0.88rem;
-            font-weight: 800;
+            font-size: 1.05rem;
+            font-weight: 900;
             color: #fff;
-            margin-top: 2px;
+            margin-top: 4px;
         }
 
         /* Dual Tracked Section: PREPARING vs ENTRY READY */
         .opportunities-cockpit {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 8px;
+            gap: 12px;
+            flex: 1;
+            min-height: 200px;
         }
 
         /* Custom Scrollbars */
@@ -464,37 +471,37 @@
             <div class="center-stage">
                 <!-- 3D Holographic Radar Scanner HUD -->
                 <div class="radar-scan-canvas-container cyber-panel">
-                    <div style="display:flex; align-items:center; gap:16px;">
+                    <div style="display:flex; align-items:center; gap:20px;">
                         <div class="radar-sweep-dial">
-                            <span style="font-size:0.65rem; font-weight:800; color:var(--neon-cyan);"
+                            <span style="font-size:0.75rem; font-weight:900; color:var(--neon-cyan);"
                                 id="radarTargetSymbol">NIFTY</span>
                         </div>
                         <img id="radarStockIcon" src=""
-                            style="width:36px; height:36px; border-radius:50%; border:1px solid var(--neon-cyan); object-fit:contain; background:#0f172a; display:none;"
+                            style="width:48px; height:48px; border-radius:50%; border:2px solid var(--neon-cyan); object-fit:contain; background:#0f172a; display:none;"
                             onerror="this.style.display='none';">
                         <div>
                             <div
-                                style="font-size:0.60rem; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">
+                                style="font-size:0.68rem; color:var(--text-muted); letter-spacing:1.2px; text-transform:uppercase; font-weight:700;">
                                 REAL-TIME F&O SNIPER RADAR</div>
-                            <div style="display:flex; align-items:baseline; gap:10px;">
-                                <span style="font-size:1.15rem; font-weight:900; color:#fff;"
+                            <div style="display:flex; align-items:baseline; gap:14px; margin-top:2px;">
+                                <span style="font-size:1.45rem; font-weight:900; color:#fff;"
                                     id="radarStockTitle">AWAITING SELECTION...</span>
-                                <span style="font-size:1.00rem; font-weight:800; color:var(--neon-green);"
+                                <span style="font-size:1.30rem; font-weight:900; color:var(--neon-green);"
                                     id="radarStockLivePrice">--</span>
                                 <span
-                                    style="font-size:0.75rem; font-weight:800; color:var(--neon-cyan); background:rgba(0,240,255,0.12); padding:1px 6px; border-radius:3px; border:1px solid rgba(0,240,255,0.3);"
+                                    style="font-size:0.86rem; font-weight:900; color:var(--neon-cyan); background:rgba(0,240,255,0.15); padding:3px 10px; border-radius:4px; border:1px solid rgba(0,240,255,0.4);"
                                     id="radarStockScore">SCORE --/100</span>
                             </div>
-                            <div style="font-size:0.68rem; color:var(--neon-amber); margin-top:2px;"
+                            <div style="font-size:0.80rem; color:var(--neon-amber); margin-top:4px; font-weight:700;"
                                 id="selectedSectorTitle">SCANNING UNIVERSE</div>
                         </div>
                     </div>
 
                     <div style="text-align:right;">
-                        <div style="font-size:0.58rem; color:var(--text-muted);">SCAN TELEMETRY</div>
-                        <div style="font-size:0.85rem; font-weight:800; color:var(--neon-green);" id="telemetryCycle">
+                        <div style="font-size:0.68rem; color:var(--text-muted); font-weight:700; letter-spacing:1px;">SCAN TELEMETRY</div>
+                        <div style="font-size:1.05rem; font-weight:900; color:var(--neon-green); margin-top:2px;" id="telemetryCycle">
                             CONTINUOUS 15s SYNC</div>
-                        <div style="font-size:0.65rem; color:#94a3b8; margin-top:2px;" id="hologramCoords">LATENCY: 4ms
+                        <div style="font-size:0.75rem; color:#94a3b8; margin-top:4px; font-weight:600;" id="hologramCoords">LATENCY: 4ms
                             // 0 SLIPPAGE GATE</div>
                     </div>
                 </div>
@@ -515,23 +522,20 @@
                 <!-- SMC & Quant Trade Decision HUD -->
                 <div class="trade-decision-matrix cyber-panel">
                     <div
-                        style="display:flex; justify-content:space-between; align-items:center; padding-bottom:8px; border-bottom:1px solid rgba(255,255,255,0.08);">
+                        style="display:flex; justify-content:space-between; align-items:center; padding-bottom:10px; border-bottom:1px solid rgba(255,255,255,0.10);">
                         <div>
-                            <div style="font-size:0.60rem; color:var(--text-muted); letter-spacing:0.8px;">INTRADAY
-                                TRADE DECISION</div>
+                            <div style="font-size:0.72rem; color:var(--text-muted); letter-spacing:1px; font-weight:700;">INTRADAY TRADE DECISION</div>
                             <div id="decisionAction"
-                                style="font-size:0.95rem; font-weight:900; color:#94a3b8; margin-top:2px;">NO TRADE
-                                SETUP YET</div>
+                                style="font-size:1.18rem; font-weight:900; color:#fff; margin-top:4px;">NO TRADE SETUP YET</div>
                         </div>
                         <div style="text-align:right;">
-                            <div style="font-size:0.60rem; color:var(--text-muted); letter-spacing:0.8px;">CONFIRMATION
-                                STAGE</div>
+                            <div style="font-size:0.72rem; color:var(--text-muted); letter-spacing:1px; font-weight:700;">CONFIRMATION STAGE</div>
                             <div id="decisionPillTag"
-                                style="font-size:0.75rem; font-weight:800; color:var(--neon-cyan);">MONITORING</div>
+                                style="font-size:0.92rem; font-weight:900; color:var(--neon-cyan); margin-top:2px;">MONITORING</div>
                         </div>
                     </div>
 
-                    <div style="margin-top:8px; font-size:0.72rem; color:#94a3b8;" id="decisionReasonText">
+                    <div style="margin-top:10px; font-size:0.86rem; color:#cbd5e1; line-height:1.4;" id="decisionReasonText">
                         Evaluating order block clearance, liquidity sweep, and 5-min completed candle momentum...
                     </div>
 
@@ -556,23 +560,22 @@
                     </div>
 
                     <!-- Additional Structural Targets -->
-                    <div class="metric-tiles-grid" style="margin-top:6px;">
+                    <div class="metric-tiles-grid" style="margin-top:8px;">
                         <div class="m-tile">
                             <div class="label">Demand Zone (Buy Zone)</div>
-                            <div class="val" id="valDemandOb" style="color:var(--neon-green); font-size:0.75rem;">--
-                            </div>
+                            <div class="val" id="valDemandOb" style="color:var(--neon-green); font-size:0.88rem;">--</div>
                         </div>
                         <div class="m-tile">
                             <div class="label">Supply Zone (Sell Ceiling)</div>
-                            <div class="val" id="valSupplyOb" style="color:var(--neon-red); font-size:0.75rem;">--</div>
+                            <div class="val" id="valSupplyOb" style="color:var(--neon-red); font-size:0.88rem;">--</div>
                         </div>
                         <div class="m-tile">
                             <div class="label">Buy-Side Liquidity (BSL)</div>
-                            <div class="val" id="valBsl" style="color:var(--neon-cyan); font-size:0.75rem;">--</div>
+                            <div class="val" id="valBsl" style="color:var(--neon-cyan); font-size:0.88rem;">--</div>
                         </div>
                         <div class="m-tile">
                             <div class="label">Stop Loss & Target Potential</div>
-                            <div class="val" id="valSlTp" style="color:var(--neon-amber); font-size:0.75rem;">--</div>
+                            <div class="val" id="valSlTp" style="color:var(--neon-amber); font-size:0.88rem;">--</div>
                         </div>
                     </div>
                 </div>
@@ -580,37 +583,37 @@
                 <!-- Dual Opportunities: PREPARING (Coils) vs ENTRY READY (Actionable Breakouts) -->
                 <div class="opportunities-cockpit">
                     <!-- PREPARING (All Pre-Breakout Coils) -->
-                    <div class="cyber-panel" style="padding:10px;">
+                    <div class="cyber-panel" style="padding:14px;">
                         <div
-                            style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                            style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                             <span
-                                style="font-size:0.70rem; font-weight:800; color:var(--neon-amber); display:flex; align-items:center; gap:5px;">
-                                <span>⚡</span> PREPARING — ALL PRE-BREAKOUT COILS (<span id="prepCountBadge">0</span>)
+                                style="font-size:0.84rem; font-weight:800; color:var(--neon-amber); display:flex; align-items:center; gap:6px;">
+                                <span>⚡</span> PREPARING — ALL PRE-BREAKOUT COILS (<span id="prepCountBadge" style="color:#fff;">0</span>)
                             </span>
-                            <span style="font-size:0.58rem; color:#94a3b8;">BEFORE THE MOVE</span>
+                            <span style="font-size:0.68rem; color:#94a3b8; font-weight:600;">BEFORE THE MOVE</span>
                         </div>
                         <div id="rankedPreparingList"
-                            style="display:flex; flex-direction:column; gap:5px; min-height:80px; max-height:280px; overflow-y:auto;">
-                            <div style="font-size:0.68rem; color:var(--text-muted); text-align:center; padding:12px 0;">
+                            style="display:flex; flex-direction:column; gap:6px; min-height:120px; max-height:340px; overflow-y:auto;">
+                            <div style="font-size:0.75rem; color:var(--text-muted); text-align:center; padding:18px 0;">
                                 Continuous tracker polling for pre-breakout accumulation coils...
                             </div>
                         </div>
                     </div>
 
                     <!-- ENTRY READY (Confirmed Breakouts) -->
-                    <div class="cyber-panel" style="padding:10px;">
+                    <div class="cyber-panel" style="padding:14px;">
                         <div
-                            style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                            style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                             <span
-                                style="font-size:0.70rem; font-weight:800; color:var(--neon-green); display:flex; align-items:center; gap:5px;">
+                                style="font-size:0.84rem; font-weight:800; color:var(--neon-green); display:flex; align-items:center; gap:6px;">
                                 <span>🎯</span> ENTRY READY — CONFIRMED 5M BREAKOUTS (<span
-                                    id="entryCountBadge">0</span>)
+                                    id="entryCountBadge" style="color:#fff;">0</span>)
                             </span>
-                            <span style="font-size:0.58rem; color:var(--neon-green);">ACTIONABLE BREAKOUT</span>
+                            <span style="font-size:0.68rem; color:var(--neon-green); font-weight:600;">ACTIONABLE BREAKOUT</span>
                         </div>
                         <div id="rankedEntryReadyList"
-                            style="display:flex; flex-direction:column; gap:5px; min-height:80px; max-height:280px; overflow-y:auto;">
-                            <div style="font-size:0.68rem; color:var(--text-muted); text-align:center; padding:12px 0;">
+                            style="display:flex; flex-direction:column; gap:6px; min-height:120px; max-height:340px; overflow-y:auto;">
+                            <div style="font-size:0.75rem; color:var(--text-muted); text-align:center; padding:18px 0;">
                                 NO 5M TRADE (Default state: waiting for confirmed structure)
                             </div>
                         </div>
@@ -618,26 +621,26 @@
                 </div>
 
                 <!-- Official NSE India Institutional FII / DII Order Flow -->
-                <div class="cyber-panel" style="padding:10px 14px;">
+                <div class="cyber-panel" style="padding:14px 18px;">
                     <div style="display:flex; justify-content:space-between; align-items:center;">
                         <span
-                            style="font-size:0.68rem; font-weight:800; color:#e2e8f0; display:flex; align-items:center; gap:6px;">
+                            style="font-size:0.84rem; font-weight:800; color:#f8fafc; display:flex; align-items:center; gap:8px;">
                             <span>🏛️</span> NSE INDIA INSTITUTIONAL ORDER FLOW (FII / DII & LARGE DEALS)
                         </span>
-                        <span id="nseSyncTime" style="font-size:0.60rem; color:var(--text-muted);">SYNCED</span>
+                        <span id="nseSyncTime" style="font-size:0.70rem; color:var(--text-muted); font-weight:600;">SYNCED</span>
                     </div>
-                    <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:8px; margin-top:8px;">
+                    <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; margin-top:10px;">
                         <div class="m-tile">
                             <div class="label">FII / FPI NET FLOW</div>
-                            <div class="val" id="nseFiiVal" style="color:var(--neon-green);">--</div>
+                            <div class="val" id="nseFiiVal" style="color:var(--neon-green); font-size:1.15rem;">--</div>
                         </div>
                         <div class="m-tile">
                             <div class="label">DII NET FLOW</div>
-                            <div class="val" id="nseDiiVal" style="color:var(--neon-red);">--</div>
+                            <div class="val" id="nseDiiVal" style="color:var(--neon-red); font-size:1.15rem;">--</div>
                         </div>
                         <div class="m-tile">
                             <div class="label">INSTITUTIONAL MARKET BIAS</div>
-                            <div class="val" id="nseBiasVal" style="color:var(--neon-cyan);">--</div>
+                            <div class="val" id="nseBiasVal" style="color:var(--neon-cyan); font-size:1.15rem;">--</div>
                         </div>
                     </div>
                 </div>
@@ -898,18 +901,18 @@
                 const logoUrl = getStockLogoUrl(cleanSym);
 
                 html += `
-                <div class="stock-mover-card ${isSelected ? 'active-selected' : ''}" onclick="selectStock('${sym}')" style="${isPrep ? 'border-left: 3px solid var(--neon-amber);' : ''}">
+                <div class="stock-mover-card ${isSelected ? 'active-selected' : ''}" onclick="selectStock('${sym}')" style="${isPrep ? 'border-left: 4px solid var(--neon-amber);' : ''}">
                     <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <span style="font-weight:800; font-size:0.75rem; color:#fff; display:flex; align-items:center; gap:6px;">
-                            <img src="${logoUrl}" style="width:16px; height:16px; border-radius:50%; object-fit:contain; background:#1e293b;" onerror="this.style.display='none';">
+                        <span style="font-weight:900; font-size:0.86rem; color:#fff; display:flex; align-items:center; gap:8px;">
+                            <img src="${logoUrl}" style="width:20px; height:20px; border-radius:50%; object-fit:contain; background:#1e293b;" onerror="this.style.display='none';">
                             #${idx + 1} ${cleanSym}
                             ${scoreBadge}
                         </span>
-                        <span style="font-size:0.72rem; font-weight:800; color:${col};">${sign}${chg}%</span>
+                        <span style="font-size:0.84rem; font-weight:900; color:${col};">${sign}${chg}%</span>
                     </div>
-                    <div style="font-size:0.58rem; color:var(--text-muted); margin-top:2px; display:flex; justify-content:space-between;">
+                    <div style="font-size:0.68rem; color:var(--text-muted); margin-top:4px; display:flex; justify-content:space-between; font-weight:600;">
                         <span>${isPrep ? '⚡ PRE-BREAKOUT' : 'Mom Vol: ' + vel}</span>
-                        <span style="color:${isBull ? 'var(--neon-cyan)' : 'var(--neon-amber)'};">${isBull ? 'CALL / BULL' : 'PUT / BEAR'}</span>
+                        <span style="color:${isBull ? 'var(--neon-cyan)' : 'var(--neon-amber)'}; font-weight:700;">${isBull ? 'CALL / BULL' : 'PUT / BEAR'}</span>
                     </div>
                 </div>`;
             });
@@ -1048,20 +1051,20 @@
                     const logoUrl = getStockLogoUrl(sym);
                     const prc = c.current_price ? `₹${Number(c.current_price).toFixed(2)}` : '';
                     html += `
-                    <div class="stock-mover-card" onclick="selectStock('${c.symbol}')" style="border-left-color:${col}; margin-bottom:4px;">
+                    <div class="stock-mover-card" onclick="selectStock('${c.symbol}')" style="border-left-color:${col}; margin-bottom:6px; padding:10px 14px;">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <span style="font-weight:800; font-size:0.75rem; color:#fff; display:flex; align-items:center; gap:6px;">
-                                <img src="${logoUrl}" style="width:16px; height:16px; border-radius:50%; object-fit:contain; background:#1e293b;" onerror="this.style.display='none';">
-                                #${idx + 1} ${sym} <span style="font-size:0.60rem; color:${col};">${isBull ? '▲ PRE-BREAKOUT' : '▼ PRE-BREAKDOWN'}</span>
+                            <span style="font-weight:900; font-size:0.90rem; color:#fff; display:flex; align-items:center; gap:8px;">
+                                <img src="${logoUrl}" style="width:20px; height:20px; border-radius:50%; object-fit:contain; background:#1e293b;" onerror="this.style.display='none';">
+                                #${idx + 1} ${sym} <span style="font-size:0.68rem; color:${col}; font-weight:800;">${isBull ? '▲ PRE-BREAKOUT' : '▼ PRE-BREAKDOWN'}</span>
                             </span>
-                            <span style="display:flex; align-items:center; gap:6px;">
-                                <span style="font-size:0.72rem; color:#fff; font-weight:700;">${prc}</span>
-                                <span style="font-size:0.70rem; color:${col}; font-weight:800;">${c.change_pct >= 0 ? '+' : ''}${c.change_pct}%</span>
+                            <span style="display:flex; align-items:center; gap:8px;">
+                                <span style="font-size:0.86rem; color:#fff; font-weight:800;">${prc}</span>
+                                <span style="font-size:0.82rem; color:${col}; font-weight:900;">${c.change_pct >= 0 ? '+' : ''}${c.change_pct}%</span>
                             </span>
                         </div>
-                        <div style="display:flex; justify-content:space-between; font-size:0.58rem; color:var(--text-muted); margin-top:2px;">
-                            <span>Score: <b style="color:var(--neon-cyan);">${score}/100</b></span>
-                            <span style="color:${col}; font-weight:700;">${c.entry_trigger || 'Awaiting level'}</span>
+                        <div style="display:flex; justify-content:space-between; font-size:0.70rem; color:var(--text-muted); margin-top:5px; font-weight:600;">
+                            <span>Score: <b style="color:var(--neon-cyan); font-weight:800;">${score}/100</b></span>
+                            <span style="color:${col}; font-weight:800;">${c.entry_trigger || 'Awaiting level'}</span>
                         </div>
                     </div>`;
                 });
@@ -1070,7 +1073,7 @@
 
             // 2. Render Entry Ready
             if (entryReady.length === 0) {
-                entryContainer.innerHTML = '<div style="font-size:0.68rem; color:var(--text-muted); padding:10px 0; text-align:center;">NO 5M TRADE (Default state: waiting for confirmed structure)</div>';
+                entryContainer.innerHTML = '<div style="font-size:0.75rem; color:var(--text-muted); padding:20px 0; text-align:center;">NO 5M TRADE (Default state: waiting for confirmed structure)</div>';
             } else {
                 let html = '';
                 entryReady.forEach((c, idx) => {
@@ -1080,20 +1083,20 @@
                     const logoUrl = getStockLogoUrl(sym);
                     const prc = c.current_price ? `₹${Number(c.current_price).toFixed(2)}` : '';
                     html += `
-                    <div class="stock-mover-card" onclick="selectStock('${c.symbol}')" style="border-left-color:${col}; border-color:${col}; background:rgba(0,255,163,0.06);">
+                    <div class="stock-mover-card" onclick="selectStock('${c.symbol}')" style="border-left-color:${col}; border-color:${col}; background:rgba(0,255,163,0.08); margin-bottom:6px; padding:10px 14px;">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <span style="font-weight:800; font-size:0.78rem; color:#fff; display:flex; align-items:center; gap:6px;">
-                                <img src="${logoUrl}" style="width:18px; height:18px; border-radius:50%; object-fit:contain; background:#1e293b;" onerror="this.style.display='none';">
-                                #${idx + 1} ${sym} <span style="font-size:0.60rem; background:${col}; color:#000; padding:1px 4px; border-radius:2px; font-weight:bold;">${isBull ? 'BUY (CALL)' : 'SELL (PUT)'}</span>
+                            <span style="font-weight:900; font-size:0.92rem; color:#fff; display:flex; align-items:center; gap:8px;">
+                                <img src="${logoUrl}" style="width:22px; height:22px; border-radius:50%; object-fit:contain; background:#1e293b;" onerror="this.style.display='none';">
+                                #${idx + 1} ${sym} <span style="font-size:0.68rem; background:${col}; color:#000; padding:2px 6px; border-radius:3px; font-weight:900;">${isBull ? 'BUY (CALL)' : 'SELL (PUT)'}</span>
                             </span>
-                            <span style="display:flex; align-items:center; gap:6px;">
-                                <span style="font-size:0.75rem; color:#fff; font-weight:700;">${prc}</span>
-                                <span style="font-size:0.72rem; color:${col}; font-weight:800;">${c.change_pct >= 0 ? '+' : ''}${c.change_pct}%</span>
+                            <span style="display:flex; align-items:center; gap:8px;">
+                                <span style="font-size:0.88rem; color:#fff; font-weight:800;">${prc}</span>
+                                <span style="font-size:0.84rem; color:${col}; font-weight:900;">${c.change_pct >= 0 ? '+' : ''}${c.change_pct}%</span>
                             </span>
                         </div>
-                        <div style="font-size:0.60rem; color:#fff; margin-top:3px; display:flex; justify-content:space-between;">
+                        <div style="font-size:0.72rem; color:#fff; margin-top:5px; display:flex; justify-content:space-between; font-weight:600;">
                             <span>SL: ₹${c.suggested_sl} | TP1: ₹${c.suggested_tp1}</span>
-                            <span style="color:var(--neon-green); font-weight:bold;">RR 1:${c.risk_reward_ratio || 1.2}</span>
+                            <span style="color:var(--neon-green); font-weight:900;">RR 1:${c.risk_reward_ratio || 1.2}</span>
                         </div>
                     </div>`;
                 });
