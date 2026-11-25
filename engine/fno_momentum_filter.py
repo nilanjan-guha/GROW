@@ -46,7 +46,7 @@ class FNOMomentumFilter:
             is_completed = feed_val.get("is_completed_candle", True)
             
             # If the last candle is still actively forming during market hours, trim to last completed candle
-            eval_df = df_temp if is_completed else df_temp.iloc[:-1]
+            eval_df = df_temp.copy() if is_completed else df_temp.iloc[:-1].copy()
             if len(eval_df) < 15:
                 return None
 
@@ -59,7 +59,7 @@ class FNOMomentumFilter:
             curr_c = float(c.iloc[-1])
             curr_o = float(o.iloc[-1])
 
-            eval_df['Date'] = eval_df.index.date
+            eval_df.loc[:, 'Date'] = eval_df.index.date
             dates = sorted(eval_df['Date'].unique())
             if dates:
                 today_df = eval_df[eval_df['Date'] == dates[-1]]
@@ -78,7 +78,7 @@ class FNOMomentumFilter:
                 return None
 
             # 2. Time-Slot Adjusted Relative Volume (RVOL) on the exact same completed candle
-            eval_df['Time'] = eval_df.index.time
+            eval_df.loc[:, 'Time'] = eval_df.index.time
             slot_time = eval_df['Time'].iloc[-1]
             same_slot_vols = eval_df[eval_df['Time'] == slot_time]['Volume']
             curr_vol = float(v.iloc[-1])
