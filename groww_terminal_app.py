@@ -759,6 +759,30 @@ def status():
         "market_status": "LIVE MARKET OPEN" if mkt_open else "MARKET CLOSED (Using Last Session Data)"
     })
 
+@app.route("/api/learning/diagnostics")
+def get_learning_diagnostics():
+    """
+    Returns real-time diagnostics of the dedicated Continuous Tracker and
+    Adaptive Learning post-mortem history.
+    """
+    try:
+        from engine.adaptive_trade_learner import AdaptiveTradeLearner
+        recent_post_mortems = AdaptiveTradeLearner.get_recent_learnings(limit=10)
+        tracker_instance = screener_state.get("continuous_tracker_instance")
+        tracker_stats = tracker_instance.tracked_stats if tracker_instance else {
+            "active_prep_count": len(screener_state.get("persistent_preparing_stocks", {})),
+            "open_signals_count": 0,
+            "status": "ONLINE_ACTIVE"
+        }
+        return jsonify({
+            "success": True,
+            "tracker_stats": tracker_stats,
+            "post_mortems": recent_post_mortems,
+            "preparing_stocks": list(screener_state.get("persistent_preparing_stocks", {}).values())
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
 @app.route("/api/groww/sectors-dynamic")
 def get_sectors_dynamic():
     """Serves 100% dynamically computed Sector Rankings and Top 5 FNO Stocks directly from Groww Trending Sectors"""
@@ -1964,8 +1988,15 @@ if __name__ == "__main__":
     except Exception as e:
         print("[INIT] Error during initial scan:", e)
 
-    # Launch background worker
-    worker = threading.Thread(target=background_screener_worker, daemon=True)
+    # Launch Background Screener Worker (Handles 5-min 219 F&O momentum & sector scanning)
+    worker = threading.Thread(target=background_screener_worker, daemon=True, name="BackgroundScreenerWorker")
     worker.start()
+
+    # Launch Dedicated Continuous Background Tracker & Learning Daemon (Runs side-by-side without blocking the screener)
+    from engine.background_continuous_tracker import BackgroundContinuousTracker
+    continuous_tracker = BackgroundContinuousTracker(screener_state, compute_ranking_fn=compute_and_update_ranked_opportunities)
+    continuous_tracker.start()
+    screener_state["continuous_tracker_instance"] = continuous_tracker
+
     print("Groww Chartink Momentum + SMC Screener running on http://127.0.0.1:5000")
     app.run(host="127.0.0.1", port=5000, debug=False)
