@@ -1068,8 +1068,17 @@
             const entryContainer = document.getElementById('rankedEntryReadyList');
             if (!prepContainer || !entryContainer) return;
 
-            const preparing = ranked.preparing || [];
-            const entryReady = ranked.entry_ready || [];
+            // Strictly sort by highest score first
+            const preparing = (ranked.preparing || []).slice().sort((a, b) => {
+                const scoreA = Number(a.conviction_score !== undefined ? a.conviction_score : (a.confirmation_score || 0));
+                const scoreB = Number(b.conviction_score !== undefined ? b.conviction_score : (b.confirmation_score || 0));
+                return scoreB - scoreA;
+            });
+            const entryReady = (ranked.entry_ready || []).slice().sort((a, b) => {
+                const scoreA = Number(a.conviction_score !== undefined ? a.conviction_score : (a.confirmation_score || 0));
+                const scoreB = Number(b.conviction_score !== undefined ? b.conviction_score : (b.confirmation_score || 0));
+                return scoreB - scoreA;
+            });
 
             const pBadge = document.getElementById('prepCountBadge');
             if (pBadge) pBadge.innerText = preparing.length;

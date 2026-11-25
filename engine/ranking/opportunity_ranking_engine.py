@@ -793,19 +793,22 @@ class OpportunityRankingEngine:
 
         # 1. ENTRY READY: CONFIRMED or active IGNITION 5-minute setups with validated risk
         entry_ready_list = [c for c in all_candidates if c.get("stage") in ("CONFIRMED", "IGNITION") and c.get("is_actionable")]
+        entry_ready_list.sort(key=lambda x: x.get("conviction_score", 0), reverse=True)
 
         # 2. IGNITION (Expanding right now across ORH/PDH or high volume breakout)
         ignition_list = [
             c for c in all_candidates 
             if c.get("stage") == "IGNITION" and c not in entry_ready_list
         ]
+        ignition_list.sort(key=lambda x: x.get("conviction_score", 0), reverse=True)
 
-        # 3. PREPARING: All pre-breakout / pre-breakdown coils currently scanning, ranked by score
-        # No artificial cap of 5: show all currently coiling stocks sorted by top conviction score
+        # 3. PREPARING: All pre-breakout / pre-breakdown coils currently scanning, ranked strictly by highest score
+        # No artificial cap: show all currently coiling stocks sorted by highest conviction score first
         preparing_list = [
             c for c in all_candidates 
             if c.get("stage") == "PREPARING" and c not in entry_ready_list
         ]
+        preparing_list.sort(key=lambda x: x.get("conviction_score", 0), reverse=True)
 
         # 4. OBSERVING: Early quiet accumulation watch-only
         observing_list = [
