@@ -730,6 +730,8 @@ def background_screener_worker():
                                     existing_fno = None  # Stale setup expired; clear to prevent false standalone bypass
 
                             res = evaluate_explosive_momentum(cdf, sym)
+                            curr_p = float(cdf['Close'].squeeze().iloc[-1])
+                            print(f"[SCANNING] {clean_sym:<12} | Price: ₹{curr_p:<8.2f} | Completed Candle: {completed_candle_ts}")
                             
                             screener_state.setdefault("raw_market_cache", {})[sym] = {
                                 "timestamp": time.time(),
@@ -1431,6 +1433,10 @@ def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
         }
     else:
         ranked = OpportunityRankingEngine.rank_top_opportunities(candidates, top_n=3)
+
+    # Strictly sort preparing opportunities by conviction score descending
+    if ranked.get("preparing"):
+        ranked["preparing"].sort(key=lambda x: x.get("conviction_score", 0), reverse=True)
 
     # Intraday Persistent PREPARING Tracker:
     # Any stock identified in PREPARING (pre-breakout coil) is added to intraday persistent tracking
