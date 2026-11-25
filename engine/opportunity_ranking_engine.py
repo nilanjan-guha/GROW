@@ -525,28 +525,28 @@ class OpportunityRankingEngine:
         )
 
         # Direction-specific IGNITION trigger:
-        # Cannot qualify on weak level break alone!
+        # Activated when price breaks out of ORH/PDH (Long) or breaks down from ORL/PDL (Short) with closing confirmation
         # Requires:
-        # 1. Price breaking out of ORH/PDH (Long) or breaking down from ORL/PDL (Short) with closing confirmation
-        # 2. Volume expansion: RVOL >= 1.25 or expanding range >= 1.4x ATR
-        # 3. STRICT VWAP VALIDATION: Must hold above VWAP for Longs / below VWAP for Shorts. Missing VWAP cannot qualify!
-        # 4. Valid structural risk boundaries: Invalidation level must exist with computed RR >= 1.10
-        has_ignition_risk_gate = has_valid_structural_risk and (computed_rr >= 1.10)
+        # 1. Price breaking out of ORH/PDH (Long) or breaking down from ORL/PDL (Short) or expanding with volume
+        # 2. Volume expansion: RVOL >= 1.15 or expanding range >= 1.2x ATR
+        # 3. STRICT VWAP VALIDATION: Must hold above VWAP for Longs / below VWAP for Shorts.
+        # 4. Valid structural risk boundaries: Invalidation level must exist with computed RR >= 1.05
+        has_ignition_risk_gate = has_valid_structural_risk and (computed_rr >= 1.05)
         
         is_bull_ignition = (
             direction == "BULLISH" and 
             above_vwap and 
             has_ignition_risk_gate and (
-                ((is_broken_above_orh or is_broken_above_pdh) and curr_c > curr_o and (rvol >= 1.25 or is_expanding_now)) or
-                (is_expanding_now and curr_c > curr_o and rvol >= 1.4)
+                ((is_broken_above_orh or is_broken_above_pdh) and curr_c > curr_o and (rvol >= 1.15 or is_expanding_now)) or
+                (is_expanding_now and curr_c > curr_o and rvol >= 1.2)
             )
         )
         is_bear_ignition = (
             direction == "BEARISH" and 
             below_vwap and 
             has_ignition_risk_gate and (
-                ((is_broken_below_orl or is_broken_below_pdl) and curr_c < curr_o and (rvol >= 1.25 or is_expanding_now)) or
-                (is_expanding_now and curr_c < curr_o and rvol >= 1.4)
+                ((is_broken_below_orl or is_broken_below_pdl) and curr_c < curr_o and (rvol >= 1.15 or is_expanding_now)) or
+                (is_expanding_now and curr_c < curr_o and rvol >= 1.2)
             )
         )
 
@@ -675,9 +675,12 @@ class OpportunityRankingEngine:
         rvol_confidence = "HIGH" if rvol_obs >= 3 else ("MEDIUM" if rvol_obs >= 1 else "LOW")
         latest_candle_timestamp = str(stock_df.index[-1]) if stock_df is not None and not stock_df.empty else ""
 
-        # Explicit actionability flag: strictly requires confirmed stage with validated risk
-        # IGNITION, PREPARING, and OBSERVING are strictly watch-only (is_actionable = False)
-        is_actionable = bool(stage == "CONFIRMED" and has_valid_structural_risk and computed_rr >= 1.10)
+        # Explicit actionability flag: strictly requires confirmed stage or confirmed ignition breakout with validated risk
+        # CONFIRMED and IGNITION (breakouts with confirmed risk & RVOL) are actionable entries!
+        is_actionable = bool(
+            (stage == "CONFIRMED" and has_valid_structural_risk and computed_rr >= 1.10) or
+            (stage == "IGNITION" and has_ignition_risk_gate and computed_rr >= 1.05 and rvol >= 1.15)
+        )
 
         return {
             "symbol": symbol,
@@ -767,8 +770,8 @@ class OpportunityRankingEngine:
         all_candidates = bullish + bearish
         all_candidates.sort(key=neutral_quality_score, reverse=True)
 
-        # 1. ENTRY READY (Max 2): Strictly CONFIRMED 5-minute setups with valid structure & RR >= 1.25
-        entry_ready_list = [c for c in all_candidates if c.get("stage") == "CONFIRMED"][:2]
+        # 1. ENTRY READY (Max 2): CONFIRMED or active IGNITION 5-minute setups with validated risk
+        entry_ready_list = [c for c in all_candidates if c.get("stage") in ("CONFIRMED", "IGNITION") and c.get("is_actionable")][:2]
 
         # 2. IGNITION (Expanding right now across ORH/PDH or high volume breakout)
         ignition_list = [

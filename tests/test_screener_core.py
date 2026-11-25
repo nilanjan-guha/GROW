@@ -2240,6 +2240,8 @@ class TestIntradayScreenerCore(unittest.TestCase):
         from engine.market_validator import MarketValidator
         orig_is_open = MarketValidator.is_market_open
         MarketValidator.is_market_open = staticmethod(lambda dt=None: True)
+        orig_val = MarketValidator.validate_feed_freshness
+        MarketValidator.validate_feed_freshness = staticmethod(lambda df, max_delay_seconds=300, candle_duration_seconds=300: {'is_valid': True, 'is_completed_candle': True, 'status': 'FRESH'})
         try:
             with gta.app.test_client() as client:
                 now_ts = datetime.datetime.now().timestamp()
@@ -2273,6 +2275,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
                 self.assertIn("missing from cache", resp_data.get("error", ""))
         finally:
             MarketValidator.is_market_open = orig_is_open
+            MarketValidator.validate_feed_freshness = orig_val
 
     def test_log_confirmed_rejects_stock_market_timestamp_mismatch(self):
         # HTTP 409 rejection when stock completed candle is out of sync with NIFTY market baseline
@@ -2280,6 +2283,9 @@ class TestIntradayScreenerCore(unittest.TestCase):
         from engine.market_validator import MarketValidator
         orig_is_open = MarketValidator.is_market_open
         MarketValidator.is_market_open = staticmethod(lambda dt=None: True)
+        orig_val = MarketValidator.validate_feed_freshness
+        # Mock freshness validator so synthetic test feed simulates aligned market hours
+        MarketValidator.validate_feed_freshness = staticmethod(lambda df, max_delay_seconds=300, candle_duration_seconds=300: {'is_valid': True, 'is_completed_candle': True, 'status': 'FRESH'})
         try:
             with gta.app.test_client() as client:
                 now_ts = datetime.datetime.now().timestamp()
@@ -2316,6 +2322,7 @@ class TestIntradayScreenerCore(unittest.TestCase):
                 self.assertTrue("out of sync" in err_msg or "failed freshness revalidation" in err_msg)
         finally:
             MarketValidator.is_market_open = orig_is_open
+            MarketValidator.validate_feed_freshness = orig_val
 
     def test_duplicate_expiries_preserve_all_contracts(self):
         # Registering multiple expiries for same symbol preserves each distinct contract spec

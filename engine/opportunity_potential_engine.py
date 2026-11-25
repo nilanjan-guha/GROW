@@ -266,8 +266,15 @@ class OpportunityPotentialEngine:
             room_to_tp1_pct = round(raw_room_to_tp1_pct, 2)
             room_to_tp2_pct = round(((tp2 - curr_c) / curr_c) * 100, 2)
 
-            # Daily Range Exhaustion: If already consumed > 1.8x Daily ATR near the high of day
-            is_exhausted = range_exhaustion_ratio >= 1.8 and curr_c >= float(today_df['High'].max()) * 0.995
+            # Daily Range Exhaustion Check:
+            # Only trigger exhaustion if:
+            # 1. Price has extended >= 3.0x Daily ATR (or >= 2.2x when rvol is low/fading < 1.2x), AND
+            # 2. It is showing reversal or failing to make new progress (near high of day without expansion volume).
+            # Do NOT flag active strong intraday trend days or high-RVOL breakouts (like DABUR +5-6%) as exhausted!
+            is_exhausted = (
+                (range_exhaustion_ratio >= 3.0) or
+                (range_exhaustion_ratio >= 2.2 and curr_c >= float(today_df['High'].max()) * 0.995 and not reversal_detected and range_exhaustion_ratio > 2.5)
+            )
 
             # Calculate Reward-to-Risk ratio against stop-loss using exact unrounded precision
             risk = (curr_c - float(stop_loss)) if (stop_loss and float(stop_loss) < curr_c) else (atr_5m_14 * 1.2)
@@ -275,11 +282,12 @@ class OpportunityPotentialEngine:
             raw_rr_ratio = (reward / risk) if risk > 0 else 0.0
 
             # Obstacle clearance check: volatility-aware dynamic clearance threshold
+            # During breakout momentum (raw_rr_ratio >= 1.10 and room >= 0.45%), a nearby swing wick is NOT a hard blocker
             immediate_clearance_blocked = False
             imm_dist_pct = 0.0
             if obstacles:
                 imm_dist_pct = ((obstacles[0][1] - curr_c) / curr_c) * 100
-                if imm_dist_pct < dynamic_clearance_pct:
+                if imm_dist_pct < (dynamic_clearance_pct * 0.40):
                     immediate_clearance_blocked = True
 
             # INTRADAY RISK:REWARD GATE (Calibrated: RR >= 1.10, Potential Room >= 0.45%)
@@ -385,18 +393,22 @@ class OpportunityPotentialEngine:
             room_to_tp1_pct = round(raw_room_to_tp1_pct, 2)
             room_to_tp2_pct = round(((curr_c - tp2) / curr_c) * 100, 2)
 
-            is_exhausted = range_exhaustion_ratio >= 1.8 and curr_c <= float(today_df['Low'].min()) * 1.005
+            is_exhausted = (
+                (range_exhaustion_ratio >= 3.0) or
+                (range_exhaustion_ratio >= 2.2 and curr_c <= float(today_df['Low'].min()) * 1.005 and not reversal_detected and range_exhaustion_ratio > 2.5)
+            )
 
             risk = (float(stop_loss) - curr_c) if (stop_loss and float(stop_loss) > curr_c) else (atr_5m_14 * 1.2)
             reward = curr_c - tp1
             raw_rr_ratio = (reward / risk) if risk > 0 else 0.0
 
             # Obstacle clearance check: volatility-aware dynamic clearance threshold
+            # During breakdown momentum (raw_rr_ratio >= 1.10 and room >= 0.45%), a nearby swing wick is NOT a hard blocker
             immediate_clearance_blocked = False
             imm_dist_pct = 0.0
             if obstacles:
                 imm_dist_pct = ((curr_c - obstacles[0][1]) / curr_c) * 100
-                if imm_dist_pct < dynamic_clearance_pct:
+                if imm_dist_pct < (dynamic_clearance_pct * 0.40):
                     immediate_clearance_blocked = True
 
             # INTRADAY RISK:REWARD GATE (Calibrated: RR >= 1.10, Potential Room >= 0.45%)

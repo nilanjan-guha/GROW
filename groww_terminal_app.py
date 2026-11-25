@@ -1333,19 +1333,25 @@ def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
             sec_data = screener_state.get("sectors", {}).get(sec_name, {})
             sec_chg = sec_data.get("change", 0.0)
         
-        # Retrieve enriched cache ONLY if its evaluated completed candle timestamp matches exactly
+        # Retrieve enriched cache if available; otherwise compute direct opportunity potential on the fly
         enriched_entry = screener_state.get("enriched_signals_cache", {}).get(sym, {})
         enriched_candle_ts = str(enriched_entry.get("last_candle_ts", ""))
         enriched = enriched_entry.get("data", {}) if (enriched_candle_ts and enriched_candle_ts == stock_candle_ts) else {}
         
+        from engine.opportunity_potential_engine import OpportunityPotentialEngine
+        c_price = float(eval_df_sym['Close'].iloc[-1])
+        c_open = float(eval_df_sym['Open'].iloc[-1])
+        guess_dir = "BUY" if c_price >= c_open else "SELL"
+        direct_pot = OpportunityPotentialEngine.evaluate_potential(eval_df_sym, c_price, guess_dir)
+
         opp_eval = {
-            "is_viable": enriched.get("is_viable", False),
-            "potential_pct": enriched.get("potential_pct", 0.0),
-            "risk_reward_ratio": enriched.get("risk_reward_ratio", 0.0),
-            "stop_loss": enriched.get("suggested_sl"),
-            "tp1": enriched.get("suggested_tp1"),
-            "tp2": enriched.get("suggested_tp2"),
-            "exhaustion_risk": enriched.get("exhaustion_risk", "LOW"),
+            "is_viable": enriched.get("is_viable") if "is_viable" in enriched else direct_pot.get("is_viable", True),
+            "potential_pct": enriched.get("potential_pct") if "potential_pct" in enriched else direct_pot.get("potential_pct", 0.65),
+            "risk_reward_ratio": enriched.get("risk_reward_ratio") if "risk_reward_ratio" in enriched else direct_pot.get("risk_reward_ratio", 1.25),
+            "stop_loss": enriched.get("suggested_sl") or direct_pot.get("suggested_sl"),
+            "tp1": enriched.get("suggested_tp1") or direct_pot.get("tp1"),
+            "tp2": enriched.get("suggested_tp2") or direct_pot.get("tp2"),
+            "exhaustion_risk": enriched.get("exhaustion_risk") or direct_pot.get("exhaustion_risk", "LOW"),
             "has_eql_inducement_sweep": enriched.get("has_eql_inducement_sweep", False),
             "has_eqh_inducement_sweep": enriched.get("has_eqh_inducement_sweep", False),
             "nearest_bull_breaker": enriched.get("nearest_bull_breaker"),
@@ -1421,6 +1427,17 @@ def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
                 "first_detected_ts": now,
                 "last_seen_candle_ts": current_candle_ts
             }
+
+    # If a persistently tracked stock has broken out or triggered IGNITION/CONFIRMED,
+    # ensure it is promoted directly into entry_ready so the trader never misses the move:
+    for cand in candidates:
+        c_sym = cand.get("symbol")
+        if c_sym in persistent_prep:
+            # Check if this preparing stock broke out or ignited
+            if cand.get("stage") in ("CONFIRMED", "IGNITION") and cand.get("is_actionable"):
+                if cand not in ranked.get("entry_ready", []):
+                    ranked["entry_ready"].insert(0, cand)
+                    ranked["entry_ready"] = ranked["entry_ready"][:2]
 
     screener_state["ranked_opportunities"] = ranked
     screener_state["ranked_opportunities_ts"] = now

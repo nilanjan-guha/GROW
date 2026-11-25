@@ -1605,10 +1605,14 @@
                     renderRankedOpportunitiesUI(data.ranked);
                     document.getElementById('rankSyncTime').innerText = 'SYNCED ' + new Date().toLocaleTimeString();
 
-                    const topAll = [...(data.ranked.top_bullish || []), ...(data.ranked.top_bearish || [])];
+                    const topAll = [
+                        ...(data.ranked.entry_ready || []),
+                        ...(data.ranked.ignition || []),
+                        ...(data.ranked.top_bullish || []),
+                        ...(data.ranked.top_bearish || [])
+                    ];
                     for (const cand of topAll) {
-                        // CRITICAL: Only scan SMC and generate trades for actionable candidates (CONFIRMED / IGNITION / ENTRY READY).
-                        // Strictly keep PREPARING, OBSERVING, and WATCH-ONLY candidates as non-actionable monitoring cards.
+                        // CRITICAL: Scan SMC and generate trades for actionable candidates (CONFIRMED / IGNITION / ENTRY READY).
                         if (!cand || !cand.symbol || !cand.is_actionable) {
                             continue;
                         }
