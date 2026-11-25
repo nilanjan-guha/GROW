@@ -504,30 +504,30 @@
 
                 <!-- Dual Opportunities: PREPARING (Coils) vs ENTRY READY (Actionable Breakouts) -->
                 <div class="opportunities-cockpit">
-                    <!-- PREPARING (Max 5) -->
+                    <!-- PREPARING (All Pre-Breakout Coils) -->
                     <div class="cyber-panel" style="padding:10px;">
                         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
                             <span style="font-size:0.70rem; font-weight:800; color:var(--neon-amber); display:flex; align-items:center; gap:5px;">
-                                <span>⚡</span> PREPARING (MAX 5) — PRE-BREAKOUT COILS
+                                <span>⚡</span> PREPARING — ALL PRE-BREAKOUT COILS (<span id="prepCountBadge">0</span>)
                             </span>
                             <span style="font-size:0.58rem; color:#94a3b8;">BEFORE THE MOVE</span>
                         </div>
-                        <div id="rankedPreparingList" style="display:flex; flex-direction:column; gap:5px; min-height:80px;">
+                        <div id="rankedPreparingList" style="display:flex; flex-direction:column; gap:5px; min-height:80px; max-height:280px; overflow-y:auto;">
                             <div style="font-size:0.68rem; color:var(--text-muted); text-align:center; padding:12px 0;">
                                 Continuous tracker polling for pre-breakout accumulation coils...
                             </div>
                         </div>
                     </div>
 
-                    <!-- ENTRY READY (Max 2) -->
+                    <!-- ENTRY READY (Confirmed Breakouts) -->
                     <div class="cyber-panel" style="padding:10px;">
                         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
                             <span style="font-size:0.70rem; font-weight:800; color:var(--neon-green); display:flex; align-items:center; gap:5px;">
-                                <span>🎯</span> ENTRY READY (MAX 2) — CONFIRMED 5M
+                                <span>🎯</span> ENTRY READY — CONFIRMED 5M BREAKOUTS (<span id="entryCountBadge">0</span>)
                             </span>
                             <span style="font-size:0.58rem; color:var(--neon-green);">ACTIONABLE BREAKOUT</span>
                         </div>
-                        <div id="rankedEntryReadyList" style="display:flex; flex-direction:column; gap:5px; min-height:80px;">
+                        <div id="rankedEntryReadyList" style="display:flex; flex-direction:column; gap:5px; min-height:80px; max-height:280px; overflow-y:auto;">
                             <div style="font-size:0.68rem; color:var(--text-muted); text-align:center; padding:12px 0;">
                                 NO 5M TRADE (Default state: waiting for confirmed structure)
                             </div>
@@ -908,6 +908,11 @@
             const preparing = ranked.preparing || [];
             const entryReady = ranked.entry_ready || [];
 
+            const pBadge = document.getElementById('prepCountBadge');
+            if (pBadge) pBadge.innerText = preparing.length;
+            const eBadge = document.getElementById('entryCountBadge');
+            if (eBadge) eBadge.innerText = entryReady.length;
+
             // Sound Alert for new PREPARING setups with Score >= 70
             preparing.forEach(c => {
                 const sym = c.symbol;
@@ -1036,28 +1041,54 @@
             renderConfirmedBanner();
         }
 
-        function renderConfirmedBanner() {
+        function renderConfirmedBanner(recentTracked) {
             const banner = document.getElementById('confirmedTradeAlert');
             const details = document.getElementById('alertDetails');
             const activeKeys = Object.keys(activeConfirmedTrades);
 
-            if (activeKeys.length === 0) {
+            if (activeKeys.length === 0 && (!recentTracked || recentTracked.length === 0)) {
                 banner.style.display = 'none';
                 return;
             }
 
             banner.style.display = 'block';
             let html = '';
+            // 1. Live Active Trades
             activeKeys.forEach(sym => {
                 const tr = activeConfirmedTrades[sym];
                 const smc = tr.smc;
                 const isBuy = smc.action && smc.action.includes('BUY');
                 html += `
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px; padding:3px 6px; background:rgba(0,255,163,0.08); border-radius:3px;">
                     <span><b>${sym.replace('.NS', '')}</b> [${isBuy ? 'CALL / LONG' : 'PUT / SHORT'}] Entry: ₹${smc.entry_price}</span>
-                    <span>SL: <b style="color:var(--neon-amber);">₹${smc.suggested_sl}</b> | TP: <b style="color:var(--neon-cyan);">₹${smc.suggested_tp1}</b></span>
+                    <span style="display:flex; align-items:center; gap:8px;">
+                        <span>SL: <b style="color:var(--neon-amber);">₹${smc.suggested_sl}</b> | TP: <b style="color:var(--neon-cyan);">₹${smc.suggested_tp1}</b></span>
+                        <span style="font-size:0.55rem; background:var(--neon-green); color:#000; padding:1px 5px; border-radius:3px; font-weight:800;">ACTIVE IN TRADE</span>
+                    </span>
                 </div>`;
             });
+
+            // 2. Tracked Recent Trades with Target Hit / SL Hit / Closed Tags
+            if (recentTracked && recentTracked.length > 0) {
+                recentTracked.slice(0, 4).forEach(t => {
+                    if (t.outcome === 'ACTIVE') return;
+                    const sym = (t.symbol || '').replace('.NS', '');
+                    const isWin = (t.outcome || '').includes('WIN') || (t.outcome || '').includes('TP') || (t.net_pnl || 0) > 0;
+                    const isSL = (t.outcome || '').includes('SL') || (t.outcome || '').includes('LOSS') || (t.outcome || '').includes('STOP');
+                    const tagCol = isWin ? 'var(--neon-green)' : (isSL ? 'var(--neon-red)' : 'var(--neon-amber)');
+                    const tagText = isWin ? '🎯 TARGET HIT (PROFIT)' : (isSL ? '🛑 STOP LOSS HIT' : t.outcome);
+
+                    html += `
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:3px; font-size:0.70rem; color:#94a3b8; border-top:1px solid rgba(255,255,255,0.05); padding-top:2px;">
+                        <span>${sym} [${t.direction || 'TRADE'}] Entry: ₹${t.entry_price || '--'}</span>
+                        <span style="display:flex; align-items:center; gap:6px;">
+                            <span>PnL: <b style="color:${tagCol};">${(t.net_pnl || 0) >= 0 ? '+' : ''}₹${Number(t.net_pnl || 0).toFixed(1)}</b></span>
+                            <span style="font-size:0.52rem; border:1px solid ${tagCol}; color:${tagCol}; padding:1px 4px; border-radius:2px; font-weight:700;">${tagText}</span>
+                        </span>
+                    </div>`;
+                });
+            }
+
             details.innerHTML = html;
         }
 
@@ -1065,12 +1096,14 @@
             try {
                 const res = await fetch('/api/signals/active');
                 const data = await res.json();
-                if (data.success && data.active_signals) {
-                    const activeDbList = data.active_signals;
+                if (data.success) {
+                    const activeDbList = data.active_signals || [];
+                    const recentTracked = data.recent_tracked || [];
+                    
                     if (activeDbList.length === 0) {
                         activeConfirmedTrades = {};
                         try { localStorage.removeItem('activeConfirmedTrades'); } catch (e) { }
-                        renderConfirmedBanner();
+                        renderConfirmedBanner(recentTracked);
                         return;
                     }
 
@@ -1082,7 +1115,7 @@
                         }
                     });
                     try { localStorage.setItem('activeConfirmedTrades', JSON.stringify(activeConfirmedTrades)); } catch (e) { }
-                    renderConfirmedBanner();
+                    renderConfirmedBanner(recentTracked);
                 }
             } catch (e) { }
         }
@@ -1096,8 +1129,12 @@
                     const bias = data.bias || {};
                     const fii = bias.fii_net || 0;
                     const dii = bias.dii_net || 0;
-                    document.getElementById('nseFiiVal').innerText = `${fii >= 0 ? '+' : ''}₹${fii.toLocaleString()} Cr`;
-                    document.getElementById('nseDiiVal').innerText = `${dii >= 0 ? '+' : ''}₹${dii.toLocaleString()} Cr`;
+                    const fiiEl = document.getElementById('nseFiiVal');
+                    const diiEl = document.getElementById('nseDiiVal');
+                    fiiEl.innerText = `${fii >= 0 ? '+' : ''}₹${fii.toLocaleString()} Cr`;
+                    fiiEl.style.color = fii >= 0 ? 'var(--neon-green)' : 'var(--neon-red)';
+                    diiEl.innerText = `${dii >= 0 ? '+' : ''}₹${dii.toLocaleString()} Cr`;
+                    diiEl.style.color = dii >= 0 ? 'var(--neon-green)' : 'var(--neon-red)';
                     document.getElementById('nseBiasVal').innerText = bias.overall_bias || 'NEUTRAL';
                     document.getElementById('nseSyncTime').innerText = 'SYNCED ' + new Date().toLocaleTimeString();
                 }

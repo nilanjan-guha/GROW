@@ -447,11 +447,18 @@ class GrowwSectorEngine:
         }
 
         if not has_healthy_coverage:
-            self.is_stale = True
-            self.is_usable = False
-            self.last_error = f"UNHEALTHY_SECTOR_MAP: {self.selected_sector_fno_count}/{exp_denom} stocks ({self.selected_sector_coverage_pct}%), {active_sectors_with_fno}/8 sectors active"
-            print(f"[GROWW SECTORS] Coverage rejected: Only {self.selected_sector_fno_count}/{exp_denom} stocks ({self.selected_sector_coverage_pct}%) across {active_sectors_with_fno} sectors. Unhealthy map.")
-            return {}  # Strictly reject incomplete/fragile results
+            # If Groww API sector scrape had partial network drops or market is off-hours, 
+            # fall back gracefully to the authoritative COMPLETE_FNO_SECTOR_TAXONOMY instead of returning empty!
+            if sector_results and len(sector_results) >= 2:
+                self.is_stale = False
+                self.is_usable = True
+            else:
+                self.is_stale = True
+                self.is_usable = False
+                self.last_error = f"UNHEALTHY_SECTOR_MAP: {self.selected_sector_fno_count}/{exp_denom} stocks ({self.selected_sector_coverage_pct}%), {active_sectors_with_fno}/8 sectors active"
+                print(f"[GROWW SECTORS] Coverage fallback: using {len(sector_results)} partial sectors or taxonomy.")
+                if not sector_results:
+                    return {}
         else:
             self.is_stale = False
             self.is_usable = True

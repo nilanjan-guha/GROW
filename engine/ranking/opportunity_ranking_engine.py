@@ -791,26 +791,27 @@ class OpportunityRankingEngine:
         all_candidates = bullish + bearish
         all_candidates.sort(key=neutral_quality_score, reverse=True)
 
-        # 1. ENTRY READY (Max 2): CONFIRMED or active IGNITION 5-minute setups with validated risk
-        entry_ready_list = [c for c in all_candidates if c.get("stage") in ("CONFIRMED", "IGNITION") and c.get("is_actionable")][:2]
+        # 1. ENTRY READY: CONFIRMED or active IGNITION 5-minute setups with validated risk
+        entry_ready_list = [c for c in all_candidates if c.get("stage") in ("CONFIRMED", "IGNITION") and c.get("is_actionable")]
 
         # 2. IGNITION (Expanding right now across ORH/PDH or high volume breakout)
         ignition_list = [
             c for c in all_candidates 
             if c.get("stage") == "IGNITION" and c not in entry_ready_list
-        ][:3]
+        ]
 
-        # 3. PREPARING (Max 5): Strictly Pre-Breakout / Pre-Breakdown COILS before expansion begins
+        # 3. PREPARING: All pre-breakout / pre-breakdown coils currently scanning, ranked by score
+        # No artificial cap of 5: show all currently coiling stocks sorted by top conviction score
         preparing_list = [
             c for c in all_candidates 
             if c.get("stage") == "PREPARING" and c not in entry_ready_list
-        ][:5]
+        ]
 
-        # 4. OBSERVING (Max 5): Early quiet accumulation watch-only (Distinct from preparing!)
+        # 4. OBSERVING: Early quiet accumulation watch-only
         observing_list = [
             c for c in all_candidates 
             if c.get("stage") == "OBSERVING" and c not in entry_ready_list and c not in preparing_list
-        ][:5]
+        ]
 
         # 5. WATCHLIST / MONITORING ONLY: Explicitly marked as non-actionable watchlists
         # Distinguish actionable setups from pure sector monitoring watchlists

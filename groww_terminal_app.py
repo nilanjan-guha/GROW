@@ -46,11 +46,16 @@ def is_market_open():
 app = Flask(__name__, template_folder=os.path.join(BASE_DIR, "templates"), static_folder=os.path.join(BASE_DIR, "static"))
 
 # Global Screener State
+# Seed fallback F&O universe from authoritative taxonomy so offline or cold starts immediately have universe
+from engine.market.groww_sector_engine import GrowwSectorEngine
+_taxonomy_map = GrowwSectorEngine().build_complete_fno_sector_universe_mapping(set())
+_default_fno_list = sorted(list({s for s in _taxonomy_map.keys() if not s.endswith(".NS") and s != "UNMAPPED"}))
+
 screener_state = {
     "connected": False,
     "user_profile": None,
     "margin": None,
-    "fno_universe": [],
+    "fno_universe": _default_fno_list,
     "sectors": {},
     "bullish_momentum_watchlist": [],
     "bearish_momentum_watchlist": [],
@@ -1457,10 +1462,10 @@ def get_ranked_opportunities_endpoint():
                 "ranked": {
                     "top_bullish": cached_ranked.get("top_bullish", []), 
                     "top_bearish": cached_ranked.get("top_bearish", []),
-                    "entry_ready": cached_ranked.get("entry_ready", [])[:2],
-                    "ignition": cached_ranked.get("ignition", [])[:3],
-                    "preparing": cached_ranked.get("preparing", [])[:5],
-                    "observing": cached_ranked.get("observing", [])[:5]
+                    "entry_ready": cached_ranked.get("entry_ready", []),
+                    "ignition": cached_ranked.get("ignition", []),
+                    "preparing": cached_ranked.get("preparing", []),
+                    "observing": cached_ranked.get("observing", [])
                 }
             })
 
@@ -1519,8 +1524,11 @@ def get_active_signals_endpoint():
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM historical_signals WHERE outcome = 'ACTIVE' ORDER BY id DESC")
         active = [dict(r) for r in cursor.fetchall()]
+        # Also return the latest closed/tracked trades (e.g. TARGET HIT, SL HIT) with clear status tags
+        cursor.execute("SELECT * FROM historical_signals ORDER BY id DESC LIMIT 15")
+        recent_all = [dict(r) for r in cursor.fetchall()]
         conn.close()
-        return jsonify({"success": True, "active_signals": active, "is_market_open": mkt_open})
+        return jsonify({"success": True, "active_signals": active, "recent_tracked": recent_all, "is_market_open": mkt_open})
     except Exception as e:
         return jsonify({"success": False, "error": str(e), "active_signals": []})
 
