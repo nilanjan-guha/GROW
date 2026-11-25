@@ -1,0 +1,2045 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JARVIS HUD // Institutional F&O Autonomous Market Command Center</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <!-- Three.js for 60FPS GPU 3D Starfield & Neural Matrix Mesh -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+
+<body>
+
+    <!-- Holographic 3D Background Canvas & Laser Scan Line -->
+    <canvas id="threeCanvas"></canvas>
+    <div class="hud-grid-overlay"></div>
+    <div class="scan-laser-line"></div>
+
+    <!-- Header: Autonomous Command Center Top Bar -->
+    <header>
+        <div class="header-title">
+            <span class="pulse-circle"></span>
+            <span>AI COMMAND // DYNAMIC F&O SNIPER RADAR</span>
+            <span class="badge" id="mktBadge" style="color:var(--neon-amber); border-color:var(--neon-amber);">SCANNING
+                FEED...</span>
+            <span class="badge" id="uccBadge">GROWW: ACTIVE</span>
+            <span class="badge" id="nseBadge" style="color:var(--neon-green); border-color:var(--neon-green);">NSE
+                INDIA: LIVE FEED</span>
+            <span class="badge" id="fnoBadge">FNO UNIVERSE: 219 ACTIVE</span>
+            <span class="badge" id="trackerBadge" style="color:var(--neon-green); border-color:var(--neon-green); background:rgba(0,255,170,0.08);" title="Dedicated Background 15s Continuous Tracker">⚡ TRACKER: 0 COILS</span>
+            <span class="badge" id="learningBadge" style="color:var(--neon-amber); border-color:var(--neon-amber); background:rgba(255,170,0,0.08);" title="Real-Time Learning Post-Mortem Feedback">🧠 LEARNER: ACTIVE (0 Post-Mortems)</span>
+            <span class="badge" id="cycleStatus" style="color:var(--neon-cyan);">CYCLE: NEURAL SWEEP</span>
+        </div>
+        <div style="display:flex; gap:12px; align-items:center;">
+            <span class="countdown-badge" id="timerBadge">NEXT SECTOR SCAN: 05:00</span>
+            <div class="status-badge"><span>●</span> <span>AUTONOMOUS ONLINE</span></div>
+        </div>
+    </header>
+
+    <!-- 3D Glass Command Workspace Layout -->
+    <div class="workspace-grid" id="workspaceGrid">
+
+        <!-- Column 1: Top Bullish F&O Momentum Movers (Filtered from 219 F&O) -->
+        <div class="panel" id="bullishPanel">
+            <div class="panel-header">
+                <span class="green" style="display:flex; align-items:center; gap:6px;">
+                    <span style="font-size:0.9rem;">▲</span> BULLISH F&O MOVERS
+                </span>
+                <span style="font-size:0.65rem; color:var(--text-muted);">CALL / BUY FLOW</span>
+            </div>
+            <div class="panel-body" id="bullishSectors"
+                style="display:flex; flex-direction:column; gap:9px; overflow-y:auto; max-height:calc(100vh - 120px); padding:10px 8px;">
+                <div style="font-size:0.72rem; color:var(--text-muted); text-align:center; margin-top:30px;">
+                    Filtering 219 F&O stocks for active Call/Bull momentum...
+                </div>
+            </div>
+        </div>
+
+        <!-- Column 2: Center Cockpit: Stock Selector, SMC Radar & Ranked Opportunities -->
+        <div class="panel" id="centerCockpit">
+            <div class="panel-header">
+                <div style="display:flex; align-items:center; gap:12px;">
+                    <span>INTRADAY RADAR: <span id="radarStockTitle" style="color: var(--neon-cyan);">--</span></span>
+                </div>
+                <span id="selectedSectorTitle" style="color: var(--neon-amber); font-size:0.75rem;">--</span>
+            </div>
+            <div class="panel-body">
+
+                <!-- Live Market Status Bar -->
+                <div
+                    style="display:flex; justify-content:space-between; align-items:center; background:#0c121e; border:1px solid #1e293b; border-radius:6px; padding:6px 12px; margin-bottom:10px;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span
+                            style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#10b981; box-shadow:0 0 8px #10b981;"></span>
+                        <span id="activeSectorSweepText"
+                            style="font-size:0.75rem; font-weight:700; color:#e2e8f0; font-family:'Inter', sans-serif;">SECTOR
+                            ENGINE: ACTIVE LIVE FEED</span>
+                    </div>
+                    <div style="font-family:'JetBrains Mono', monospace; font-size:0.68rem; color:#64748b;"
+                        id="hologramCoords">
+                        EXECUTION: 5-MIN CANDLE ENGINE // 0 SLIPPAGE GATE
+                    </div>
+                </div>
+
+                <!-- Confirmed Intraday Trade Alert Banner -->
+                <div id="confirmedTradeAlert"
+                    style="display:none; margin-bottom:10px; padding:10px 14px; border-radius:6px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span
+                            style="font-size:0.75rem; font-weight:bold; color:var(--neon-green); letter-spacing:0.8px;">⚡
+                            CONFIRMED INTRADAY TRADE SIGNAL</span>
+                        <span id="alertTime" style="font-size:0.65rem; color:var(--text-muted);">READY TO EXECUTE</span>
+                    </div>
+                    <div id="alertDetails" style="font-size:0.82rem; font-weight:700; color:#fff; margin-top:4px;">
+                        --
+                    </div>
+                </div>
+
+                <!-- Stock selector chips for selected sector -->
+                <div class="stock-chips-bar" id="stockChipsBar"></div>
+
+                <!-- Strict SMC Intraday Trade Decision Card (Streamlined High-Impact HUD) -->
+                <div class="radar-box">
+                    <div class="trade-decision-banner" id="decisionBanner">
+                        <div>
+                            <div
+                                style="font-size:0.62rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.8px;">
+                                CONFIRMED SIGNAL & SETUP</div>
+                            <div class="decision-action" id="decisionAction" style="color:#94a3b8;">NO TRADE SETUP YET
+                            </div>
+                        </div>
+                        <div style="text-align:right;">
+                            <div style="font-size:0.62rem; color:var(--text-muted); letter-spacing:0.8px;">EARLY STAGE
+                                STATUS</div>
+                            <div class="decision-setup" id="decisionSetup">COIL / ACCUMULATION SCAN</div>
+                        </div>
+                    </div>
+
+                    <div class="decision-reason" id="decisionReason"
+                        style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; padding:6px 12px; font-size:0.75rem;">
+                        <span id="decisionReasonText" style="flex:1; line-height:1.4;">Scanning F&O order book
+                            confluence...</span>
+                        <span id="decisionPillTag"
+                            style="font-size:0.65rem; background:rgba(255,255,255,0.06); padding:2px 8px; border-radius:4px; font-weight:bold; color:var(--neon-cyan); white-space:nowrap; align-self:flex-start;">MONITORING</span>
+                    </div>
+
+                    <div class="radar-metrics">
+                        <div class="metric-cell">
+                            <div class="m-lbl">Price / VWAP</div>
+                            <div class="m-val" id="valPrice" style="color:#fff;">--</div>
+                        </div>
+                        <div class="metric-cell">
+                            <div class="m-lbl">RSI (14) & RVOL (Volume Multiplier)</div>
+                            <div class="m-val yellow" id="valRsi"
+                                style="display:flex; align-items:baseline; gap:6px; flex-wrap:wrap;">--</div>
+                        </div>
+                        <div class="metric-cell">
+                            <div class="m-lbl">EMA 9 / 21 Trend</div>
+                            <div class="m-val cyan" id="valEma">--</div>
+                        </div>
+                        <div class="metric-cell">
+                            <div class="m-lbl">Quant Score & Win Prob</div>
+                            <div class="m-val green" id="valQuantScore">--</div>
+                        </div>
+                        <div class="metric-cell">
+                            <div class="m-lbl" style="color:var(--neon-green);">Demand Order Block (Buy Zone)</div>
+                            <div class="m-val green" id="valDemandOb" style="font-size:0.80rem;">--</div>
+                        </div>
+                        <div class="metric-cell">
+                            <div class="m-lbl" style="color:var(--neon-red);">Supply Order Block (Sell Ceiling)</div>
+                            <div class="m-val red" id="valSupplyOb" style="font-size:0.80rem;">--</div>
+                        </div>
+                        <div class="metric-cell">
+                            <div class="m-lbl" style="color:var(--neon-cyan);">Buy-Side Liquidity (BSL Pool)</div>
+                            <div class="m-val cyan" id="valBslLiq" style="font-size:0.80rem;">--</div>
+                        </div>
+                        <div class="metric-cell">
+                            <div class="m-lbl" style="color:var(--neon-amber);">Sell-Side Liquidity (SSL Pool)</div>
+                            <div class="m-val yellow" id="valSslLiq" style="font-size:0.80rem;">--</div>
+                        </div>
+                        <div class="metric-cell" style="grid-column: span 2;">
+                            <div class="m-lbl">Institutional Triggers & Bias</div>
+                            <div class="m-val cyan" id="valStrategies"
+                                style="font-size:0.75rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                                --</div>
+                        </div>
+                        <div class="metric-cell" style="grid-column: span 2;">
+                            <div class="m-lbl">Stop Loss & Target Potential</div>
+                            <div class="m-val yellow" id="valTargets" style="font-size:0.78rem;">--</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- NSE India Institutional Flow & Large Deals HUD -->
+                <div
+                    style="background:rgba(255,255,255,0.02); border:1px solid rgba(0,240,255,0.25); border-radius:6px; padding:8px 12px; margin-bottom:12px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                        <span
+                            style="font-family:'Inter', sans-serif; font-size:0.75rem; font-weight:bold; color:var(--neon-cyan); display:flex; align-items:center; gap:6px;">
+                            🏛️ NSE INDIA INSTITUTIONAL ORDER FLOW (FII / DII & LARGE DEALS)
+                        </span>
+                        <span style="font-family:'JetBrains Mono', monospace; font-size:0.65rem; color:#94a3b8;"
+                            id="nseSyncTime">SYNCING NSE...</span>
+                    </div>
+                    <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:8px;">
+                        <div
+                            style="background:rgba(0,0,0,0.3); padding:6px 10px; border-radius:4px; border-left:3px solid var(--neon-cyan);">
+                            <div style="font-size:0.62rem; color:var(--text-muted); text-transform:uppercase;">FII / FPI
+                                Net Flow</div>
+                            <div style="font-size:0.85rem; font-weight:800;" id="nseFiiVal">--</div>
+                        </div>
+                        <div
+                            style="background:rgba(0,0,0,0.3); padding:6px 10px; border-radius:4px; border-left:3px solid var(--neon-amber);">
+                            <div style="font-size:0.62rem; color:var(--text-muted); text-transform:uppercase;">DII Net
+                                Flow</div>
+                            <div style="font-size:0.85rem; font-weight:800;" id="nseDiiVal">--</div>
+                        </div>
+                        <div
+                            style="background:rgba(0,0,0,0.3); padding:6px 10px; border-radius:4px; border-left:3px solid var(--neon-green);">
+                            <div style="font-size:0.62rem; color:var(--text-muted); text-transform:uppercase;">
+                                Institutional Market Bias</div>
+                            <div style="font-size:0.85rem; font-weight:800;" id="nseBiasVal">--</div>
+                        </div>
+                    </div>
+                    <div id="nseLargeDealsRow"
+                        style="margin-top:6px; font-size:0.68rem; color:#cbd5e1; display:flex; align-items:center; gap:8px;">
+                        <span style="color:var(--neon-cyan); font-weight:bold;">📦 Active Stock Large Deals:</span>
+                        <span id="nseStockDealsText" style="color:#94a3b8;">Scanning NSE block/bulk records...</span>
+                    </div>
+                </div>
+
+                <!-- Live Stock News Catalyst Bar -->
+                <div
+                    style="background:rgba(255,255,255,0.02); border:1px solid rgba(255,170,0,0.3); border-radius:6px; padding:6px 12px; margin-bottom:12px; display:flex; align-items:center; justify-content:space-between; gap:10px;">
+                    <div style="display:flex; align-items:center; gap:8px; min-width:180px;">
+                        <span style="font-size:0.85rem;">📰</span>
+                        <span
+                            style="font-size:0.68rem; font-weight:bold; color:var(--neon-amber); text-transform:uppercase;">CATALYST
+                            NEWS:</span>
+                        <span id="activeNewsStock" style="font-size:0.75rem; font-weight:800; color:#fff;">--</span>
+                    </div>
+                    <div id="activeStockNewsHeadline"
+                        style="font-size:0.72rem; color:#cbd5e1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex-grow:1;">
+                        Fetching dynamic company headlines...
+                    </div>
+                    <span id="activeNewsSentiment"
+                        style="font-size:0.62rem; padding:1px 6px; border-radius:3px; background:rgba(255,255,255,0.06); font-weight:bold; color:#94a3b8;">SCANNING</span>
+                </div>
+
+                <!-- Focused Two-Stage Trade Selection: PREPARING (Max 5) vs ENTRY-READY (Max 2) -->
+                <div id="rankedOpportunitiesSection">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                        <span
+                            style="font-family:'Inter', sans-serif; font-size:0.75rem; font-weight:bold; color:var(--text-primary); display:flex; align-items:center; gap:6px;">
+                            🎯 FOCUSED TRADE SELECTION (5-MIN DISCOVERY & EXECUTION)
+                            <span id="scannerLivePulse"
+                                style="font-size:0.60rem; color:var(--neon-green); background:rgba(0,255,170,0.12); border:1px solid var(--neon-green); padding:1px 6px; border-radius:3px; animation:pulseRing 1.5s infinite;">●
+                                219 F&O LIVE SCAN</span>
+                        </span>
+                        <span
+                            style="font-family:'JetBrains Mono', monospace; font-size:0.65rem; color:var(--neon-cyan);"
+                            id="rankSyncTime">SYNCING...</span>
+                    </div>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                        <div id="rankedPreparingSection" style="display:flex; flex-direction:column; gap:6px;">
+                            <div
+                                style="font-family:'Inter', sans-serif; font-size:0.68rem; font-weight:bold; color:var(--neon-amber); border-bottom:1px solid rgba(255,170,0,0.3); padding-bottom:3px; display:flex; justify-content:space-between;">
+                                <span>⚡ PREPARING (MAX 5) — PRE-BREAKOUT / COIL</span>
+                                <span style="font-size:0.6rem; color:#94a3b8;">BEFORE THE MOVE</span>
+                            </div>
+                            <div id="rankedPreparingList" style="display:flex; flex-direction:column; gap:6px;">
+                                <div style="font-size:0.7rem; color:var(--text-muted); padding:6px 0;">Scanning 219 F&O
+                                    for NR4/NR7 and volume coils...</div>
+                            </div>
+                        </div>
+                        <div id="rankedEntryReadySection" style="display:flex; flex-direction:column; gap:6px;">
+                            <div
+                                style="font-family:'Inter', sans-serif; font-size:0.68rem; font-weight:bold; color:var(--neon-green); border-bottom:1px solid rgba(0,255,170,0.3); padding-bottom:3px; display:flex; justify-content:space-between;">
+                                <span>🔥 ENTRY READY (MAX 2) — CONFIRMED 5M</span>
+                                <span style="font-size:0.6rem; color:#94a3b8;">5-MIN CANDLE CONFIRMED</span>
+                            </div>
+                            <div id="rankedEntryReadyList" style="display:flex; flex-direction:column; gap:6px;">
+                                <div style="font-size:0.7rem; color:var(--text-muted); padding:6px 0;">No 5-min
+                                    confirmed setups right now. Waiting for trigger.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Live Stream Terminal Console & Trades Journal -->
+                <div
+                    style="margin-top:8px; border:1px solid rgba(255,255,255,0.08); border-radius:6px; background:rgba(2,6,18,0.85); overflow:hidden; flex-shrink:0;">
+                    <div
+                        style="display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.03); border-bottom:1px solid rgba(255,255,255,0.06); padding:4px 10px;">
+                        <div style="display:flex; gap:6px;">
+                            <button id="tabBtnStream" class="btn-action active-tab" onclick="switchConsoleTab('stream')"
+                                style="padding:4px 10px; font-size:0.68rem; font-weight:bold; border-radius:4px; background:rgba(0,240,255,0.15); border:1px solid var(--neon-cyan); color:var(--neon-cyan);">⚡
+                                AI ACTIVITY STREAM</button>
+                            <button id="tabBtnActive" class="btn-action" onclick="switchConsoleTab('active')"
+                                style="padding:4px 10px; font-size:0.68rem; font-weight:bold; border-radius:4px; background:transparent; border:1px solid rgba(255,255,255,0.1); color:#94a3b8;">🟢
+                                ACTIVE TRADES (<span id="tabActiveCount">0</span>)</button>
+                            <button id="tabBtnClosed" class="btn-action" onclick="switchConsoleTab('closed')"
+                                style="padding:4px 10px; font-size:0.68rem; font-weight:bold; border-radius:4px; background:transparent; border:1px solid rgba(255,255,255,0.1); color:#94a3b8;">📚
+                                CLOSED TRADES & LEARNING (<span id="tabClosedCount">0</span>)</button>
+                        </div>
+                        <button class="btn-action" onclick="clearLogs()" id="purgeLogBtn"
+                            style="padding:3px 8px; font-size:0.62rem;">PURGE LOG</button>
+                    </div>
+
+                    <!-- Tab 1: AI Activity Stream -->
+                    <div id="tabContentStream">
+                        <div class="terminal-feed" id="terminalFeed" style="max-height:220px; overflow-y:auto;"></div>
+                    </div>
+
+                    <!-- Tab 2: Active Trades Window -->
+                    <div id="tabContentActive"
+                        style="display:none; padding:8px 10px; max-height:280px; overflow-y:auto;">
+                        <div id="activeTradesList" style="display:flex; flex-direction:column; gap:6px;">
+                            <div style="font-size:0.72rem; color:var(--text-muted); text-align:center; padding:15px;">No
+                                active trades open.</div>
+                        </div>
+                    </div>
+
+                    <!-- Tab 3: Closed Trades & AI Learning Journal -->
+                    <div id="tabContentClosed"
+                        style="display:none; padding:10px 12px; max-height:300px; overflow-y:auto; background:rgba(3,7,18,0.95);">
+                        <div id="closedTradesList"
+                            style="display:flex; flex-direction:column; gap:8px; padding-bottom:8px;">
+                            <div style="font-size:0.75rem; color:#94a3b8; text-align:center; padding:16px;">Loading
+                                closed trades & learning data...</div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- Column 3: Top Bearish F&O Momentum Movers (Filtered from 219 F&O) -->
+        <div class="panel" id="bearishPanel">
+            <div class="panel-header">
+                <span class="red" style="display:flex; align-items:center; gap:6px;">
+                    <span style="font-size:0.9rem;">▼</span> BEARISH F&O MOVERS
+                </span>
+                <span style="font-size:0.65rem; color:var(--text-muted);">PUT / SHORT FLOW</span>
+            </div>
+            <div class="panel-body" id="bearishSectors"
+                style="display:flex; flex-direction:column; gap:9px; overflow-y:auto; max-height:calc(100vh - 120px); padding:10px 8px;">
+                <div style="font-size:0.72rem; color:var(--text-muted); text-align:center; margin-top:30px;">
+                    Filtering 219 F&O stocks for active Put/Bear momentum...
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Client Logic & 3D WebGL Command Center Scripts -->
+    <script>
+        let currentSectorName = "";
+        let currentStockSymbol = "";
+        let userSelectedStock = null;
+        let sectorsDict = {};
+        let activeWatchlist = [];
+        let watchlistIndex = 0;
+        let sectorCountdown = 300;
+        let activeConfirmedTrades = {};
+        try {
+            // Restore active confirmed trades from localStorage if they have valid numeric attributes
+            const saved = localStorage.getItem('activeConfirmedTrades');
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                const cleaned = {};
+                for (const [sym, t] of Object.entries(parsed)) {
+                    if (t && t.signal_id && typeof t.signal_id === 'number' && t.smc &&
+                        typeof t.smc.entry_price === 'number' && isFinite(t.smc.entry_price) && t.smc.entry_price > 0) {
+                        cleaned[sym] = t;
+                    }
+                }
+                activeConfirmedTrades = cleaned;
+                localStorage.setItem('activeConfirmedTrades', JSON.stringify(activeConfirmedTrades));
+            }
+        } catch (e) { }
+
+        // 3D Three.js Background HUD Grid & Starfield
+        function initThreeCanvas() {
+            const canvas = document.getElementById('threeCanvas');
+            const scene = new THREE.Scene();
+            const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 120;
+
+            const renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+            // Starfield Particle Geometry
+            const particleCount = 750;
+            const geometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(particleCount * 3);
+            const colors = new Float32Array(particleCount * 3);
+
+            for (let i = 0; i < particleCount * 3; i += 3) {
+                positions[i] = (Math.random() - 0.5) * 350;
+                positions[i + 1] = (Math.random() - 0.5) * 250;
+                positions[i + 2] = (Math.random() - 0.5) * 200;
+
+                // Cyan to Electric Blue to Emerald hues
+                const isCyan = Math.random() > 0.4;
+                colors[i] = isCyan ? 0.0 : 0.0;
+                colors[i + 1] = isCyan ? 0.94 : 0.6;
+                colors[i + 2] = 1.0;
+            }
+
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            const material = new THREE.PointsMaterial({
+                size: 2.2,
+                vertexColors: true,
+                transparent: true,
+                opacity: 0.8
+            });
+
+            const particles = new THREE.Points(geometry, material);
+            scene.add(particles);
+
+            // Cyber Network Neural Data Flow Wires
+            const wireGeo = new THREE.BufferGeometry();
+            const wirePos = [];
+            for (let i = 0; i < 40; i++) {
+                const idx1 = Math.floor(Math.random() * particleCount) * 3;
+                const idx2 = Math.floor(Math.random() * particleCount) * 3;
+                wirePos.push(positions[idx1], positions[idx1 + 1], positions[idx1 + 2]);
+                wirePos.push(positions[idx2], positions[idx2 + 1], positions[idx2 + 2]);
+            }
+            wireGeo.setAttribute('position', new THREE.Float32BufferAttribute(wirePos, 3));
+            const wireMat = new THREE.LineBasicMaterial({ color: 0x00f0ff, transparent: true, opacity: 0.16, linewidth: 1 });
+            const wires = new THREE.LineSegments(wireGeo, wireMat);
+            scene.add(wires);
+
+            // Rotating Holographic Radar Ring in background
+            const ringGeo = new THREE.RingGeometry(45, 46, 64);
+            const ringMat = new THREE.MeshBasicMaterial({ color: 0x00f0ff, side: THREE.DoubleSide, transparent: true, opacity: 0.15 });
+            const radarRing = new THREE.Mesh(ringGeo, ringMat);
+            radarRing.position.set(0, 0, -20);
+            scene.add(radarRing);
+
+            function animate() {
+                requestAnimationFrame(animate);
+                particles.rotation.y += 0.0006;
+                particles.rotation.x += 0.0003;
+                radarRing.rotation.z += 0.003;
+
+                // Keep camera locked still - zero screen movement on mouse hover
+                camera.lookAt(scene.position);
+
+                renderer.render(scene, camera);
+            }
+            animate();
+        }
+
+        // Static Stable Layout: Zero panel tilting on mouse move
+        function setup3DTilt() {
+            // Screen remains perfectly still on mouse hover
+        }
+
+        function log(msg, type = 'INFO') {
+            const feed = document.getElementById('terminalFeed');
+            const time = new Date().toLocaleTimeString();
+            const div = document.createElement('div');
+            div.className = 'feed-line';
+
+            let col = '#00f0ff';
+            if (type === 'SUCCESS') col = '#00ffaa';
+            if (type === 'WARN') col = '#ffaa00';
+            if (type === 'ENTRY') col = '#00ffaa';
+            if (type === 'NO_ENTRY') col = '#64748b';
+
+            div.innerHTML = `<span style="color:#64748b; margin-right:6px;">[${time}]</span><span style="color:${col}; font-weight:bold; margin-right:6px;">[${type}]</span>${msg}`;
+            feed.appendChild(div);
+            feed.scrollTop = feed.scrollHeight;
+        }
+
+        function switchConsoleTab(tab) {
+            const btnStream = document.getElementById('tabBtnStream');
+            const btnActive = document.getElementById('tabBtnActive');
+            const btnClosed = document.getElementById('tabBtnClosed');
+            const contentStream = document.getElementById('tabContentStream');
+            const contentActive = document.getElementById('tabContentActive');
+            const contentClosed = document.getElementById('tabContentClosed');
+            const purgeBtn = document.getElementById('purgeLogBtn');
+
+            [btnStream, btnActive, btnClosed].forEach(b => {
+                b.style.background = 'transparent';
+                b.style.borderColor = 'rgba(255,255,255,0.1)';
+                b.style.color = '#94a3b8';
+            });
+            contentStream.style.display = 'none';
+            contentActive.style.display = 'none';
+            contentClosed.style.display = 'none';
+
+            if (tab === 'stream') {
+                btnStream.style.background = 'rgba(0,240,255,0.15)';
+                btnStream.style.borderColor = 'var(--neon-cyan)';
+                btnStream.style.color = 'var(--neon-cyan)';
+                contentStream.style.display = 'block';
+                if (purgeBtn) purgeBtn.style.display = 'block';
+            } else if (tab === 'active') {
+                btnActive.style.background = 'rgba(0,255,170,0.15)';
+                btnActive.style.borderColor = 'var(--neon-green)';
+                btnActive.style.color = 'var(--neon-green)';
+                contentActive.style.display = 'block';
+                if (purgeBtn) purgeBtn.style.display = 'none';
+                renderActiveTradesWindow();
+            } else if (tab === 'closed') {
+                btnClosed.style.background = 'rgba(255,170,0,0.15)';
+                btnClosed.style.borderColor = 'var(--neon-amber)';
+                btnClosed.style.color = 'var(--neon-amber)';
+                contentClosed.style.display = 'block';
+                if (purgeBtn) purgeBtn.style.display = 'none';
+                loadClosedTradesJournal();
+            }
+        }
+
+        function renderActiveTradesWindow() {
+            const listEl = document.getElementById('activeTradesList');
+            const countEl = document.getElementById('tabActiveCount');
+            if (!listEl) return;
+            const trades = Object.values(activeConfirmedTrades);
+            if (countEl) countEl.innerText = trades.length;
+
+            if (trades.length === 0) {
+                listEl.innerHTML = '<div style="font-size:0.72rem; color:var(--text-muted); text-align:center; padding:15px;">No active trades in progress. Scanning universe for high-confluence setups...</div>';
+                return;
+            }
+
+            let html = '';
+            trades.forEach(t => {
+                const s = t.symbol;
+                const smc = t.smc;
+                const isBuy = smc.action && smc.action.includes('BUY');
+                const col = isBuy ? 'var(--neon-green)' : 'var(--neon-red)';
+                const ep = Number(smc.entry_price || smc.current_price || 0).toFixed(1);
+                const lp = Number(smc.live_price || smc.current_price || ep).toFixed(1);
+                const sl = smc.suggested_sl || '--';
+                const tp1 = smc.suggested_tp1 || '--';
+
+                let pnlPct = 0;
+                if (ep > 0) {
+                    pnlPct = isBuy ? ((lp - ep) / ep * 100) : ((ep - lp) / ep * 100);
+                }
+                const pnlSign = pnlPct >= 0 ? '+' : '';
+                const pnlCol = pnlPct >= 0 ? 'var(--neon-green)' : 'var(--neon-red)';
+
+                html += `
+                <div style="background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.06); border-left:3px solid ${col}; border-radius:4px; padding:6px 10px; display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <span style="font-weight:bold; color:#fff; font-size:0.75rem;">${s.replace('.NS', '')}</span>
+                        <span style="font-size:0.65rem; color:${col}; background:rgba(255,255,255,0.06); padding:1px 5px; border-radius:3px; margin-left:6px; font-weight:bold;">${isBuy ? 'BUY / CALL' : 'SELL / PUT'}</span>
+                        <span style="font-size:0.68rem; color:#94a3b8; margin-left:8px;">Entry: ₹${ep} | SL: <b style="color:var(--neon-amber);">₹${sl}</b> | TP: <b style="color:var(--neon-cyan);">₹${tp1}</b></span>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span style="font-size:0.80rem; font-weight:bold; color:#fff;">₹${lp}</span>
+                        <span style="font-size:0.72rem; font-weight:800; color:${pnlCol};">${pnlSign}${pnlPct.toFixed(2)}%</span>
+                        <button onclick="closeTrade('${s}', ${t.signal_id || 'null'}, ${lp})" style="background:rgba(255,51,102,0.15); border:1px solid rgba(255,51,102,0.4); color:var(--neon-red); cursor:pointer; padding:1px 6px; border-radius:3px; font-weight:bold; font-size:0.68rem;" title="Close trade">✕ Close</button>
+                    </div>
+                </div>`;
+            });
+            listEl.innerHTML = html;
+        }
+
+        async function loadClosedTradesJournal() {
+            const listEl = document.getElementById('closedTradesList');
+            const countEl = document.getElementById('tabClosedCount');
+            if (!listEl) return;
+
+            try {
+                const res = await fetch('/api/signals/recent');
+                const data = await res.json();
+                if (data.success && data.signals) {
+                    const closed = data.signals.filter(s => s.outcome && s.outcome !== 'ACTIVE');
+                    if (countEl) countEl.innerText = closed.length;
+
+                    if (closed.length === 0) {
+                        listEl.innerHTML = '<div style="font-size:0.72rem; color:var(--text-muted); text-align:center; padding:15px;">No closed trades logged yet. AI Strategy weights will calibrate after trade outcomes.</div>';
+                        return;
+                    }
+
+                    let html = '';
+                    closed.slice(0, 15).forEach(c => {
+                        const isWin = c.outcome.includes('WIN');
+                        const isLoss = c.outcome === 'LOSS';
+                        const isEod = c.outcome.includes('EOD') || c.outcome.includes('STALE');
+
+                        let tagBg = isWin ? 'rgba(16,185,129,0.18)' : (isLoss ? 'rgba(239,68,68,0.18)' : 'rgba(245,158,11,0.18)');
+                        let tagCol = isWin ? '#34d399' : (isLoss ? '#f87171' : '#fbbf24');
+                        let tagBorder = isWin ? '#059669' : (isLoss ? '#dc2626' : '#d97706');
+                        let tagLabel = isWin ? 'WIN / TARGET HIT' : (isLoss ? 'LOSS / STOP HIT' : 'CLOSED / EOD CHOP');
+                        let learnNote = isWin ? 'Strategy Weight Boosted (+Alpha)' : (isLoss ? 'Stop Loss Analysed: Down-weighted Strategy' : 'Sideways Filter Calibrated');
+
+                        const pnl = Number(c.net_pnl || c.final_pnl || 0).toFixed(1);
+                        const pnlSign = Number(pnl) >= 0 ? '+' : '';
+                        const pnlCol = Number(pnl) >= 0 ? '#34d399' : '#f87171';
+                        const cardBg = isWin ? 'rgba(16,185,129,0.06)' : (isLoss ? 'rgba(239,68,68,0.06)' : 'rgba(255,255,255,0.04)');
+                        const cardBorder = isWin ? 'rgba(16,185,129,0.25)' : (isLoss ? 'rgba(239,68,68,0.25)' : 'rgba(255,255,255,0.12)');
+
+                        html += `
+                        <div style="background:${cardBg}; border:1px solid ${cardBorder}; border-radius:6px; padding:8px 12px; display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:4px; flex-shrink:0;">
+                            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; flex:1; min-width:0;">
+                                <span style="font-weight:800; color:#f8fafc; font-size:0.80rem; letter-spacing:0.5px;">${c.symbol.replace('.NS', '')}</span>
+                                <span style="font-size:0.65rem; color:${tagCol}; border:1px solid ${tagBorder}; background:${tagBg}; padding:2px 7px; border-radius:4px; font-weight:800; letter-spacing:0.3px; white-space:nowrap;">${tagLabel}</span>
+                                <span style="font-size:0.68rem; color:#cbd5e1; font-weight:700; background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:3px; white-space:nowrap;">${c.strategy || 'SMC'}</span>
+                                <span style="font-size:0.66rem; color:#38bdf8; background:rgba(14,165,233,0.15); border:1px solid rgba(56,189,248,0.3); padding:2px 7px; border-radius:4px; font-weight:600; white-space:nowrap;">AI: ${learnNote}</span>
+                            </div>
+                            <div style="font-size:0.85rem; font-weight:800; color:${pnlCol}; white-space:nowrap; padding-left:10px; flex-shrink:0; font-family:'Roboto Mono', monospace;">
+                                ${pnlSign}₹${pnl}
+                            </div>
+                        </div>`;
+                    });
+                    listEl.innerHTML = html;
+                }
+            } catch (e) { }
+        }
+
+        function clearLogs() {
+            document.getElementById('terminalFeed').innerHTML = '';
+        }
+
+        // Sci-Fi Oscillating Order Flow Sine Waves & Flowing Liquidity Packets
+        function initOrderFlowVisualizer() {
+            const canvas = document.getElementById('orderFlowCanvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+
+            function resize() {
+                const rect = canvas.parentElement ? canvas.parentElement.getBoundingClientRect() : null;
+                const parentW = (rect && rect.width > 0) ? rect.width : (canvas.parentElement ? canvas.parentElement.clientWidth : 0);
+                const parentH = (rect && rect.height > 0) ? rect.height : (canvas.parentElement ? canvas.parentElement.clientHeight : 0);
+                canvas.width = Math.max(parentW || 0, 400);
+                canvas.height = Math.max(parentH || 0, 60);
+            }
+            resize();
+            window.addEventListener('resize', resize);
+            setTimeout(resize, 200);
+            setTimeout(resize, 1000);
+
+            let step = 0;
+            const packets = [];
+            for (let i = 0; i < 16; i++) {
+                packets.push({
+                    x: Math.random() * 800,
+                    y: 30,
+                    speed: 1.5 + Math.random() * 2.5,
+                    size: 2 + Math.random() * 2.5,
+                    color: Math.random() > 0.4 ? '#00f0ff' : '#00ffaa'
+                });
+            }
+
+            function draw() {
+                requestAnimationFrame(draw);
+                const w = canvas.width;
+                const h = canvas.height;
+                ctx.clearRect(0, 0, w, h);
+
+                step += 0.04;
+
+                // 1. Draw glowing oscillating sine wave 1 (Institutional Order Flow Delta)
+                ctx.beginPath();
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = 'rgba(0, 240, 255, 0.7)';
+                ctx.shadowColor = '#00f0ff';
+                ctx.shadowBlur = 8;
+
+                for (let x = 0; x < w; x += 3) {
+                    const y = (h / 2) + Math.sin((x * 0.02) + step) * 14 + Math.sin((x * 0.01) - step * 0.5) * 6;
+                    if (x === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
+                ctx.stroke();
+
+                // 2. Draw glowing oscillating sine wave 2 (Liquidity Sweep Velocity)
+                ctx.beginPath();
+                ctx.lineWidth = 1.5;
+                ctx.strokeStyle = 'rgba(0, 255, 170, 0.5)';
+                ctx.shadowColor = '#00ffaa';
+                ctx.shadowBlur = 6;
+
+                for (let x = 0; x < w; x += 4) {
+                    const y = (h / 2) + Math.cos((x * 0.015) - step * 1.2) * 16;
+                    if (x === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
+                ctx.stroke();
+
+                // 3. Draw moving order flow data packets along the wave
+                ctx.shadowBlur = 10;
+                for (let i = 0; i < packets.length; i++) {
+                    const p = packets[i];
+                    p.x += p.speed;
+                    if (p.x > w) p.x = 0;
+                    const py = (h / 2) + Math.sin((p.x * 0.02) + step) * 14;
+
+                    ctx.fillStyle = p.color;
+                    ctx.shadowColor = p.color;
+                    ctx.beginPath();
+                    ctx.arc(p.x, py, p.size, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+            draw();
+        }
+
+        async function init() {
+            renderConfirmedBanner();
+            initThreeCanvas();
+            initOrderFlowVisualizer();
+            setup3DTilt();
+            log('NEURAL AI CORE INITIALIZED: Groww Engine Real-Time Handshake active...', 'SUCCESS');
+
+            try {
+                const res = await fetch('/api/status');
+                const d = await res.json();
+                if (d.fno_count) {
+                    const scannedCount = d.fno_scanned || 30;
+                    document.getElementById('fnoBadge').innerText = `FNO Universe: ${d.fno_count} (${scannedCount} Active Scanned)`;
+                    const pulse = document.getElementById('scannerLivePulse');
+                    if (pulse) {
+                        pulse.innerText = `● ${d.fno_count} F&O LIVE (${scannedCount} Evaluated)`;
+                    }
+                }
+                if (d.market_status) {
+                    const mb = document.getElementById('mktBadge');
+                    mb.innerText = d.market_status;
+                    if (d.is_market_open) {
+                        mb.style.color = 'var(--neon-green)';
+                        mb.style.borderColor = 'var(--neon-green)';
+                    } else {
+                        mb.style.color = 'var(--neon-amber)';
+                        mb.style.borderColor = 'var(--neon-amber)';
+                        // Intraday Session Closed: Automatically clear trades if day has ended and market is closed
+                        if (d.market_status.includes('CLOSED')) {
+                            // Check if signals in database are active, else clear banner
+                            syncActiveTradeBanner();
+                        }
+                    }
+                }
+            } catch (e) { }
+
+            await loadDynamicTopSectors();
+
+            // Sector 5-minute countdown timer
+            setInterval(() => {
+                sectorCountdown--;
+                if (sectorCountdown <= 0) {
+                    sectorCountdown = 300;
+                    log('5-MINUTE INTERVAL HIT: Re-evaluating Sector Rankings & Momentum...', 'INFO');
+                    loadDynamicTopSectors();
+                }
+                const m = Math.floor(sectorCountdown / 60).toString().padStart(2, '0');
+                const s = (sectorCountdown % 60).toString().padStart(2, '0');
+                document.getElementById('timerBadge').innerText = `Next Sector Scan: ${m}:${s}`;
+            }, 1000);
+
+            // Continuous stock cycling scanner
+            setInterval(cycleStockScan, 8000);
+
+            // Sync active banner status with SQLite outcome database every 15 seconds
+            setInterval(syncActiveTradeBanner, 15000);
+
+            // Fetch and render active confirmed trades from database immediately so refresh never loses them
+            await syncActiveTradeBanner();
+            setInterval(syncActiveTradeBanner, 10000);
+
+            // Fetch and render Top 3 Bullish & Bearish Ranked Opportunities every 15 seconds
+            await loadRankedOpportunities();
+            setInterval(loadRankedOpportunities, 15000);
+
+            // Fetch and render Dedicated Continuous Tracker & Adaptive Learning diagnostics every 10 seconds
+            await loadTrackerAndLearningDiagnostics();
+            setInterval(loadTrackerAndLearningDiagnostics, 10000);
+
+            // Fetch and render official NSE India Institutional Data every 30 seconds
+            await loadNSEInstitutionalData();
+            setInterval(loadNSEInstitutionalData, 30000);
+        }
+
+        async function loadNSEInstitutionalData(stockSymbol) {
+            try {
+                const sym = stockSymbol || currentStockSymbol || '';
+                const res = await fetch(`/api/nse/institutional?symbol=${encodeURIComponent(sym)}`);
+                const data = await res.json();
+                if (data.success) {
+                    const bias = data.bias || {};
+                    const fii = bias.fii_net || 0;
+                    const dii = bias.dii_net || 0;
+                    const fiiEl = document.getElementById('nseFiiVal');
+                    const diiEl = document.getElementById('nseDiiVal');
+                    const biasEl = document.getElementById('nseBiasVal');
+                    const syncEl = document.getElementById('nseSyncTime');
+                    const dealsEl = document.getElementById('nseStockDealsText');
+
+                    if (fiiEl) {
+                        fiiEl.innerText = `${fii >= 0 ? '+' : ''}₹${fii.toLocaleString()} Cr`;
+                        fiiEl.style.color = fii >= 0 ? 'var(--neon-green)' : 'var(--neon-red)';
+                    }
+                    if (diiEl) {
+                        diiEl.innerText = `${dii >= 0 ? '+' : ''}₹${dii.toLocaleString()} Cr`;
+                        diiEl.style.color = dii >= 0 ? 'var(--neon-green)' : 'var(--neon-red)';
+                    }
+                    if (biasEl) {
+                        const mBias = bias.market_inst_bias || 'NEUTRAL';
+                        biasEl.innerText = `${mBias} (${fii + dii >= 0 ? '+' : ''}₹${Math.round(fii + dii)} Cr)`;
+                        biasEl.style.color = mBias === 'BULLISH' ? 'var(--neon-green)' : (mBias === 'BEARISH' ? 'var(--neon-red)' : 'var(--neon-amber)');
+                    }
+                    if (syncEl) syncEl.innerText = 'SYNCED ' + new Date().toLocaleTimeString();
+
+                    if (dealsEl) {
+                        const deals = data.large_deals || [];
+                        if (deals.length > 0) {
+                            dealsEl.innerHTML = deals.slice(0, 3).map(d => {
+                                const isBuy = d.action === 'BUY';
+                                const col = isBuy ? 'var(--neon-green)' : 'var(--neon-red)';
+                                const qtyStr = Number(d.qty || 0).toLocaleString();
+                                const prcStr = Number(d.price || 0).toFixed(1);
+                                return `<span style="background:rgba(255,255,255,0.04); border:1px solid ${col}; padding:2px 8px; border-radius:4px; display:inline-flex; align-items:center; gap:5px;">
+                                    <b style="color:${col};">[${d.type || 'DEAL'} ${d.action}]</b> 
+                                    <span style="color:#fff;">${d.client || d.name || 'INSTITUTION'}</span> 
+                                    <span style="color:#94a3b8;">(${qtyStr} shs @ ₹${prcStr})</span>
+                                </span>`;
+                            }).join(' ');
+                        } else {
+                            dealsEl.innerHTML = `<span style="color:#94a3b8;">No block or bulk deals recorded today for ${sym.replace('.NS', '') || 'selected stock'}. Order flow from regular exchange book.</span>`;
+                        }
+                    }
+                }
+            } catch (e) { }
+        }
+
+        async function loadDynamicTopSectors() {
+            try {
+                // Fetch dynamic 219 F&O momentum movers (filtered out dead/sideways stocks)
+                const res = await fetch('/api/fno/momentum-watchlists');
+                const data = await res.json();
+                if (data.success && (data.bullish || data.bearish)) {
+                    renderFNOMomentumUI(data.bullish || [], data.bearish || []);
+                }
+            } catch (e) {
+                log('F&O Momentum query error: ' + e.message, 'WARN');
+            }
+        }
+
+        function renderFNOMomentumUI(bullList, bearList) {
+            const bullEl = document.getElementById('bullishSectors');
+            const bearEl = document.getElementById('bearishSectors');
+            if (!bullEl || !bearEl) return;
+            bullEl.innerHTML = '';
+            bearEl.innerHTML = '';
+
+            activeWatchlist = [];
+
+            if (bullList.length === 0) {
+                bullEl.innerHTML = '<div style="font-size:0.75rem; color:var(--text-muted); text-align:center; margin-top:20px;">Scanning 219 F&O for Call/Bull movers...</div>';
+            } else {
+                bullList.forEach((stk, idx) => {
+                    const sym = stk.symbol;
+                    activeWatchlist.push({ symbol: sym, bias: 'BULLISH' });
+                    const isSelected = (sym === currentStockSymbol);
+                    const card = document.createElement('div');
+                    card.className = `sector-card ${isSelected ? 'selected' : ''}`;
+                    card.dataset.symbol = sym;
+                    card.onclick = () => selectStock(sym);
+                    const changeVal = Number(stk.change || 0);
+                    const changeFormatted = (changeVal >= 0 ? '+' : '') + changeVal.toFixed(1) + '%';
+                    const momVolVal = Number(stk.velocity || stk.rvol || stk.vol_multiplier || 1.2).toFixed(1);
+                    card.innerHTML = `
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:7px; gap:8px;">
+                            <div style="display:flex; align-items:center; gap:6px; min-width:0; flex:1; overflow:hidden;">
+                                <span style="font-size:0.80rem; font-weight:700; color:#ffffff; letter-spacing:0.3px; white-space:nowrap; flex-shrink:0;">#${idx + 1} ${sym.replace('.NS', '')}</span>
+                                <span class="entry-call-badge">⚡ BUY</span>
+                                <span class="active-radar-badge">RADAR</span>
+                            </div>
+                            <span style="color:#10b981; font-size:0.75rem; font-weight:700; font-family:'JetBrains Mono', monospace; background:rgba(16,185,129,0.12); padding:2px 7px; border-radius:4px; border:1px solid rgba(16,185,129,0.35); white-space:nowrap; flex-shrink:0;">${changeFormatted}</span>
+                        </div>
+                        <div style="font-size:0.68rem; color:#94a3b8; display:flex; justify-content:space-between; align-items:center;">
+                            <span style="display:flex; align-items:center; gap:4px;">Mom Vol: <b style="color:#38bdf8; font-family:'JetBrains Mono', monospace; font-size:0.72rem; font-weight:700;">${momVolVal}x</b></span>
+                            <span style="color:#10b981; font-weight:700; font-size:0.62rem; background:rgba(16,185,129,0.1); padding:2px 6px; border-radius:3px; letter-spacing:0.3px; white-space:nowrap;">CALL / BULL</span>
+                        </div>
+                    `;
+                    const cachedNews = stockNewsCache[sym.replace('.NS', '').toUpperCase()];
+                    if (cachedNews && cachedNews.articles && cachedNews.articles.length > 0) {
+                        const isBreaking = cachedNews.articles.some(a => (a.sentiment === 'BULLISH' || a.sentiment === 'BEARISH'));
+                        if (isBreaking) {
+                            card.classList.add('has-breaking-news');
+                        } else {
+                            card.classList.add('has-news-catalyst');
+                        }
+                    }
+                    bullEl.appendChild(card);
+                });
+            }
+
+            if (bearList.length === 0) {
+                bearEl.innerHTML = '<div style="font-size:0.75rem; color:var(--text-muted); text-align:center; margin-top:20px;">Scanning 219 F&O for Put/Bear movers...</div>';
+            } else {
+                bearList.forEach((stk, idx) => {
+                    const sym = stk.symbol;
+                    activeWatchlist.push({ symbol: sym, bias: 'BEARISH' });
+                    const isSelected = (sym === currentStockSymbol);
+                    const card = document.createElement('div');
+                    card.className = `sector-card ${isSelected ? 'selected' : ''}`;
+                    card.dataset.symbol = sym;
+                    card.onclick = () => selectStock(sym);
+                    const changeVal = Number(stk.change || 0);
+                    const changeFormatted = (changeVal >= 0 ? '+' : '') + changeVal.toFixed(1) + '%';
+                    const momVolVal = Number(stk.velocity || stk.rvol || stk.vol_multiplier || 1.2).toFixed(1);
+                    card.innerHTML = `
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:7px; gap:8px;">
+                            <div style="display:flex; align-items:center; gap:6px; min-width:0; flex:1; overflow:hidden;">
+                                <span style="font-size:0.80rem; font-weight:700; color:#ffffff; letter-spacing:0.3px; white-space:nowrap; flex-shrink:0;">#${idx + 1} ${sym.replace('.NS', '')}</span>
+                                <span class="entry-put-badge">⚡ SELL</span>
+                                <span class="active-radar-badge">RADAR</span>
+                            </div>
+                            <span style="color:#ef4444; font-size:0.75rem; font-weight:700; font-family:'JetBrains Mono', monospace; background:rgba(239,68,68,0.12); padding:2px 7px; border-radius:4px; border:1px solid rgba(239,68,68,0.35); white-space:nowrap; flex-shrink:0;">${changeFormatted}</span>
+                        </div>
+                        <div style="font-size:0.68rem; color:#94a3b8; display:flex; justify-content:space-between; align-items:center;">
+                            <span style="display:flex; align-items:center; gap:4px;">Mom Vol: <b style="color:#f59e0b; font-family:'JetBrains Mono', monospace; font-size:0.72rem; font-weight:700;">${momVolVal}x</b></span>
+                            <span style="color:#ef4444; font-weight:700; font-size:0.62rem; background:rgba(239,68,68,0.1); padding:2px 6px; border-radius:3px; letter-spacing:0.3px; white-space:nowrap;">PUT / BEAR</span>
+                        </div>
+                    `;
+                    const cachedNews = stockNewsCache[sym.replace('.NS', '').toUpperCase()];
+                    if (cachedNews && cachedNews.articles && cachedNews.articles.length > 0) {
+                        const isBreaking = cachedNews.articles.some(a => (a.sentiment === 'BULLISH' || a.sentiment === 'BEARISH'));
+                        if (isBreaking) {
+                            card.classList.add('has-breaking-news');
+                        } else {
+                            card.classList.add('has-news-catalyst');
+                        }
+                    }
+                    bearEl.appendChild(card);
+                });
+            }
+
+            // Auto select top stock if none selected
+            if (!currentStockSymbol && activeWatchlist.length > 0) {
+                selectStock(activeWatchlist[0].symbol);
+            }
+        }
+
+        let stockNewsCache = {};
+        let stockNewsActiveTimer = null;
+        let stockNewsRequestId = 0;
+        let isUserManualSelection = false;
+
+        async function fetchStockNews(stockSymbol) {
+            if (!stockSymbol) return null;
+            const cleanSym = stockSymbol.replace('.NS', '').toUpperCase();
+            if (stockNewsCache[cleanSym] && stockNewsCache[cleanSym].fetchedAt && (Date.now() - stockNewsCache[cleanSym].fetchedAt < 60000)) {
+                return stockNewsCache[cleanSym];
+            }
+            try {
+                const res = await fetch(`/api/news/stock?symbol=${encodeURIComponent(cleanSym)}`);
+                const data = await res.json();
+                if (data.success && data.news && data.news.length > 0) {
+                    const isBreaking = data.news.some(a => a.sentiment === 'BULLISH' || a.sentiment === 'BEARISH');
+                    stockNewsCache[cleanSym] = {
+                        articles: data.news,
+                        index: 0,
+                        isBreaking: isBreaking,
+                        fetchedAt: Date.now()
+                    };
+                    updateCardNewsGlow(cleanSym, isBreaking, true);
+                    return stockNewsCache[cleanSym];
+                } else {
+                    delete stockNewsCache[cleanSym];
+                    updateCardNewsGlow(cleanSym, false, false);
+                    return null;
+                }
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function updateCardNewsGlow(cleanSym, isBreaking, hasNews) {
+            document.querySelectorAll('.sector-card').forEach(c => {
+                const cardSym = (c.dataset && c.dataset.symbol) ? c.dataset.symbol.replace('.NS', '').toUpperCase() : '';
+                if (cardSym === cleanSym) {
+                    if (hasNews) {
+                        if (isBreaking) {
+                            c.classList.remove('has-news-catalyst');
+                            c.classList.add('has-breaking-news');
+                        } else {
+                            c.classList.remove('has-breaking-news');
+                            c.classList.add('has-news-catalyst');
+                        }
+                    } else {
+                        c.classList.remove('has-news-catalyst');
+                        c.classList.remove('has-breaking-news');
+                    }
+                }
+            });
+        }
+
+        async function loadStockCatalystNews(stockSymbol) {
+            const sym = stockSymbol || currentStockSymbol;
+            if (!sym) return;
+            const cleanSym = sym.replace('.NS', '').toUpperCase();
+            document.getElementById('activeNewsStock').textContent = cleanSym;
+
+            // Clear old news rotation timer immediately when switching stocks
+            if (stockNewsActiveTimer) {
+                clearInterval(stockNewsActiveTimer);
+                stockNewsActiveTimer = null;
+            }
+
+            // Generate monotonic request ID to discard out-of-order stale responses
+            const thisReqId = ++stockNewsRequestId;
+
+            // If we have cached news, display immediately and start rotating
+            if (stockNewsCache[cleanSym] && stockNewsCache[cleanSym].articles && stockNewsCache[cleanSym].articles.length > 0) {
+                displayCurrentStockNews(cleanSym);
+                startNewsRotation(cleanSym);
+            }
+
+            try {
+                const newsData = await fetchStockNews(cleanSym);
+
+                // Discard stale out-of-order response if user already switched stocks
+                if (thisReqId !== stockNewsRequestId) return;
+                const currentClean = (currentStockSymbol || '').replace('.NS', '').toUpperCase();
+                if (currentClean !== cleanSym) return;
+
+                if (newsData && newsData.articles && newsData.articles.length > 0) {
+                    displayCurrentStockNews(cleanSym);
+                    startNewsRotation(cleanSym);
+                } else {
+                    const headlineEl = document.getElementById('activeStockNewsHeadline');
+                    const sentEl = document.getElementById('activeNewsSentiment');
+                    if (headlineEl) {
+                        headlineEl.textContent = `No major news headlines detected for ${cleanSym} today.`;
+                        headlineEl.title = '';
+                    }
+                    if (sentEl) {
+                        sentEl.textContent = 'STABLE';
+                        sentEl.style.color = '#94a3b8';
+                    }
+                }
+            } catch (e) {
+                if (thisReqId === stockNewsRequestId) {
+                    const headlineEl = document.getElementById('activeStockNewsHeadline');
+                    const sentEl = document.getElementById('activeNewsSentiment');
+                    if (headlineEl) headlineEl.textContent = `News feed unavailable for ${cleanSym}.`;
+                    if (sentEl) {
+                        sentEl.textContent = 'ERROR';
+                        sentEl.style.color = '#94a3b8';
+                    }
+                }
+            }
+        }
+
+        function startNewsRotation(cleanSym) {
+            if (stockNewsActiveTimer) {
+                clearInterval(stockNewsActiveTimer);
+                stockNewsActiveTimer = null;
+            }
+            const cached = stockNewsCache[cleanSym];
+            if (cached && cached.articles && cached.articles.length > 1) {
+                stockNewsActiveTimer = setInterval(() => {
+                    const nowCurrent = (currentStockSymbol || '').replace('.NS', '').toUpperCase();
+                    if (nowCurrent === cleanSym && stockNewsCache[cleanSym]) {
+                        const state = stockNewsCache[cleanSym];
+                        if (state.articles.length > 1) {
+                            state.index = (state.index + 1) % state.articles.length;
+                            displayCurrentStockNews(cleanSym);
+                        }
+                    }
+                }, 4500);
+            }
+        }
+
+        function displayCurrentStockNews(cleanSym) {
+            const state = stockNewsCache[cleanSym];
+            if (!state || !state.articles || state.articles.length === 0) return;
+            const item = state.articles[state.index % state.articles.length];
+            const headlineEl = document.getElementById('activeStockNewsHeadline');
+            const sentEl = document.getElementById('activeNewsSentiment');
+            if (headlineEl) {
+                // Safe DOM creation using textContent to prevent XSS from external news titles
+                headlineEl.textContent = '';
+                if (state.articles.length > 1) {
+                    const counterSpan = document.createElement('span');
+                    counterSpan.style.color = '#00f0ff';
+                    counterSpan.style.fontWeight = '700';
+                    counterSpan.style.marginRight = '6px';
+                    counterSpan.textContent = `[${(state.index % state.articles.length) + 1}/${state.articles.length}]`;
+                    headlineEl.appendChild(counterSpan);
+                }
+                const titleNode = document.createTextNode(item.title || '');
+                headlineEl.appendChild(titleNode);
+                headlineEl.title = item.title || '';
+            }
+            if (sentEl) {
+                const s = item.sentiment || 'NEUTRAL';
+                sentEl.textContent = s;
+                sentEl.style.color = s === 'BULLISH' ? 'var(--neon-green)' : (s === 'BEARISH' ? 'var(--neon-red)' : '#94a3b8');
+            }
+        }
+
+        function selectSector(name) {
+            currentSectorName = name;
+            const sec = sectorsDict[name];
+            if (sec) {
+                document.getElementById('selectedSectorTitle').innerText = `${name} (${sec.is_bullish ? '+' : ''}${sec.change.toFixed(2)}%)`;
+                document.getElementById('activeSectorSweepText').innerText = `ANALYZING: ${name} [${sec.is_bullish ? '+' : ''}${sec.change.toFixed(2)}%]`;
+
+                document.querySelectorAll('.sector-card').forEach(c => c.classList.remove('selected'));
+                renderStockChips();
+                const stocks = sec.top_5 || sec.top_5_stocks || [];
+                if (stocks.length > 0) {
+                    userSelectedStock = stocks[0].symbol;
+                    selectStock(stocks[0].symbol);
+                }
+            }
+        }
+
+        function renderStockChips() {
+            const bar = document.getElementById('stockChipsBar');
+            bar.innerHTML = '';
+            const sec = sectorsDict[currentSectorName];
+            if (!sec) return;
+
+            const stocks = sec.top_5 || sec.top_5_stocks || [];
+            stocks.forEach(stk => {
+                const chip = document.createElement('div');
+                chip.id = 'chip_' + stk.symbol.replace('.NS', '');
+                chip.className = `stock-chip ${stk.symbol === currentStockSymbol ? 'active' : ''}`;
+                chip.innerText = `${stk.symbol.replace('.NS', '')} (${stk.change >= 0 ? '+' : ''}${stk.change.toFixed(1)}%)`;
+                chip.onclick = () => {
+                    userSelectedStock = stk.symbol;
+                    selectStock(stk.symbol);
+                };
+                bar.appendChild(chip);
+            });
+        }
+
+        function selectStock(stk, isManual = true) {
+            // If user clicks the currently selected stock again, toggle off manual lock and resume auto scan
+            if (isManual && isUserManualSelection && currentStockSymbol === stk) {
+                isUserManualSelection = false;
+                userSelectedStock = null;
+                document.querySelectorAll('.sector-card').forEach(c => c.classList.remove('selected'));
+                log(`[AUTONOMOUS SCAN RESUMED] Manual lock released on ${stk.replace('.NS', '')}. Auto cycle active.`, 'INFO');
+                return;
+            }
+
+            currentStockSymbol = stk;
+            if (isManual) {
+                userSelectedStock = stk;
+                isUserManualSelection = true;
+            }
+            document.getElementById('radarStockTitle').innerText = stk;
+
+            // Find which sector this stock belongs to from sectorsDict
+            let foundSector = null;
+            let foundSecData = null;
+            for (const [sName, sData] of Object.entries(sectorsDict)) {
+                const stks = sData.top_5 || sData.top_5_stocks || [];
+                if (stks.some(s => s.symbol === stk)) {
+                    foundSector = sName;
+                    foundSecData = sData;
+                    break;
+                }
+            }
+
+            if (foundSector && foundSecData) {
+                currentSectorName = foundSector;
+                document.getElementById('selectedSectorTitle').innerText = `${foundSector} (${foundSecData.is_bullish ? '+' : ''}${foundSecData.change.toFixed(2)}%)`;
+                document.getElementById('activeSectorSweepText').innerText = `ANALYZING: ${foundSector} [${foundSecData.is_bullish ? '+' : ''}${foundSecData.change.toFixed(2)}%]`;
+            }
+
+            // Highlight selected stock card in both bullish and bearish mover lists (normalize .NS suffix)
+            const cleanTarget = stk.replace('.NS', '').toUpperCase();
+            document.querySelectorAll('.sector-card').forEach(c => {
+                const cardSym = (c.dataset && c.dataset.symbol) ? c.dataset.symbol.replace('.NS', '').toUpperCase() : '';
+                if (cardSym === cleanTarget) {
+                    c.classList.add('selected');
+                } else {
+                    c.classList.remove('selected');
+                }
+            });
+
+            renderStockChips();
+            scanStock(stk);
+            loadNSEInstitutionalData(stk);
+            loadStockCatalystNews(stk);
+        }
+
+        function switchRadarMode(mode) {
+            // Mode tabs removed - pure 5-min sector F&O stocks radar only
+        }
+
+        function renderConfirmedBanner() {
+            const alertBox = document.getElementById('confirmedTradeAlert');
+            const alertDetails = document.getElementById('alertDetails');
+            const alertTime = document.getElementById('alertTime');
+
+            const tradeList = Object.values(activeConfirmedTrades);
+            if (tradeList.length === 0) {
+                alertBox.style.display = 'none';
+                return;
+            }
+
+            alertBox.style.display = 'block';
+            alertTime.innerHTML = `<span style="background:rgba(0,255,170,0.15); border:1px solid var(--neon-green); color:var(--neon-green); padding:2px 8px; border-radius:4px; font-size:0.65rem; margin-right:8px; font-weight:bold;">${tradeList.length} CONFIRMED ACTIVE</span> READY TO EXECUTE`;
+
+            const sortedTrades = [...tradeList].sort((a, b) => (b.smc.composite_score || 0) - (a.smc.composite_score || 0));
+
+            let html = '';
+            sortedTrades.forEach((t, idx) => {
+                const s = t.symbol;
+                const smc = t.smc;
+                const isBuy = smc.action.includes('BUY');
+                const entryPrice = Number(smc.entry_price || smc.current_price || 0);
+                const currentPrice = Number(smc.live_price || smc.current_price || entryPrice);
+
+                // Calculate real-time Gain / Loss % from Entry Price
+                let pnlPct = 0;
+                let pnlDiff = 0;
+                if (entryPrice > 0) {
+                    if (isBuy) {
+                        pnlDiff = currentPrice - entryPrice;
+                        pnlPct = (pnlDiff / entryPrice) * 100;
+                    } else {
+                        // Short: profit when price falls
+                        pnlDiff = entryPrice - currentPrice;
+                        pnlPct = (pnlDiff / entryPrice) * 100;
+                    }
+                }
+
+                const pnlSign = pnlPct >= 0 ? '+' : '';
+                const pnlColor = pnlPct >= 0 ? 'var(--neon-green)' : 'var(--neon-red)';
+                const sign = isBuy ? '+' : '-';
+                const pot1 = smc.potential_pct ? `(${sign}${smc.potential_pct}% room)` : '';
+                const pot2 = smc.potential_tp2_pct ? `(${sign}${smc.potential_tp2_pct}%)` : '';
+                const rrText = smc.risk_reward_ratio ? `&nbsp;|&nbsp; RR: <span style="color:var(--neon-cyan);">1:${smc.risk_reward_ratio}</span>` : '';
+                const borderBottom = idx < sortedTrades.length - 1 ? 'border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 6px; margin-bottom: 6px;' : '';
+
+                html += `
+                <div style="cursor:pointer; ${borderBottom} display:flex; justify-content:space-between; align-items:center;" onclick="selectStock('${s}')" title="Click to open radar for ${s}">
+                    <div>
+                        <span style="color:${isBuy ? 'var(--neon-green)' : 'var(--neon-red)'}">🔥 #${idx + 1} ${isBuy ? 'BUY / CALL (CE)' : 'SELL / PUT (PE)'}</span> 
+                        <strong>${s.replace('.NS', '')}</strong> 
+                        &nbsp;Entry: ₹${entryPrice.toFixed(1)} 
+                        &nbsp;|&nbsp; SL: <span style="color:var(--neon-amber);">₹${smc.suggested_sl}</span> 
+                        &nbsp;|&nbsp; Target 1: <span style="color:var(--neon-cyan);">₹${smc.suggested_tp1} ${pot1}</span> 
+                        ${smc.suggested_tp2 ? '&nbsp;|&nbsp; Target 2: ₹' + smc.suggested_tp2 + ' ' + pot2 : ''} 
+                        ${rrText}
+                    </div>
+                    <div style="display:flex; align-items:center; gap:8px; margin-left:12px;">
+                        <div style="text-align:right; min-width:130px;">
+                            <span style="font-size:0.68rem; color:#94a3b8;">LTP: </span>
+                            <strong style="font-size:0.85rem; color:#fff;">₹${currentPrice.toFixed(1)}</strong>
+                            <span style="background:${pnlPct >= 0 ? 'rgba(0,255,170,0.15)' : 'rgba(255,51,102,0.15)'}; border:1px solid ${pnlColor}; color:${pnlColor}; padding:1px 6px; border-radius:4px; font-size:0.75rem; font-weight:800; margin-left:4px;">
+                                ${pnlSign}${pnlPct.toFixed(2)}%
+                            </span>
+                        </div>
+                        <button onclick="event.stopPropagation(); closeTrade('${s}', ${t.signal_id || 'null'}, ${currentPrice})" style="background:rgba(255,51,102,0.15); border:1px solid rgba(255,51,102,0.4); color:var(--neon-red); cursor:pointer; padding:2px 7px; border-radius:4px; font-weight:bold; font-size:0.75rem;" title="Close this trade">✕</button>
+                    </div>
+                </div>`;
+            });
+            alertDetails.innerHTML = html;
+        }
+
+        async function closeTrade(symbol, signalId, exitPrice) {
+            delete activeConfirmedTrades[symbol];
+            try {
+                localStorage.setItem('activeConfirmedTrades', JSON.stringify(activeConfirmedTrades));
+            } catch (e) { }
+            renderConfirmedBanner();
+
+            try {
+                await fetch('/api/signals/close', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ symbol: symbol, signal_id: signalId, exit_price: exitPrice, reason: 'CLOSED_MANUAL' })
+                });
+                log(`[TRADE CLOSED] ${symbol} squared off at ₹${exitPrice}.`, 'INFO');
+            } catch (e) { }
+        }
+
+        // Audio Synthesizer for Institutional Alert Chime
+        let audioCtx = null;
+        let isAudioEnabled = true;
+
+        function initAudioContext() {
+            try {
+                if (!audioCtx) {
+                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+            } catch (e) {
+                console.warn('AudioContext init error:', e);
+            }
+        }
+
+        // Auto-enable audio on page load and first user interaction
+        window.addEventListener('DOMContentLoaded', () => {
+            initAudioContext();
+            updateAudioUI();
+        });
+        ['click', 'touchstart', 'keydown'].forEach(evt => {
+            window.addEventListener(evt, () => {
+                initAudioContext();
+            }, { once: true });
+        });
+
+        function toggleAudioAlerts() {
+            initAudioContext();
+            isAudioEnabled = !isAudioEnabled;
+            updateAudioUI();
+            if (isAudioEnabled) {
+                playSignalAlertSound(true);
+                log('Audio alerts enabled manually.', 'SUCCESS');
+            } else {
+                log('Audio alerts muted manually.', 'INFO');
+            }
+        }
+
+        function updateAudioUI() {
+            const btn = document.getElementById('btnAudioToggle');
+            const icon = document.getElementById('audioIcon');
+            const text = document.getElementById('audioStatusText');
+            if (!btn || !icon || !text) return;
+            if (isAudioEnabled) {
+                btn.style.background = 'rgba(0,255,170,0.1)';
+                btn.style.borderColor = 'var(--neon-green)';
+                btn.style.color = 'var(--neon-green)';
+                icon.textContent = '🔊';
+                text.textContent = 'AUDIO: ON';
+            } else {
+                btn.style.background = 'rgba(255,51,102,0.1)';
+                btn.style.borderColor = 'var(--neon-red)';
+                btn.style.color = 'var(--neon-red)';
+                icon.textContent = '🔇';
+                text.textContent = 'AUDIO: OFF';
+            }
+        }
+
+        function testAudioChime() {
+            initAudioContext();
+            playSignalAlertSound(true);
+        }
+
+        // Distinct futuristic notification chime for new PREPARING stock (Score >= 70/100)
+        function playPreparingAlertSound(symbol, score, isBull = true) {
+            if (!isAudioEnabled) return;
+            initAudioContext();
+            try {
+                const now = audioCtx.currentTime;
+                const osc1 = audioCtx.createOscillator();
+                const osc2 = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+
+                osc1.type = 'triangle';
+                osc2.type = 'sine';
+
+                if (isBull) {
+                    // Ascending radar ping: 660Hz -> 880Hz -> 1320Hz
+                    osc1.frequency.setValueAtTime(659.25, now);
+                    osc1.frequency.setValueAtTime(880.00, now + 0.08);
+                    osc1.frequency.exponentialRampToValueAtTime(1318.51, now + 0.22);
+                    osc2.frequency.setValueAtTime(440.00, now);
+                    osc2.frequency.exponentialRampToValueAtTime(880.00, now + 0.22);
+                } else {
+                    // Alert double tone: 880Hz -> 587Hz -> 440Hz
+                    osc1.frequency.setValueAtTime(880.00, now);
+                    osc1.frequency.setValueAtTime(587.33, now + 0.08);
+                    osc1.frequency.exponentialRampToValueAtTime(440.00, now + 0.22);
+                    osc2.frequency.setValueAtTime(587.33, now);
+                    osc2.frequency.exponentialRampToValueAtTime(293.66, now + 0.22);
+                }
+
+                gain.gain.setValueAtTime(0.01, now);
+                gain.gain.linearRampToValueAtTime(0.32, now + 0.04);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
+
+                osc1.connect(gain);
+                osc2.connect(gain);
+                gain.connect(audioCtx.destination);
+
+                osc1.start(now);
+                osc2.start(now);
+                osc1.stop(now + 0.6);
+                osc2.stop(now + 0.6);
+            } catch (e) {
+                console.warn('Audio alert error:', e);
+            }
+        }
+
+        function playSignalAlertSound(isBuy = true) {
+            if (!isAudioEnabled) return;
+            initAudioContext();
+            try {
+                const now = audioCtx.currentTime;
+                // High-probability two-tone notification chord
+                const osc1 = audioCtx.createOscillator();
+                const osc2 = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+
+                osc1.type = 'sine';
+                osc2.type = 'triangle';
+
+                if (isBuy) {
+                    // Ascending bullish chords (C5 -> E5 -> G5)
+                    osc1.frequency.setValueAtTime(523.25, now);
+                    osc1.frequency.exponentialRampToValueAtTime(659.25, now + 0.12);
+                    osc1.frequency.exponentialRampToValueAtTime(783.99, now + 0.28);
+                    osc2.frequency.setValueAtTime(261.63, now);
+                    osc2.frequency.exponentialRampToValueAtTime(392.00, now + 0.28);
+                } else {
+                    // Descending bearish chords (G5 -> Eb5 -> C5)
+                    osc1.frequency.setValueAtTime(783.99, now);
+                    osc1.frequency.exponentialRampToValueAtTime(622.25, now + 0.12);
+                    osc1.frequency.exponentialRampToValueAtTime(523.25, now + 0.28);
+                    osc2.frequency.setValueAtTime(392.00, now);
+                    osc2.frequency.exponentialRampToValueAtTime(261.63, now + 0.28);
+                }
+
+                gain.gain.setValueAtTime(0.01, now);
+                gain.gain.linearRampToValueAtTime(0.28, now + 0.05);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
+
+                osc1.connect(gain);
+                osc2.connect(gain);
+                gain.connect(audioCtx.destination);
+
+                osc1.start(now);
+                osc2.start(now);
+                osc1.stop(now + 0.7);
+                osc2.stop(now + 0.7);
+            } catch (e) {
+                console.warn('Audio alert error:', e);
+            }
+        }
+
+        // Floating Glowing Pop-up Toast
+        let notifiedTradesSet = new Set();
+        function showTradePopToast(symbol, smc) {
+            const isBuy = smc.action && smc.action.includes('BUY');
+            const toastId = 'toast_' + symbol.replace(/[^a-zA-Z0-9]/g, '_');
+            const existing = document.getElementById(toastId);
+            if (existing) existing.remove();
+
+            const toast = document.createElement('div');
+            toast.id = toastId;
+            toast.className = `trade-pop-toast ${isBuy ? '' : 'sell-toast'}`;
+            toast.onclick = () => {
+                selectStock(symbol);
+                toast.remove();
+            };
+
+            const dirText = isBuy ? 'BUY / CALL (CE)' : 'SELL / PUT (PE)';
+            const dirColor = isBuy ? 'var(--neon-green)' : 'var(--neon-red)';
+            const sign = isBuy ? '+' : '-';
+            const potText = smc.suggested_tp1 ? `Target 1: ₹${smc.suggested_tp1}` : '';
+
+            toast.innerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="font-size:0.72rem; font-weight:800; color:${dirColor}; letter-spacing:1px; display:flex; align-items:center; gap:6px;">
+                        <span style="font-size:1rem;">⚡</span> ${dirText} SIGNAL
+                    </span>
+                    <span style="font-size:0.65rem; color:#94a3b8; background:rgba(255,255,255,0.08); padding:2px 6px; border-radius:4px;">JUST NOW</span>
+                </div>
+                <div style="font-size:1.05rem; font-weight:800; color:#fff; display:flex; justify-content:space-between; align-items:baseline;">
+                    <span>${symbol.replace('.NS', '')}</span>
+                    <span style="color:${dirColor}; font-size:1rem;">₹${Number(smc.current_price || 0).toFixed(1)}</span>
+                </div>
+                <div style="font-size:0.75rem; color:#cbd5e1; display:flex; gap:10px; margin-top:2px;">
+                    <span>SL: <b style="color:var(--neon-amber);">₹${smc.suggested_sl || '--'}</b></span>
+                    <span>${potText}</span>
+                    ${smc.risk_reward_ratio ? `<span>RR: <b style="color:var(--neon-cyan);">1:${smc.risk_reward_ratio}</b></span>` : ''}
+                </div>
+                <div style="font-size:0.65rem; color:var(--text-muted); text-align:right; margin-top:4px;">
+                    👆 Click to inspect radar
+                </div>
+            `;
+
+            document.body.appendChild(toast);
+
+            // Auto dismiss after 8 seconds
+            setTimeout(() => {
+                if (toast && toast.parentElement) {
+                    toast.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+                    toast.style.opacity = '0';
+                    toast.style.transform = 'translateX(120%)';
+                    setTimeout(() => toast.remove(), 500);
+                }
+            }, 8000);
+        }
+
+        function addOrUpdateConfirmedTrade(symbol, smc) {
+            if (!smc || !smc.action || (!smc.action.includes('BUY') && !smc.action.includes('SELL'))) {
+                return;
+            }
+            // Strict Gate: Never create or update active confirmed trades for non-actionable watch candidates
+            // (Requires smc.is_actionable === true AND confirmed completed candle)
+            if (smc.is_actionable !== true || !smc.signal_status || !smc.signal_status.includes('CONFIRMED')) {
+                return;
+            }
+            const existing = activeConfirmedTrades[symbol];
+            const isNew = !existing || !notifiedTradesSet.has(symbol);
+
+            // Preserve the original entry price once confirmed!
+            const entryPrice = (existing && existing.smc && existing.smc.entry_price) ? existing.smc.entry_price : (smc.entry_price || smc.current_price);
+            smc.entry_price = entryPrice;
+            smc.live_price = smc.current_price || entryPrice;
+
+            activeConfirmedTrades[symbol] = {
+                signal_id: smc.signal_id || (existing ? existing.signal_id : null),
+                symbol: symbol,
+                smc: smc,
+                time: existing ? existing.time : Date.now()
+            };
+
+            if (isNew) {
+                notifiedTradesSet.add(symbol);
+                const isBuy = smc.action.includes('BUY');
+                playSignalAlertSound(isBuy);
+                showTradePopToast(symbol, smc);
+            }
+
+            // Persist confirmed trades to database via backend if generated in live session
+            if (isNew && smc.action && (smc.action.includes('BUY') || smc.action.includes('SELL'))) {
+                fetch('/api/signals/log-confirmed', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        symbol: symbol,
+                        action: smc.action,
+                        candle_ts: smc.candle_ts || smc.last_candle_ts || '',
+                        entry_price: entryPrice,
+                        suggested_sl: smc.suggested_sl,
+                        suggested_tp1: smc.suggested_tp1,
+                        suggested_tp2: smc.suggested_tp2,
+                        composite_score: smc.composite_score || 70,
+                        primary_strategy: smc.primary_strategy || 'SMC Structure',
+                        triggered_strategies: smc.triggered_strategies || []
+                    })
+                }).then(r => r.json()).then(res => {
+                    if (res && res.signal_id) {
+                        activeConfirmedTrades[symbol].signal_id = res.signal_id;
+                        try {
+                            localStorage.setItem('activeConfirmedTrades', JSON.stringify(activeConfirmedTrades));
+                        } catch (e) { }
+                    }
+                }).catch(() => { });
+            }
+
+            try {
+                localStorage.setItem('activeConfirmedTrades', JSON.stringify(activeConfirmedTrades));
+            } catch (e) { }
+
+            renderConfirmedBanner();
+        }
+
+        async function syncActiveTradeBanner() {
+            try {
+                const res = await fetch('/api/signals/active');
+                const data = await res.json();
+                if (data.success && data.active_signals) {
+                    const activeDbList = data.active_signals;
+                    const activeDbIds = new Set(activeDbList.map(s => s.id));
+                    const activeDbSymbols = new Set(activeDbList.map(s => s.symbol));
+
+                    // If market is closed and DB has cleared/squared off all active signals, immediately clear banner
+                    if (activeDbList.length === 0) {
+                        activeConfirmedTrades = {};
+                        try {
+                            localStorage.removeItem('activeConfirmedTrades');
+                        } catch (e) { }
+                        renderConfirmedBanner();
+                        return;
+                    }
+
+                    activeDbList.forEach(item => {
+                        const sym = item.symbol;
+                        const existing = activeConfirmedTrades[sym];
+                        const entryPrice = item.entry_price || (existing && existing.smc ? existing.smc.entry_price : 0);
+                        const livePrice = (existing && existing.smc && existing.smc.live_price) ? existing.smc.live_price : entryPrice;
+
+                        activeConfirmedTrades[sym] = {
+                            signal_id: item.id,
+                            symbol: sym,
+                            smc: {
+                                action: item.direction === 'BUY' ? 'BUY / CALL (CE)' : 'SELL / PUT (PE)',
+                                entry_price: entryPrice,
+                                live_price: livePrice,
+                                current_price: livePrice,
+                                suggested_sl: item.stop_loss,
+                                suggested_tp1: item.target_1,
+                                suggested_tp2: item.target_2,
+                                composite_score: item.score,
+                                signal_status: 'CONFIRMED (Completed Candle)'
+                            },
+                            time: existing ? existing.time : Date.now()
+                        };
+                    });
+
+                    // Remove signals that hit target, hit stop loss, or were squared off at EOD
+                    Object.keys(activeConfirmedTrades).forEach(sym => {
+                        const tr = activeConfirmedTrades[sym];
+                        if (tr.signal_id && !activeDbIds.has(tr.signal_id)) {
+                            delete activeConfirmedTrades[sym];
+                        }
+                    });
+
+                    try {
+                        localStorage.setItem('activeConfirmedTrades', JSON.stringify(activeConfirmedTrades));
+                    } catch (e) { }
+
+                    renderConfirmedBanner();
+                }
+            } catch (e) { }
+        }
+
+        // Dedicated Continuous Tracker & Adaptive Learning HUD Synchronization
+        async function loadTrackerAndLearningDiagnostics() {
+            try {
+                const res = await fetch('/api/learning/diagnostics');
+                const data = await res.json();
+                if (data && data.success) {
+                    const stats = data.tracker_stats || {};
+                    const prepCount = stats.active_prep_count || (data.preparing_stocks ? data.preparing_stocks.length : 0);
+                    const openCount = stats.open_signals_count || 0;
+                    const pms = data.post_mortems || [];
+
+                    const trackerBadge = document.getElementById('trackerBadge');
+                    if (trackerBadge) {
+                        trackerBadge.innerText = `⚡ TRACKER: ${prepCount} COILS | ${openCount} ACTIVE`;
+                    }
+
+                    const learningBadge = document.getElementById('learningBadge');
+                    if (learningBadge) {
+                        learningBadge.innerText = `🧠 LEARNER: ${pms.length} POST-MORTEMS`;
+                    }
+                }
+            } catch (e) { }
+        }
+
+        async function loadRankedOpportunities() {
+            try {
+                const res = await fetch('/api/opportunities/ranked');
+                const data = await res.json();
+                if (data.success && data.ranked) {
+                    renderRankedOpportunitiesUI(data.ranked);
+                    document.getElementById('rankSyncTime').innerText = 'SYNCED ' + new Date().toLocaleTimeString();
+
+                    const topAll = [
+                        ...(data.ranked.entry_ready || []),
+                        ...(data.ranked.ignition || []),
+                        ...(data.ranked.top_bullish || []),
+                        ...(data.ranked.top_bearish || [])
+                    ];
+                    for (const cand of topAll) {
+                        // CRITICAL: Scan SMC and generate trades for actionable candidates (CONFIRMED / IGNITION / ENTRY READY).
+                        if (!cand || !cand.symbol || !cand.is_actionable) {
+                            continue;
+                        }
+                        if (!activeConfirmedTrades[cand.symbol]) {
+                            fetch(`/api/market/smc-scan?symbol=${encodeURIComponent(cand.symbol)}`)
+                                .then(r => r.json())
+                                .then(d => {
+                                    if (d && d.success && d.smc) {
+                                        const smc = d.smc;
+                                        if (smc.action && (smc.action.includes('BUY') || smc.action.includes('SELL'))) {
+                                            log(`🎯 [EXACT ENTRY FROM RANKINGS] ${cand.symbol} => ${smc.action} | SL: ₹${smc.suggested_sl} | TP1: ₹${smc.suggested_tp1}`, 'ENTRY');
+                                            addOrUpdateConfirmedTrade(cand.symbol, smc);
+                                        }
+                                    }
+                                })
+                                .catch(() => { });
+                        }
+                    }
+                }
+            } catch (e) { }
+        }
+
+        // Track previously notified PREPARING stocks so sound only plays ONCE when a new stock appears with Score >= 70
+        let notifiedPreparingStocksSet = new Set();
+
+        function renderRankedOpportunitiesUI(ranked) {
+            const prepContainer = document.getElementById('rankedPreparingList');
+            const entryContainer = document.getElementById('rankedEntryReadyList');
+            if (!prepContainer || !entryContainer) return;
+
+            const entryReady = ranked.entry_ready || [];
+            const preparing = ranked.preparing || [];
+            const ignition = ranked.ignition || [];
+
+            // Audio Alert Trigger: Check top PREPARING candidates for NEW entries with Score >= 70
+            preparing.forEach((c) => {
+                const sym = c.symbol;
+                const score = Number(c.conviction_score || c.confirmation_score || 0);
+                const isBull = c.direction === 'BULLISH';
+                if (score >= 70 && !notifiedPreparingStocksSet.has(sym)) {
+                    notifiedPreparingStocksSet.add(sym);
+                    playPreparingAlertSound(sym, score, isBull);
+                    log(`[PRE-MOVE ALERT] New Top Setup: ${sym.replace('.NS', '')} (Score: ${score}/100) entered PREPARING coil!`, isBull ? 'SUCCESS' : 'WARN');
+                }
+            });
+
+            // 1. Render Preparing List (Max 5) - Strictly Coils before the move
+            if (preparing.length === 0 && ignition.length === 0) {
+                prepContainer.innerHTML = '<div style="font-size:0.7rem; color:var(--text-muted); padding:6px 0;">No stocks currently in compression/coil. Scanning 219 F&O...</div>';
+            } else {
+                let prepHtml = '';
+                // Render true PREPARING coils first
+                preparing.forEach((c, i) => {
+                    const sym = c.symbol;
+                    const isBull = c.direction === 'BULLISH';
+                    const dirCol = isBull ? 'var(--neon-green)' : 'var(--neon-red)';
+                    const sign = isBull ? '+' : '';
+
+                    prepHtml += `
+                    <div style="background:rgba(255,255,255,0.02); border:1px solid ${isBull ? 'rgba(0,255,170,0.3)' : 'rgba(255,51,102,0.3)'}; border-left:3px solid ${dirCol}; border-radius:4px; padding:6px 8px; cursor:pointer;" onclick="selectStock('${sym}')" title="Click to view ${sym} in Radar">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <span style="font-size:0.75rem; font-weight:bold; color:#fff;">
+                                #${i + 1} ${sym.replace('.NS', '')} 
+                                <span style="font-size:0.60rem; color:${dirCol}; background:${isBull ? 'rgba(0,255,170,0.12)' : 'rgba(255,51,102,0.12)'}; border:1px solid ${dirCol}; padding:1px 6px; border-radius:3px; font-weight:bold; margin-left:4px;">
+                                    ${isBull ? '▲ PRE-BREAKOUT' : '▼ PRE-BREAKDOWN'}
+                                </span>
+                            </span>
+                            <span style="font-size:0.72rem; color:${dirCol}; font-weight:800;">${sign}${c.change_pct}%</span>
+                        </div>
+                        <div style="font-size:0.62rem; color:var(--text-muted); display:flex; justify-content:space-between; margin-top:3px;">
+                            <span>Coil Conviction: <b style="color:#fff;">${c.conviction_score}/100</b></span>
+                            <span style="color:${isBull ? 'var(--neon-green)' : 'var(--neon-red)'}; font-weight:600;">${c.entry_trigger || (isBull ? 'Coil: Breakout above ORH' : 'Coil: Breakdown below ORL')}</span>
+                        </div>
+                    </div>`;
+                });
+
+                // Display IGNITION separately if any are breaking out now
+                ignition.forEach((c, i) => {
+                    const sym = c.symbol;
+                    const isBull = c.direction === 'BULLISH';
+                    const dirCol = isBull ? 'var(--neon-green)' : 'var(--neon-red)';
+                    const sign = isBull ? '+' : '';
+
+                    prepHtml += `
+                    <div style="background:rgba(255,170,0,0.05); border:1px solid rgba(255,170,0,0.4); border-left:3px solid var(--neon-amber); border-radius:4px; padding:6px 8px; cursor:pointer; margin-top:4px;" onclick="selectStock('${sym}')" title="Active Ignition / Expanding Now">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <span style="font-size:0.75rem; font-weight:bold; color:#fff;">
+                                ⚡ ${sym.replace('.NS', '')} 
+                                <span style="font-size:0.60rem; color:var(--neon-amber); background:rgba(255,170,0,0.15); border:1px solid var(--neon-amber); padding:1px 5px; border-radius:3px; font-weight:bold; margin-left:4px;">
+                                    IGNITION EXPANDING
+                                </span>
+                            </span>
+                            <span style="font-size:0.72rem; color:${dirCol}; font-weight:800;">${sign}${c.change_pct}%</span>
+                        </div>
+                        <div style="font-size:0.62rem; color:var(--text-muted); display:flex; justify-content:space-between; margin-top:3px;">
+                            <span>RVOL: <b style="color:var(--neon-cyan);">${c.rvol || 1.4}x</b></span>
+                            <span style="color:var(--neon-amber); font-weight:600;">${c.entry_trigger}</span>
+                        </div>
+                    </div>`;
+                });
+
+                // Display OBSERVING watch-only candidates (Distinct from true coils)
+                const observing = ranked.observing || [];
+                observing.forEach((c, i) => {
+                    const sym = c.symbol;
+                    const isBull = c.direction === 'BULLISH';
+                    const dirCol = isBull ? 'var(--neon-green)' : 'var(--neon-red)';
+                    const sign = isBull ? '+' : '';
+
+                    prepHtml += `
+                    <div style="background:rgba(255,255,255,0.01); border:1px dashed rgba(255,255,255,0.15); border-left:3px solid #64748b; border-radius:4px; padding:5px 8px; cursor:pointer; margin-top:4px;" onclick="selectStock('${sym}')" title="Early Accumulation Observation (Watch-only)">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <span style="font-size:0.73rem; color:#cbd5e1;">
+                                👀 ${sym.replace('.NS', '')} 
+                                <span style="font-size:0.58rem; color:#94a3b8; background:rgba(255,255,255,0.06); padding:1px 4px; border-radius:3px; margin-left:4px;">
+                                    EARLY OBSERVATION (WATCH-ONLY)
+                                </span>
+                            </span>
+                            <span style="font-size:0.70rem; color:#94a3b8;">${sign}${c.change_pct}%</span>
+                        </div>
+                        <div style="font-size:0.60rem; color:#64748b; margin-top:2px;">
+                            ${c.entry_trigger}
+                        </div>
+                    </div>`;
+                });
+
+                prepContainer.innerHTML = prepHtml;
+            }
+
+            // 2. Render Entry Ready List (Max 2)
+            if (entryReady.length === 0) {
+                entryContainer.innerHTML = '<div style="font-size:0.7rem; color:var(--text-muted); padding:6px 0; background:rgba(0,0,0,0.2); border-radius:4px; text-align:center;">NO 5M TRADE (Default state: waiting for confirmed structure)</div>';
+            } else {
+                let entryHtml = '';
+                entryReady.forEach((c, i) => {
+                    const sym = c.symbol;
+                    const isBull = c.direction === 'BULLISH';
+                    const dirCol = isBull ? 'var(--neon-green)' : 'var(--neon-red)';
+                    const actLabel = isBull ? 'BUY / CALL (CE)' : 'SELL / PUT (PE)';
+
+                    entryHtml += `
+                    <div style="background:rgba(0,255,170,0.06); border:1px solid var(--neon-green); border-radius:4px; padding:6px 8px; cursor:pointer;" onclick="selectStock('${sym}')" title="Click to view confirmed 5m setup">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <span style="font-size:0.78rem; font-weight:bold; color:#fff;">#${i + 1} ${sym.replace('.NS', '')} <span style="font-size:0.60rem; color:${dirCol}; background:rgba(0,0,0,0.4); padding:1px 5px; border-radius:3px; font-weight:bold;">${actLabel}</span></span>
+                            <span style="font-size:0.72rem; color:${dirCol}; font-weight:800;">${c.change_pct >= 0 ? '+' : ''}${c.change_pct}%</span>
+                        </div>
+                        <div style="font-size:0.62rem; color:#f8fafc; margin-top:3px; background:rgba(0,0,0,0.3); padding:3px 6px; border-radius:3px; display:flex; justify-content:space-between;">
+                            <span>SL: <b style="color:var(--neon-amber);">₹${c.suggested_sl}</b> | TP: <b style="color:var(--neon-cyan);">₹${c.suggested_tp1}</b></span>
+                            <span style="color:var(--neon-green); font-weight:bold;">RR 1:${c.risk_reward_ratio || 1.5}</span>
+                        </div>
+                    </div>`;
+                });
+                entryContainer.innerHTML = entryHtml;
+            }
+        }
+
+        // Automated continuous background scanning loop (pure monitoring & live price sync)
+        async function cycleStockScan() {
+            if (activeWatchlist.length === 0) return;
+            watchlistIndex = (watchlistIndex + 1) % activeWatchlist.length;
+            const target = activeWatchlist[watchlistIndex];
+            const cleanSym = target.symbol.replace('.NS', '').toUpperCase();
+            document.getElementById('cycleStatus').innerText = `SCANNING: ${cleanSym} [${watchlistIndex + 1}/${activeWatchlist.length}]`;
+
+            // Update .scanning yellow glow across mover cards
+            document.querySelectorAll('.sector-card').forEach(c => {
+                const cardSym = (c.dataset && c.dataset.symbol) ? c.dataset.symbol.replace('.NS', '').toUpperCase() : '';
+                if (cardSym === cleanSym) {
+                    c.classList.add('scanning');
+                } else {
+                    c.classList.remove('scanning');
+                }
+            });
+
+            // Immediately load the scanned stock's live news into the top news ticker!
+            loadStockCatalystNews(target.symbol);
+
+            // If user has not manually clicked a stock, follow autonomous scan in the radar
+            if (!isUserManualSelection) {
+                selectStock(target.symbol, false);
+            }
+
+            try {
+                const res = await fetch(`/api/market/smc-scan?symbol=${encodeURIComponent(target.symbol)}`);
+                const data = await res.json();
+                if (data.success && data.smc) {
+                    const smc = data.smc;
+                    // If target is an active confirmed trade, refresh its live price for PnL calculation!
+                    if (activeConfirmedTrades[target.symbol]) {
+                        activeConfirmedTrades[target.symbol].smc.live_price = smc.current_price;
+                        renderConfirmedBanner();
+                    }
+
+                    // Check if entry trigger is met on scanned stock: apply Green or Red trade entry glow!
+                    const isTradeAction = smc.action && (smc.action.includes('BUY') || smc.action.includes('SELL'));
+                    const isEntryConfirmed = isTradeAction && smc.is_actionable && smc.signal_status && smc.signal_status.includes('CONFIRMED');
+
+                    document.querySelectorAll('.sector-card').forEach(c => {
+                        const cardSym = (c.dataset && c.dataset.symbol) ? c.dataset.symbol.replace('.NS', '').toUpperCase() : '';
+                        if (cardSym === cleanSym) {
+                            if (isEntryConfirmed) {
+                                if (smc.action.includes('BUY')) {
+                                    c.classList.add('trade-entry-bull');
+                                    c.classList.remove('trade-entry-bear');
+                                } else {
+                                    c.classList.add('trade-entry-bear');
+                                    c.classList.remove('trade-entry-bull');
+                                }
+                            } else {
+                                c.classList.remove('trade-entry-bull');
+                                c.classList.remove('trade-entry-bear');
+                            }
+                        }
+                    });
+
+                    // Update radar if current stock
+                    if (target.symbol === currentStockSymbol) {
+                        renderRadarData(target.symbol, smc);
+                    }
+                }
+            } catch (e) { }
+        }
+
+        function renderRadarData(symbol, smc) {
+            const isFinNum = (val) => val !== undefined && val !== null && !isNaN(Number(val)) && isFinite(Number(val));
+            const priceStr = isFinNum(smc.current_price) ? `₹${Number(smc.current_price).toFixed(1)}` : '--';
+            const vwapStr = isFinNum(smc.vwap) ? `₹${Number(smc.vwap).toFixed(1)}` : '--';
+            document.getElementById('valPrice').innerText = `${priceStr} (VWAP: ${vwapStr})`;
+
+            const rvolVal = isFinNum(smc.rvol) ? Number(smc.rvol).toFixed(2) : (isFinNum(smc.vol_multiplier) ? Number(smc.vol_multiplier).toFixed(2) : '1.00');
+            const rsiStr = isFinNum(smc.rsi) ? Number(smc.rsi).toFixed(1) : '--';
+            document.getElementById('valRsi').innerHTML = `<span>RSI: <b style="color:#fff;">${rsiStr}</b></span> <span style="color:#64748b;">|</span> <span>VOL: <b style="color:var(--neon-green);">${rvolVal}x</b></span>`;
+
+            const ema9Str = isFinNum(smc.ema9) ? Number(smc.ema9).toFixed(1) : '--';
+            const ema21Str = isFinNum(smc.ema21) ? Number(smc.ema21).toFixed(1) : '--';
+            document.getElementById('valEma').innerText = `EMA9: ${ema9Str} | EMA21: ${ema21Str}`;
+
+            // Demand & Supply Order Blocks
+            const demEl = document.getElementById('valDemandOb');
+            if (demEl) {
+                if (smc.nearest_demand_ob && smc.nearest_demand_ob.top) {
+                    demEl.innerText = `₹${Number(smc.nearest_demand_ob.bottom).toFixed(1)} - ₹${Number(smc.nearest_demand_ob.top).toFixed(1)}`;
+                } else {
+                    demEl.innerText = 'No Active Demand OB';
+                }
+            }
+
+            const supEl = document.getElementById('valSupplyOb');
+            if (supEl) {
+                if (smc.nearest_supply_ob && smc.nearest_supply_ob.top) {
+                    supEl.innerText = `₹${Number(smc.nearest_supply_ob.bottom).toFixed(1)} - ₹${Number(smc.nearest_supply_ob.top).toFixed(1)}`;
+                } else {
+                    supEl.innerText = 'No Active Supply OB';
+                }
+            }
+
+            // Liquidity Levels (BSL / SSL)
+            const bslEl = document.getElementById('valBslLiq');
+            if (bslEl) {
+                if (smc.bsl_liquidity) {
+                    const dist = (smc.bsl_liquidity - smc.current_price).toFixed(1);
+                    bslEl.innerText = `₹${Number(smc.bsl_liquidity).toFixed(1)} (${dist >= 0 ? '+' : ''}${dist})`;
+                } else {
+                    bslEl.innerText = 'Pool Untapped';
+                }
+            }
+
+            const sslEl = document.getElementById('valSslLiq');
+            if (sslEl) {
+                if (smc.ssl_liquidity) {
+                    const dist = (smc.current_price - smc.ssl_liquidity).toFixed(1);
+                    sslEl.innerText = `₹${Number(smc.ssl_liquidity).toFixed(1)} (-${dist})`;
+                } else {
+                    sslEl.innerText = 'Pool Untapped';
+                }
+            }
+
+            // Dynamic Telemetry updates
+            const isBull = smc.action && smc.action.includes('BUY');
+            const obPressEl = document.getElementById('telemetryObPressure');
+            if (obPressEl) {
+                const obPress = isBull ? `DEMAND ${Math.min(95, 50 + Math.round((smc.vol_multiplier || 1.2) * 15))}%` : `SUPPLY ${Math.min(95, 50 + Math.round((smc.vol_multiplier || 1.2) * 15))}%`;
+                obPressEl.innerText = obPress;
+                obPressEl.style.color = isBull ? 'var(--neon-green)' : 'var(--neon-red)';
+            }
+
+            const deltaEl = document.getElementById('telemetryDeltaFlow');
+            if (deltaEl) {
+                const deltaSign = isBull ? '+' : '-';
+                deltaEl.innerText = `${deltaSign}${((smc.composite_score || 50) * 0.045).toFixed(2)}M`;
+            }
+            const velEl = document.getElementById('telemetryVelocity');
+            if (velEl) {
+                velEl.innerText = `${smc.vol_multiplier || 1.2}x`;
+            }
+            const depthEl = document.getElementById('telemetryDepth');
+            if (depthEl) {
+                const sweepDist = smc.nearest_demand_ob ? Math.abs(smc.current_price - smc.nearest_demand_ob.top).toFixed(1) : (smc.current_price * 0.004).toFixed(1);
+                depthEl.innerText = `₹${sweepDist}`;
+            }
+            const scanLabelEl = document.getElementById('orderFlowScanLabel');
+            if (scanLabelEl) {
+                scanLabelEl.innerText = `ORDER FLOW: ${symbol} (${smc.pre_momentum_stage || 'ANALYZING'})`;
+            }
+
+            const score = smc.composite_score || 0;
+            const prob = smc.probability_pct;
+            if (prob && prob > 0 && score > 0) {
+                document.getElementById('valQuantScore').innerText = `${score}/100 (${prob}% WIN)`;
+            } else if (score > 0) {
+                document.getElementById('valQuantScore').innerText = `${score}/100`;
+            } else {
+                document.getElementById('valQuantScore').innerText = `0/100 (NEUTRAL)`;
+            }
+
+            const stage = smc.pre_momentum_stage || 'INACTIVE';
+            const reasonTxt = document.getElementById('decisionReasonText');
+            const pillTag = document.getElementById('decisionPillTag');
+            if (pillTag) {
+                pillTag.innerText = stage;
+                pillTag.style.color = stage === 'CONFIRMED' ? 'var(--neon-green)' : (stage === 'IGNITION' ? 'var(--neon-cyan)' : (stage === 'PREPARING' ? 'var(--neon-amber)' : '#94a3b8'));
+                pillTag.style.borderColor = pillTag.style.color;
+            }
+
+            const strats = (smc.triggered_strategies && smc.triggered_strategies.length > 0) ? smc.triggered_strategies.slice(0, 2).join(' + ') : 'SMC Structure';
+            document.getElementById('valStrategies').innerText = strats;
+
+            const actEl = document.getElementById('decisionAction');
+            const banner = document.getElementById('decisionBanner');
+
+            // If this stock has an ACTIVE confirmed trade in progress, keep showing ACTIVE TRADE status!
+            const existingTrade = activeConfirmedTrades[symbol];
+            if (existingTrade && (!smc.action || !smc.action.includes('BUY') && !smc.action.includes('SELL'))) {
+                const trSmc = existingTrade.smc;
+                const isBuy = trSmc.action && trSmc.action.includes('BUY');
+                actEl.innerText = `ACTIVE TRADE IN PROGRESS: ${isBuy ? 'LONG / CALL' : 'SHORT / PUT'}`;
+                actEl.style.color = isBuy ? 'var(--neon-green)' : 'var(--neon-red)';
+                banner.style.borderLeftColor = isBuy ? 'var(--neon-green)' : 'var(--neon-red)';
+                document.getElementById('decisionSetup').innerText = `IN POSITION | Entry: ₹${trSmc.current_price || '--'}`;
+                if (reasonTxt) reasonTxt.innerText = `Trade confirmed. Targeting ₹${trSmc.suggested_tp1 || '--'} with SL ₹${trSmc.suggested_sl || '--'}.`;
+                if (trSmc.suggested_sl && trSmc.suggested_tp1) {
+                    document.getElementById('valTargets').innerText = `SL: ₹${trSmc.suggested_sl} | TP1: ₹${trSmc.suggested_tp1}`;
+                }
+            } else {
+                actEl.innerText = smc.action;
+
+                if (smc.action.includes('BUY')) {
+                    actEl.style.color = 'var(--neon-green)';
+                    banner.style.borderLeftColor = 'var(--neon-green)';
+                } else if (smc.action.includes('SELL')) {
+                    actEl.style.color = 'var(--neon-red)';
+                    banner.style.borderLeftColor = 'var(--neon-red)';
+                } else {
+                    actEl.style.color = '#94a3b8';
+                    banner.style.borderLeftColor = '#64748b';
+                }
+
+                document.getElementById('decisionSetup').innerText = smc.verdict;
+                if (reasonTxt) reasonTxt.innerText = smc.reasoning ? smc.reasoning.slice(0, 120) + (smc.reasoning.length > 120 ? '...' : '') : 'Scanning setup';
+
+                if (smc.suggested_sl && smc.suggested_tp1) {
+                    const potRoom = smc.potential_pct ? `(+${smc.potential_pct}%)` : '';
+                    document.getElementById('valTargets').innerText = `SL: ₹${smc.suggested_sl} | TP1: ₹${smc.suggested_tp1} ${potRoom}`;
+                } else {
+                    document.getElementById('valTargets').innerText = 'WAIT FOR TRIGGER (Below Resistance / Above Support)';
+                }
+            }
+        }
+
+        async function scanStock(symbol) {
+            log(`ANALYZING MOMENTUM & SMC ORDER FLOW for ${symbol}...`, 'INFO');
+            try {
+                const res = await fetch(`/api/market/smc-scan?symbol=${encodeURIComponent(symbol)}`);
+                const data = await res.json();
+                if (data.success && data.smc) {
+                    const smc = data.smc;
+                    renderRadarData(symbol, smc);
+
+                    if (smc.action.includes('BUY') || smc.action.includes('SELL')) {
+                        // Trade creation strictly requires both is_actionable === true AND explicitly confirmed completed candle!
+                        if (smc.is_actionable === true && smc.signal_status && smc.signal_status.includes('CONFIRMED')) {
+                            log(`🎯 [EXACT ENTRY ACTIVE] ${symbol} => ${smc.action} | SL: ₹${smc.suggested_sl} | TP1: ₹${smc.suggested_tp1}`, 'ENTRY');
+                            addOrUpdateConfirmedTrade(symbol, smc);
+                        } else {
+                            log(`[${symbol} STATUS] ${smc.action} - ${smc.reasoning}`, 'NO_ENTRY');
+                        }
+                    } else {
+                        log(`[${symbol} STATUS] ${smc.action} - ${smc.reasoning}`, 'NO_ENTRY');
+                    }
+                }
+            } catch (e) {
+                log('SMC scan error: ' + e.message, 'WARN');
+            }
+        }
+
+        window.onload = init;
+    </script>
+</body>
+
+</html>
