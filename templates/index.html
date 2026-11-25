@@ -314,6 +314,8 @@
             align-items: center;
             justify-content: center;
             flex-shrink: 0;
+            overflow: hidden;
+            background: rgba(15, 23, 42, 0.6);
         }
 
         .radar-sweep-dial::after {
@@ -324,6 +326,19 @@
             border-radius: 50%;
             background: conic-gradient(from 0deg, transparent 0deg, transparent 270deg, rgba(0, 240, 255, 0.6) 360deg);
             animation: radarSpin 3.5s linear infinite;
+            pointer-events: none;
+            z-index: 2;
+        }
+
+        .radar-center-content {
+            position: relative;
+            z-index: 3;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            height: 100%;
         }
 
         @keyframes radarSpin {
@@ -473,12 +488,14 @@
                 <div class="radar-scan-canvas-container cyber-panel">
                     <div style="display:flex; align-items:center; gap:20px;">
                         <div class="radar-sweep-dial">
-                            <span style="font-size:0.75rem; font-weight:900; color:var(--neon-cyan);"
-                                id="radarTargetSymbol">NIFTY</span>
+                            <div class="radar-center-content">
+                                <img id="radarStockIcon" src=""
+                                    style="width:48px; height:48px; border-radius:50%; border:2px solid var(--neon-cyan); object-fit:contain; background:#0f172a; margin-bottom:2px;"
+                                    onerror="this.src=makeMonogramSvg(document.getElementById('radarTargetSymbol').innerText);">
+                                <span style="font-size:0.70rem; font-weight:900; color:var(--neon-cyan); text-shadow:0 0 6px rgba(0,240,255,0.8);"
+                                    id="radarTargetSymbol">NIFTY</span>
+                            </div>
                         </div>
-                        <img id="radarStockIcon" src=""
-                            style="width:48px; height:48px; border-radius:50%; border:2px solid var(--neon-cyan); object-fit:contain; background:#0f172a; display:none;"
-                            onerror="this.style.display='none';">
                         <div>
                             <div
                                 style="font-size:0.68rem; color:var(--text-muted); letter-spacing:1.2px; text-transform:uppercase; font-weight:700;">
@@ -808,6 +825,15 @@
         let activeConfirmedTrades = {};
         let notifiedPreparingStocksSet = new Set();
         let notifiedTradesSet = new Set();
+        let userLastInteractionTime = 0;
+        let autoCycleIndex = 0;
+        let universePool = [];
+
+        // Generate instant crisp circular SVG monogram fallback
+        function makeMonogramSvg(symbolName) {
+            const clean = (symbolName || 'STK').replace('.NS', '').substring(0, 2).toUpperCase();
+            return `data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='48' height='48' viewBox='0 0 48 48'><rect width='48' height='48' rx='24' fill='%230f172a' stroke='%2300f0ff' stroke-width='2'/><text x='50%25' y='55%25' dominant-baseline='middle' text-anchor='middle' font-family='sans-serif' font-weight='900' font-size='18' fill='%2300f0ff'>${clean}</text></svg>`;
+        }
 
         // Restore any stored trades from localStorage
         try {
@@ -845,7 +871,7 @@
             setInterval(loadRankedOpportunities, 12000);
             setInterval(loadTrackerAndLearningDiagnostics, 10000);
             setInterval(syncActiveTradeBanner, 10000);
-            setInterval(cycleScanTarget, 8000);
+            setInterval(cycleScanTarget, 5000);
             setInterval(() => loadNSEInstitutionalData(), 30000);
         }
 
@@ -888,12 +914,11 @@
         }
 
         function getStockLogoUrl(cleanSym) {
-            const sym = cleanSym.toUpperCase();
+            const sym = (cleanSym || '').toUpperCase();
             if (stockLogosCache[sym]) {
                 return stockLogosCache[sym];
             }
-            // Fallback to Clearbit / Google favicon / Groww CDN
-            return `https://assets-netstorage.groww.in/stock-assets/logos/GSTK_${sym}.png`;
+            return makeMonogramSvg(sym);
         }
 
         function renderMoversList(stocks, containerId, isBull) {
@@ -917,11 +942,16 @@
                 const scoreBadge = stk.score ? `<span style="font-size:0.55rem; background:rgba(255,170,0,0.15); color:var(--neon-amber); padding:1px 4px; border-radius:2px; font-weight:800;">COIL ${stk.score}</span>` : '';
                 const logoUrl = getStockLogoUrl(cleanSym);
 
+                // Add to auto-cycle universe pool if not already present
+                if (!universePool.includes(sym)) {
+                    universePool.push(sym);
+                }
+
                 html += `
-                <div class="stock-mover-card ${isSelected ? 'active-selected' : ''}" onclick="selectStock('${sym}')" style="${isPrep ? 'border-left: 4px solid var(--neon-amber);' : ''}">
+                <div class="stock-mover-card ${isSelected ? 'active-selected' : ''}" onclick="userSelectStock('${sym}')" style="${isPrep ? 'border-left: 4px solid var(--neon-amber);' : ''}">
                     <div style="display:flex; justify-content:space-between; align-items:center;">
                         <span style="font-weight:900; font-size:0.86rem; color:#fff; display:flex; align-items:center; gap:8px;">
-                            <img src="${logoUrl}" style="width:20px; height:20px; border-radius:50%; object-fit:contain; background:#1e293b;" onerror="this.style.display='none';">
+                            <img src="${logoUrl}" style="width:20px; height:20px; border-radius:50%; object-fit:contain; background:#1e293b;" onerror="this.onerror=null; this.src=makeMonogramSvg('${cleanSym}');">
                             #${idx + 1} ${cleanSym}
                             ${scoreBadge}
                         </span>
@@ -937,11 +967,17 @@
 
             // Auto-select first stock if none selected
             if (!currentStockSymbol && stocks.length > 0) {
-                selectStock(stocks[0].symbol);
+                selectStock(stocks[0].symbol, false);
             }
         }
 
-        async function selectStock(symbol) {
+        // When user manually clicks a card: freeze auto-cycle for 25s so user can inspect
+        function userSelectStock(symbol) {
+            userLastInteractionTime = Date.now();
+            selectStock(symbol, false);
+        }
+
+        async function selectStock(symbol, isAuto = false) {
             currentStockSymbol = symbol;
             const cleanSym = symbol.replace('.NS', '');
             document.getElementById('radarTargetSymbol').innerText = cleanSym;
@@ -949,15 +985,31 @@
 
             const iconEl = document.getElementById('radarStockIcon');
             if (iconEl) {
-                const logo = getStockLogoUrl(cleanSym);
-                iconEl.src = logo;
+                iconEl.onerror = null;
+                iconEl.src = getStockLogoUrl(cleanSym);
                 iconEl.style.display = 'block';
-                iconEl.onerror = function() {
-                    // Fallback to high-visibility circular SVG monogram
-                    this.onerror = null;
-                    this.src = `data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='48' height='48' viewBox='0 0 48 48'><rect width='48' height='48' rx='24' fill='%230f172a' stroke='%2300f0ff' stroke-width='2'/><text x='50%25' y='55%25' dominant-baseline='middle' text-anchor='middle' font-family='sans-serif' font-weight='900' font-size='18' fill='%2300f0ff'>${cleanSym.substring(0, 2)}</text></svg>`;
-                };
             }
+
+            // Visual feedback: show mode (LIVE USER INSPECTION vs BACKGROUND SCANNING)
+            const cycleModeEl = document.getElementById('selectedSectorTitle');
+            if (cycleModeEl) {
+                if (isAuto) {
+                    cycleModeEl.innerText = `BACKGROUND SCANNING UNIVERSE // AUTO-CYCLE`;
+                    cycleModeEl.style.color = 'var(--neon-cyan)';
+                } else {
+                    cycleModeEl.innerText = `MANUAL INSPECTION // LIVE TRACKING ACTIVE`;
+                    cycleModeEl.style.color = 'var(--neon-green)';
+                }
+            }
+
+            // Highlight corresponding active card on sidebar if visible
+            document.querySelectorAll('.stock-mover-card').forEach(card => {
+                if (card.innerText.includes(cleanSym)) {
+                    card.classList.add('active-selected');
+                } else {
+                    card.classList.remove('active-selected');
+                }
+            });
 
             try {
                 const res = await fetch(`/api/market/smc-scan?symbol=${encodeURIComponent(symbol)}`);
@@ -1074,10 +1126,10 @@
                     const logoUrl = getStockLogoUrl(sym);
                     const prc = c.current_price ? `₹${Number(c.current_price).toFixed(2)}` : '';
                     html += `
-                    <div class="stock-mover-card" onclick="selectStock('${c.symbol}')" style="border-left-color:${col}; margin-bottom:6px; padding:10px 14px;">
+                    <div class="stock-mover-card" onclick="userSelectStock('${c.symbol}')" style="border-left-color:${col}; margin-bottom:6px; padding:10px 14px;">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
                             <span style="font-weight:900; font-size:0.90rem; color:#fff; display:flex; align-items:center; gap:8px;">
-                                <img src="${logoUrl}" style="width:20px; height:20px; border-radius:50%; object-fit:contain; background:#1e293b;" onerror="this.style.display='none';">
+                                <img src="${logoUrl}" style="width:20px; height:20px; border-radius:50%; object-fit:contain; background:#1e293b;" onerror="this.onerror=null; this.src=makeMonogramSvg('${sym}');">
                                 #${idx + 1} ${sym} <span style="font-size:0.68rem; color:${col}; font-weight:800;">${isBull ? '▲ PRE-BREAKOUT' : '▼ PRE-BREAKDOWN'}</span>
                             </span>
                             <span style="display:flex; align-items:center; gap:8px;">
@@ -1106,10 +1158,10 @@
                     const logoUrl = getStockLogoUrl(sym);
                     const prc = c.current_price ? `₹${Number(c.current_price).toFixed(2)}` : '';
                     html += `
-                    <div class="stock-mover-card" onclick="selectStock('${c.symbol}')" style="border-left-color:${col}; border-color:${col}; background:rgba(0,255,163,0.08); margin-bottom:6px; padding:10px 14px;">
+                    <div class="stock-mover-card" onclick="userSelectStock('${c.symbol}')" style="border-left-color:${col}; border-color:${col}; background:rgba(0,255,163,0.08); margin-bottom:6px; padding:10px 14px;">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
                             <span style="font-weight:900; font-size:0.92rem; color:#fff; display:flex; align-items:center; gap:8px;">
-                                <img src="${logoUrl}" style="width:22px; height:22px; border-radius:50%; object-fit:contain; background:#1e293b;" onerror="this.style.display='none';">
+                                <img src="${logoUrl}" style="width:22px; height:22px; border-radius:50%; object-fit:contain; background:#1e293b;" onerror="this.onerror=null; this.src=makeMonogramSvg('${sym}');">
                                 #${idx + 1} ${sym} <span style="font-size:0.68rem; background:${col}; color:#000; padding:2px 6px; border-radius:3px; font-weight:900;">${isBull ? 'BUY (CALL)' : 'SELL (PUT)'}</span>
                             </span>
                             <span style="display:flex; align-items:center; gap:8px;">
@@ -1275,10 +1327,34 @@
         }
 
         function cycleScanTarget() {
-            const cards = document.querySelectorAll('.stock-mover-card');
+            // If user recently interacted (< 20 seconds ago), do NOT hijack their manual inspection
+            if (Date.now() - userLastInteractionTime < 20000) {
+                return;
+            }
+
+            // Gather candidate pool: all mover cards across Bullish, Bearish, and Preparing
+            const cards = Array.from(document.querySelectorAll('.stock-mover-card'));
+            if (cards.length === 0 && universePool.length === 0) return;
+
+            // Pick next stock from cards or universePool
+            let nextSymbol = null;
             if (cards.length > 0) {
-                const rnd = Math.floor(Math.random() * Math.min(cards.length, 10));
-                // Optional subtle pulse highlight
+                autoCycleIndex = (autoCycleIndex + 1) % cards.length;
+                const card = cards[autoCycleIndex];
+                // Extract clean symbol from card text
+                const match = card.innerText.match(/#\d+\s+([A-Z0-9_\-]+)/);
+                if (match && match[1]) {
+                    nextSymbol = match[1];
+                }
+            }
+
+            if (!nextSymbol && universePool.length > 0) {
+                autoCycleIndex = (autoCycleIndex + 1) % universePool.length;
+                nextSymbol = universePool[autoCycleIndex];
+            }
+
+            if (nextSymbol) {
+                selectStock(nextSymbol, true);
             }
         }
 
