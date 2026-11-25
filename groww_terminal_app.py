@@ -706,26 +706,9 @@ def background_screener_worker():
                     if norm_fno_set and clean_sym not in norm_fno_set:
                         continue
 
-                    # Memory Optimization: If stock was scanned in the last 10 minutes and is NOT in active open/preparing,
-                    # skip it so the bot cycles rapidly to fresh un-scanned stocks!
-                    if sym not in active_open_symbols and sym not in preparing_tracked_symbols:
-                        from engine.learning.historical_stock_learner import HistoricalStockLearner
-                        if HistoricalStockLearner.should_skip_scan(clean_sym, max_freshness_seconds=600):
-                            continue
                     try:
-                        cdf = None
-                        # Priority 1: Direct native Groww API historical candles
-                        if groww_data_provider.is_authenticated():
-                            try:
-                                cdf = groww_data_provider.get_historical_candles_df(clean_sym, interval="5minute", days_back=5)
-                            except Exception:
-                                cdf = None
-
-                        # Priority 2: Fallback to Yahoo Finance
-                        if cdf is None or cdf.empty:
-                            cdf = yf.download(sym, period="5d", interval="5m", progress=False)
-                            if isinstance(cdf.columns, pd.MultiIndex):
-                                cdf = cdf.xs(sym, axis=1, level=1) if sym in cdf.columns.levels[1] else cdf
+                        # Unified Groww Data Provider (single source of truth)
+                        cdf, cdf_src = groww_data_provider.fetch_5m_candles(clean_sym, days_back=5)
                         
                         # Always cache raw OHLCV DataFrame if valid and non-empty (do not discard if momentum res is None!)
                         if cdf is not None and not cdf.empty and len(cdf) >= 15:
@@ -734,8 +717,17 @@ def background_screener_worker():
                             
                             # CRITICAL: Determine completed candle timestamp vs raw forming candle
                             feed_meta = MarketValidator.validate_feed_freshness(cdf, max_delay_seconds=300, candle_duration_seconds=300)
+                            if not feed_meta.get("is_valid", False):
+                                continue  # Reject invalid feed immediately (P0)
+
                             is_cdf_completed = feed_meta.get("is_completed_candle", False)
                             completed_candle_ts = curr_stock_candle_ts if is_cdf_completed else str(cdf.index[-2])
+
+                            # Completed-Candle Freshness (P1): If stock's completed candle hasn't changed, skip to cycle to other stocks!
+                            if sym not in active_open_symbols and sym not in preparing_tracked_symbols:
+                                from engine.learning.historical_stock_learner import HistoricalStockLearner
+                                if HistoricalStockLearner.should_skip_scan(clean_sym, current_completed_candle_ts=completed_candle_ts):
+                                    continue
                             
                             # Invalidate stale fno_filter_data if it does NOT match the completed candle timestamp!
                             # Do NOT compare against forming candle ts!
@@ -883,18 +875,10 @@ def smc_scan():
                     return jsonify({"success": False, "error": "Insufficient market data"}), 400
                 raw_cached["data"] = res
         else:
-            df = None
             clean_sym = symbol.replace(".NS", "").replace("^NSEI", "NIFTY")
-            if groww_data_provider.is_authenticated():
-                try:
-                    df = groww_data_provider.get_historical_candles_df(clean_sym, interval="5minute", days_back=5)
-                except Exception:
-                    df = None
-
+            df, _ = groww_data_provider.fetch_5m_candles(clean_sym, days_back=5)
             if df is None or df.empty:
-                df = yf.download(symbol, period="5d", interval="5m", progress=False)
-                if isinstance(df.columns, pd.MultiIndex):
-                    df = df.xs(symbol, axis=1, level=1) if symbol in df.columns.levels[1] else df
+                return jsonify({"success": False, "error": "Insufficient market data"}), 400
             res = evaluate_explosive_momentum(df, symbol)
             if not res:
                 return jsonify({"success": False, "error": "Insufficient market data"}), 400

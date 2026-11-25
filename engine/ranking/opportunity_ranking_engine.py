@@ -190,7 +190,7 @@ class OpportunityRankingEngine:
         }
 
     @staticmethod
-    def evaluate_stock_opportunity(stock_df, symbol, sector_name="GENERAL", sector_change=0.0, nifty_df=None, vwap=None, opp_eval=None, time_slot_rvol=None, rvol_obs=0, is_liquid=True, sector_df=None):
+    def evaluate_stock_opportunity(stock_df, symbol, sector_name="GENERAL", sector_change=0.0, nifty_df=None, vwap=None, opp_eval=None, time_slot_rvol=None, rvol_obs=0, is_liquid=True, sector_df=None, is_replay=False, as_of_ts=None):
         """
         Computes comprehensive quantitative opportunity score, breakout proximity, and prediction stage.
         Enforces hard liquidity and candle alignment gates.
@@ -460,14 +460,15 @@ class OpportunityRankingEngine:
         if rs_accel_6 < -0.2: conf_bear_score += 12.0
 
         # 4. Adaptive Machine Learning Multiplier from historical feedback & 30-day stock personality:
+        # Strictly passes as_of_ts and is_replay to eliminate future-learning leakage (P1)
         from engine.learning.adaptive_trade_learner import AdaptiveTradeLearner
         from engine.learning.historical_stock_learner import HistoricalStockLearner
         strat_key = "MOMENTUM_BREAKOUT" if (is_broken_above_orh or is_broken_below_orl) else "INTRADAY_TREND"
-        learn_mult_bull = AdaptiveTradeLearner.get_pattern_multiplier(strat_key, "BULLISH")
-        learn_mult_bear = AdaptiveTradeLearner.get_pattern_multiplier(strat_key, "BEARISH")
+        learn_mult_bull = AdaptiveTradeLearner.get_pattern_multiplier(strat_key, "BULLISH", as_of_ts=as_of_ts)
+        learn_mult_bear = AdaptiveTradeLearner.get_pattern_multiplier(strat_key, "BEARISH", as_of_ts=as_of_ts)
 
         # 30-day stock personality multiplier (rewards clean movers, penalizes wick traps)
-        stock_mult = HistoricalStockLearner.analyze_30d_stock_history(symbol, stock_df)
+        stock_mult = HistoricalStockLearner.analyze_30d_stock_history(symbol, stock_df, is_replay=is_replay, as_of_ts=as_of_ts)
         combined_bull_mult = learn_mult_bull * stock_mult
         combined_bear_mult = learn_mult_bear * stock_mult
 

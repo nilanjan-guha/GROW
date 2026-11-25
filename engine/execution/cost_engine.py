@@ -337,3 +337,17 @@ class IndianMarketCosts:
             return IndianMarketCosts.calculate_futures_costs(entry_price, exit_price, lot_size=quantity)
         else:
             return IndianMarketCosts.calculate_equity_costs(entry_price, exit_price, quantity=quantity)
+
+    @staticmethod
+    def calculate_round_trip_costs(entry_price: float, exit_price: float, qty: int = 100, instrument: str = "EQUITY", include_slippage: bool = True) -> dict:
+        """Alias for calculate_intraday_costs accepting generic parameters"""
+        inst = instrument.upper()
+        if "OPTION" in inst:
+            return IndianMarketCosts.calculate_options_costs(entry_price, exit_price, lot_size=qty, include_slippage=include_slippage)
+        elif "FUTURE" in inst:
+            return IndianMarketCosts.calculate_futures_costs(entry_price, exit_price, lot_size=qty, include_slippage=include_slippage)
+        else:
+            return IndianMarketCosts.calculate_equity_costs(entry_price, exit_price, quantity=qty, include_slippage=include_slippage)
+
+# Alias for unified cost architecture
+CostEngine = IndianMarketCosts

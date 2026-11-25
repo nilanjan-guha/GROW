@@ -20,6 +20,7 @@ import numpy as np
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from engine.screener_pipeline import ScreenerPipeline
+from engine.execution.cost_engine import CostEngine
 
 def run_screener_replay(sample_symbols=None, days="1mo", instrument_type="EQUITY"):
     import yfinance as yf
@@ -533,39 +534,22 @@ def run_screener_replay(sample_symbols=None, days="1mo", instrument_type="EQUITY
                 max_fav = (actual_entry - min(in_trade_lows[:exit_offset+1])) / actual_entry * 100
                 max_adv = (max(in_trade_highs[:exit_offset+1]) - actual_entry) / actual_entry * 100
 
-            # Statutory Turnover Costs for Indian Intraday Equity / Futures:
-            # - Equity Intraday:
-            #   * Brokerage: min(₹20, 0.03% of turnover) each side
-            #   * STT: 0.025% on sell side only
-            #   * Exchange turnover charge: 0.00325% on total turnover
-            #   * SEBI turnover fee: ₹10 per crore (0.0001% of turnover)
-            #   * Stamp duty: 0.003% on buy side only
-            #   * GST: 18% on (Brokerage + Exchange + SEBI)
-            #
-            # - Futures Intraday (Underlying Price Proxy):
-            #   * Brokerage: min(₹20, 0.03% of turnover) each side
-            #   * STT: 0.0125% on sell side only
-            #   * Exchange turnover charge: 0.0019% on total turnover
-            #   * SEBI turnover fee: ₹10 per crore (0.0001% of turnover)
-            #   * Stamp duty: 0.002% on buy side only
-            #   * GST: 18% on (Brokerage + Exchange + SEBI)
-            entry_turnover_rs = actual_entry * trade_qty
-            exit_turnover_rs = exit_price_actual * trade_qty
-            total_turnover_rs = entry_turnover_rs + exit_turnover_rs
-
-            brokerage_rs = min(20.0, entry_turnover_rs * 0.0003) + min(20.0, exit_turnover_rs * 0.0003)
-            if instrument_type.upper() == "FUTURES":
-                stt_rs = (exit_turnover_rs if direction == "BULLISH" else entry_turnover_rs) * 0.000125
-                exch_turnover_fee_rs = total_turnover_rs * 0.000019
-                stamp_duty_rs = (entry_turnover_rs if direction == "BULLISH" else exit_turnover_rs) * 0.00002
-            else:
-                stt_rs = (exit_turnover_rs if direction == "BULLISH" else entry_turnover_rs) * 0.00025
-                exch_turnover_fee_rs = total_turnover_rs * 0.0000325
-                stamp_duty_rs = (entry_turnover_rs if direction == "BULLISH" else exit_turnover_rs) * 0.00003
-            
-            sebi_charges_rs = total_turnover_rs * 0.000001
-            gst_rs = (brokerage_rs + exch_turnover_fee_rs + sebi_charges_rs) * 0.18
-            total_friction_rs = brokerage_rs + stt_rs + exch_turnover_fee_rs + sebi_charges_rs + gst_rs + stamp_duty_rs
+            # Calculate precise Indian transaction costs using unified CostEngine (P1 Fix)
+            # Guarantees 100% agreement between replay and live outcome tracking
+            cost_res = CostEngine.calculate_round_trip_costs(
+                entry_price=actual_entry,
+                exit_price=exit_price_actual,
+                qty=trade_qty,
+                instrument=instrument_type.upper(),
+                include_slippage=False # Slippage already modeled at execution bar Open
+            )
+            brokerage_rs = cost_res["brokerage"]
+            stt_rs = cost_res["stt"]
+            exch_turnover_fee_rs = cost_res["exchange_charges"]
+            stamp_duty_rs = cost_res["stamp_duty"]
+            sebi_charges_rs = cost_res["sebi_charges"]
+            gst_rs = cost_res["gst"]
+            total_friction_rs = cost_res["total_costs"]
 
             gross_realized_rs = (exit_price_actual - actual_entry) * trade_qty if direction == "BULLISH" else (actual_entry - exit_price_actual) * trade_qty
             net_realized_rs = gross_realized_rs - total_friction_rs

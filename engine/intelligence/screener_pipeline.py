@@ -138,7 +138,9 @@ class ScreenerPipeline:
             time_slot_rvol=time_slot_rvol,
             rvol_obs=rvol_obs,
             is_liquid=True,
-            sector_df=sector_df
+            sector_df=sector_df,
+            is_replay=is_replay,
+            as_of_ts=eval_df.index[-1] if not eval_df.empty else None
         )
 
         return {
