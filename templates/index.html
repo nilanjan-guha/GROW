@@ -28,6 +28,8 @@
             <span class="badge" id="nseBadge" style="color:var(--neon-green); border-color:var(--neon-green);">NSE
                 INDIA: LIVE FEED</span>
             <span class="badge" id="fnoBadge">FNO UNIVERSE: 219 ACTIVE</span>
+            <span class="badge" id="trackerBadge" style="color:var(--neon-green); border-color:var(--neon-green); background:rgba(0,255,170,0.08);" title="Dedicated Background 15s Continuous Tracker">⚡ TRACKER: 0 COILS</span>
+            <span class="badge" id="learningBadge" style="color:var(--neon-amber); border-color:var(--neon-amber); background:rgba(255,170,0,0.08);" title="Real-Time Learning Post-Mortem Feedback">🧠 LEARNER: ACTIVE (0 Post-Mortems)</span>
             <span class="badge" id="cycleStatus" style="color:var(--neon-cyan);">CYCLE: NEURAL SWEEP</span>
         </div>
         <div style="display:flex; gap:12px; align-items:center;">
@@ -751,6 +753,10 @@
             // Fetch and render Top 3 Bullish & Bearish Ranked Opportunities every 15 seconds
             await loadRankedOpportunities();
             setInterval(loadRankedOpportunities, 15000);
+
+            // Fetch and render Dedicated Continuous Tracker & Adaptive Learning diagnostics every 10 seconds
+            await loadTrackerAndLearningDiagnostics();
+            setInterval(loadTrackerAndLearningDiagnostics, 10000);
 
             // Fetch and render official NSE India Institutional Data every 30 seconds
             await loadNSEInstitutionalData();
@@ -1593,6 +1599,30 @@
                     } catch (e) { }
 
                     renderConfirmedBanner();
+                }
+            } catch (e) { }
+        }
+
+        // Dedicated Continuous Tracker & Adaptive Learning HUD Synchronization
+        async function loadTrackerAndLearningDiagnostics() {
+            try {
+                const res = await fetch('/api/learning/diagnostics');
+                const data = await res.json();
+                if (data && data.success) {
+                    const stats = data.tracker_stats || {};
+                    const prepCount = stats.active_prep_count || (data.preparing_stocks ? data.preparing_stocks.length : 0);
+                    const openCount = stats.open_signals_count || 0;
+                    const pms = data.post_mortems || [];
+
+                    const trackerBadge = document.getElementById('trackerBadge');
+                    if (trackerBadge) {
+                        trackerBadge.innerText = `⚡ TRACKER: ${prepCount} COILS | ${openCount} ACTIVE`;
+                    }
+
+                    const learningBadge = document.getElementById('learningBadge');
+                    if (learningBadge) {
+                        learningBadge.innerText = `🧠 LEARNER: ${pms.length} POST-MORTEMS`;
+                    }
                 }
             } catch (e) { }
         }
