@@ -35,6 +35,10 @@ from engine.missed_move_detector import MissedMoveDetector
 from engine.strategy_learning_engine import StrategyLearningEngine
 from engine.nse_data_engine import NSEDataEngine
 from engine.fno_momentum_filter import FNOMomentumFilter
+from core.groww_data_provider import GrowwDataProvider
+
+# Initialize Groww Native Data Provider
+groww_data_provider = GrowwDataProvider()
 
 # Initialize NSE Institutional Data Engine
 nse_engine = NSEDataEngine()
@@ -126,6 +130,8 @@ def auto_connect_groww():
             except Exception:
                 token = api_token
         client = GrowwAPI(token)
+        screener_state["groww_client"] = client
+        groww_data_provider.set_client(client)
 
         try:
             screener_state["user_profile"] = client.get_user_profile(timeout=5)
@@ -707,9 +713,19 @@ def background_screener_worker():
                         if HistoricalStockLearner.should_skip_scan(clean_sym, max_freshness_seconds=600):
                             continue
                     try:
-                        cdf = yf.download(sym, period="5d", interval="5m", progress=False)
-                        if isinstance(cdf.columns, pd.MultiIndex):
-                            cdf = cdf.xs(sym, axis=1, level=1) if sym in cdf.columns.levels[1] else cdf
+                        cdf = None
+                        # Priority 1: Direct native Groww API historical candles
+                        if groww_data_provider.is_authenticated():
+                            try:
+                                cdf = groww_data_provider.get_historical_candles_df(clean_sym, interval="5minute", days_back=5)
+                            except Exception:
+                                cdf = None
+
+                        # Priority 2: Fallback to Yahoo Finance
+                        if cdf is None or cdf.empty:
+                            cdf = yf.download(sym, period="5d", interval="5m", progress=False)
+                            if isinstance(cdf.columns, pd.MultiIndex):
+                                cdf = cdf.xs(sym, axis=1, level=1) if sym in cdf.columns.levels[1] else cdf
                         
                         # Always cache raw OHLCV DataFrame if valid and non-empty (do not discard if momentum res is None!)
                         if cdf is not None and not cdf.empty and len(cdf) >= 15:
@@ -867,9 +883,18 @@ def smc_scan():
                     return jsonify({"success": False, "error": "Insufficient market data"}), 400
                 raw_cached["data"] = res
         else:
-            df = yf.download(symbol, period="5d", interval="5m", progress=False)
-            if isinstance(df.columns, pd.MultiIndex):
-                df = df.xs(symbol, axis=1, level=1) if symbol in df.columns.levels[1] else df
+            df = None
+            clean_sym = symbol.replace(".NS", "").replace("^NSEI", "NIFTY")
+            if groww_data_provider.is_authenticated():
+                try:
+                    df = groww_data_provider.get_historical_candles_df(clean_sym, interval="5minute", days_back=5)
+                except Exception:
+                    df = None
+
+            if df is None or df.empty:
+                df = yf.download(symbol, period="5d", interval="5m", progress=False)
+                if isinstance(df.columns, pd.MultiIndex):
+                    df = df.xs(symbol, axis=1, level=1) if symbol in df.columns.levels[1] else df
             res = evaluate_explosive_momentum(df, symbol)
             if not res:
                 return jsonify({"success": False, "error": "Insufficient market data"}), 400
@@ -1968,6 +1993,33 @@ def get_fno_momentum_watchlists_endpoint():
         "bearish_watchlist": bear,
         "fno_total": len(screener_state.get("fno_universe", []))
     })
+
+@app.route("/api/groww/option-chain")
+def get_groww_option_chain():
+    """Fetch complete option chain and Greeks using native Groww API with fail-closed structure"""
+    try:
+        symbol = request.args.get("symbol", "NIFTY").upper().replace(".NS", "")
+        expiry = request.args.get("expiry")
+        chain_data = groww_data_provider.get_option_chain_data(underlying=symbol, expiry_date=expiry)
+        if chain_data:
+            return jsonify({"success": True, "source": "GROWW_API", "data": chain_data})
+        return jsonify({"success": False, "source": "FALLBACK", "message": "Option chain not available for symbol/token roles"}), 404
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route("/api/groww/ltp-batch")
+def get_groww_ltp_batch():
+    """Fetch real-time LTP for a batch of instruments using native Groww API"""
+    try:
+        symbols_str = request.args.get("symbols", "")
+        if not symbols_str:
+            symbols = screener_state.get("fno_universe", [])[:50]
+        else:
+            symbols = [s.strip().upper() for s in symbols_str.split(",") if s.strip()]
+        ltp_map = groww_data_provider.get_ltp_batch(symbols)
+        return jsonify({"success": True, "count": len(ltp_map), "data": ltp_map})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route("/api/nse/institutional")
 def get_nse_institutional_data():
