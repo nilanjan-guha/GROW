@@ -1896,6 +1896,8 @@ def get_fno_momentum_watchlists_endpoint():
         "success": True,
         "bullish": bull,
         "bearish": bear,
+        "bullish_watchlist": bull,
+        "bearish_watchlist": bear,
         "fno_total": len(screener_state.get("fno_universe", []))
     })
 

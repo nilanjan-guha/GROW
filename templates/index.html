@@ -11,17 +11,17 @@
 
     <style>
         :root {
-            --bg-void: #030712;
-            --panel-bg: rgba(10, 16, 31, 0.78);
-            --panel-border: rgba(0, 240, 255, 0.22);
-            --panel-glow: 0 0 24px rgba(0, 240, 255, 0.12);
+            --bg-void: #060913;
+            --panel-bg: rgba(10, 16, 31, 0.94);
+            --panel-border: rgba(0, 240, 255, 0.25);
+            --panel-glow: 0 4px 20px rgba(0, 0, 0, 0.85);
             --neon-cyan: #00f0ff;
             --neon-green: #00ffa3;
             --neon-red: #ff2a5f;
             --neon-amber: #ffb800;
             --neon-purple: #b537f2;
             --text-main: #f8fafc;
-            --text-muted: #64748b;
+            --text-muted: #94a3b8;
             --wireframe: rgba(0, 240, 255, 0.08);
         }
 
@@ -59,12 +59,12 @@
             left: 0;
             width: 100vw;
             height: 100vh;
-            background: linear-gradient(rgba(18, 16, 38, 0) 50%, rgba(0, 0, 0, 0.35) 50%),
-                        linear-gradient(90deg, rgba(255, 0, 0, 0.02), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.02));
-            background-size: 100% 3px, 6px 100%;
+            background: linear-gradient(rgba(18, 16, 38, 0) 50%, rgba(0, 0, 0, 0.15) 50%),
+                        linear-gradient(90deg, rgba(255, 0, 0, 0.01), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.01));
+            background-size: 100% 4px, 8px 100%;
             z-index: 1;
             pointer-events: none;
-            opacity: 0.85;
+            opacity: 0.35;
         }
 
         .scanning-laser-beam {
@@ -780,8 +780,10 @@
                 const res = await fetch('/api/fno/momentum-watchlists');
                 const data = await res.json();
                 if (data.success) {
-                    renderMoversList(data.bullish_watchlist || [], 'bullishSectors', true);
-                    renderMoversList(data.bearish_watchlist || [], 'bearishSectors', false);
+                    const bullList = data.bullish || data.bullish_watchlist || [];
+                    const bearList = data.bearish || data.bearish_watchlist || [];
+                    renderMoversList(bullList, 'bullishSectors', true);
+                    renderMoversList(bearList, 'bearishSectors', false);
                 }
             } catch (e) { }
         }
@@ -1046,48 +1048,28 @@
             const details = document.getElementById('alertDetails');
             const activeKeys = Object.keys(activeConfirmedTrades);
 
-            if (activeKeys.length === 0 && (!recentTracked || recentTracked.length === 0)) {
+            // Only display confirmed trade banner when live position is actually ACTIVE
+            if (activeKeys.length === 0) {
                 banner.style.display = 'none';
                 return;
             }
 
             banner.style.display = 'block';
             let html = '';
-            // 1. Live Active Trades
+            // Live Active Trades Only
             activeKeys.forEach(sym => {
                 const tr = activeConfirmedTrades[sym];
                 const smc = tr.smc;
                 const isBuy = smc.action && smc.action.includes('BUY');
                 html += `
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px; padding:3px 6px; background:rgba(0,255,163,0.08); border-radius:3px;">
-                    <span><b>${sym.replace('.NS', '')}</b> [${isBuy ? 'CALL / LONG' : 'PUT / SHORT'}] Entry: ₹${smc.entry_price}</span>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px; padding:4px 8px; background:rgba(0,255,163,0.08); border-radius:4px; border:1px solid rgba(0,255,163,0.2);">
+                    <span style="font-size:0.80rem; font-weight:800; color:#fff;"><b>${sym.replace('.NS', '')}</b> [${isBuy ? 'CALL / LONG' : 'PUT / SHORT'}] Entry: ₹${smc.entry_price}</span>
                     <span style="display:flex; align-items:center; gap:8px;">
-                        <span>SL: <b style="color:var(--neon-amber);">₹${smc.suggested_sl}</b> | TP: <b style="color:var(--neon-cyan);">₹${smc.suggested_tp1}</b></span>
-                        <span style="font-size:0.55rem; background:var(--neon-green); color:#000; padding:1px 5px; border-radius:3px; font-weight:800;">ACTIVE IN TRADE</span>
+                        <span style="font-size:0.75rem;">SL: <b style="color:var(--neon-amber);">₹${smc.suggested_sl}</b> | TP: <b style="color:var(--neon-cyan);">₹${smc.suggested_tp1}</b></span>
+                        <span style="font-size:0.58rem; background:var(--neon-green); color:#000; padding:2px 6px; border-radius:3px; font-weight:900;">ACTIVE IN LIVE TRADE</span>
                     </span>
                 </div>`;
             });
-
-            // 2. Tracked Recent Trades with Target Hit / SL Hit / Closed Tags
-            if (recentTracked && recentTracked.length > 0) {
-                recentTracked.slice(0, 4).forEach(t => {
-                    if (t.outcome === 'ACTIVE') return;
-                    const sym = (t.symbol || '').replace('.NS', '');
-                    const isWin = (t.outcome || '').includes('WIN') || (t.outcome || '').includes('TP') || (t.net_pnl || 0) > 0;
-                    const isSL = (t.outcome || '').includes('SL') || (t.outcome || '').includes('LOSS') || (t.outcome || '').includes('STOP');
-                    const tagCol = isWin ? 'var(--neon-green)' : (isSL ? 'var(--neon-red)' : 'var(--neon-amber)');
-                    const tagText = isWin ? '🎯 TARGET HIT (PROFIT)' : (isSL ? '🛑 STOP LOSS HIT' : t.outcome);
-
-                    html += `
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:3px; font-size:0.70rem; color:#94a3b8; border-top:1px solid rgba(255,255,255,0.05); padding-top:2px;">
-                        <span>${sym} [${t.direction || 'TRADE'}] Entry: ₹${t.entry_price || '--'}</span>
-                        <span style="display:flex; align-items:center; gap:6px;">
-                            <span>PnL: <b style="color:${tagCol};">${(t.net_pnl || 0) >= 0 ? '+' : ''}₹${Number(t.net_pnl || 0).toFixed(1)}</b></span>
-                            <span style="font-size:0.52rem; border:1px solid ${tagCol}; color:${tagCol}; padding:1px 4px; border-radius:2px; font-weight:700;">${tagText}</span>
-                        </span>
-                    </div>`;
-                });
-            }
 
             details.innerHTML = html;
         }
