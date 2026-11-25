@@ -20,6 +20,7 @@ from engine.tracking.background_continuous_tracker import BackgroundContinuousTr
 # 2. Learning
 from engine.learning.adaptive_trade_learner import AdaptiveTradeLearner
 from engine.learning.strategy_learning_engine import StrategyLearningEngine
+from engine.learning.historical_stock_learner import HistoricalStockLearner
 
 # 3. Ranking
 from engine.ranking.opportunity_ranking_engine import OpportunityRankingEngine

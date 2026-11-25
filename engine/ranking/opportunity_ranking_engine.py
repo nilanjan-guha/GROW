@@ -459,16 +459,22 @@ class OpportunityRankingEngine:
         if rs_nifty < -0.3: conf_bear_score += 12.0
         if rs_accel_6 < -0.2: conf_bear_score += 12.0
 
-        # 4. Adaptive Machine Learning Multiplier from historical feedback:
+        # 4. Adaptive Machine Learning Multiplier from historical feedback & 30-day stock personality:
         from engine.learning.adaptive_trade_learner import AdaptiveTradeLearner
+        from engine.learning.historical_stock_learner import HistoricalStockLearner
         strat_key = "MOMENTUM_BREAKOUT" if (is_broken_above_orh or is_broken_below_orl) else "INTRADAY_TREND"
         learn_mult_bull = AdaptiveTradeLearner.get_pattern_multiplier(strat_key, "BULLISH")
         learn_mult_bear = AdaptiveTradeLearner.get_pattern_multiplier(strat_key, "BEARISH")
 
-        early_bull_score = int(round(min(98.0, (early_bull_score + rvol_bonus + rs_bonus_bull) * learn_mult_bull)))
-        conf_bull_score = int(round(min(98.0, (conf_bull_score + rvol_bonus + rs_bonus_bull + room_bonus) * learn_mult_bull)))
-        early_bear_score = int(round(min(98.0, (early_bear_score + rvol_bonus + rs_bonus_bear) * learn_mult_bear)))
-        conf_bear_score = int(round(min(98.0, (conf_bear_score + rvol_bonus + rs_bonus_bear + room_bonus) * learn_mult_bear)))
+        # 30-day stock personality multiplier (rewards clean movers, penalizes wick traps)
+        stock_mult = HistoricalStockLearner.analyze_30d_stock_history(symbol, stock_df)
+        combined_bull_mult = learn_mult_bull * stock_mult
+        combined_bear_mult = learn_mult_bear * stock_mult
+
+        early_bull_score = int(round(min(98.0, (early_bull_score + rvol_bonus + rs_bonus_bull) * combined_bull_mult)))
+        conf_bull_score = int(round(min(98.0, (conf_bull_score + rvol_bonus + rs_bonus_bull + room_bonus) * combined_bull_mult)))
+        early_bear_score = int(round(min(98.0, (early_bear_score + rvol_bonus + rs_bonus_bear) * combined_bear_mult)))
+        conf_bear_score = int(round(min(98.0, (conf_bear_score + rvol_bonus + rs_bonus_bear + room_bonus) * combined_bear_mult)))
 
         total_bull = max(early_bull_score, conf_bull_score)
         total_bear = max(early_bear_score, conf_bear_score)

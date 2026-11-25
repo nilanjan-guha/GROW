@@ -683,6 +683,13 @@ def background_screener_worker():
                     # Quality Filter: Only scan and rank stocks that are verified tradeable F&O stocks
                     if norm_fno_set and clean_sym not in norm_fno_set:
                         continue
+
+                    # Memory Optimization: If stock was scanned in the last 10 minutes and is NOT in active open/preparing,
+                    # skip it so the bot cycles rapidly to fresh un-scanned stocks!
+                    if sym not in active_open_symbols and sym not in preparing_tracked_symbols:
+                        from engine.learning.historical_stock_learner import HistoricalStockLearner
+                        if HistoricalStockLearner.should_skip_scan(clean_sym, max_freshness_seconds=600):
+                            continue
                     try:
                         cdf = yf.download(sym, period="5d", interval="5m", progress=False)
                         if isinstance(cdf.columns, pd.MultiIndex):
