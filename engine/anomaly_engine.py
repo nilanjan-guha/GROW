@@ -18,6 +18,9 @@ class AnomalyDetector:
             return 1.0
 
         df_copy = df.copy()
+        if isinstance(df_copy.columns, pd.MultiIndex):
+            df_copy.columns = df_copy.columns.get_level_values(0)
+
         if not pd.api.types.is_datetime64_any_dtype(df_copy.index):
             df_copy.index = pd.to_datetime(df_copy.index)
 
@@ -26,7 +29,8 @@ class AnomalyDetector:
         
         target_time = df_copy['Time'].iloc[current_candle_idx]
         current_date = df_copy['Date'].iloc[current_candle_idx]
-        curr_vol = float(df_copy['Volume'].iloc[current_candle_idx])
+        raw_vol = df_copy['Volume'].iloc[current_candle_idx]
+        curr_vol = float(raw_vol.iloc[0] if isinstance(raw_vol, pd.Series) else (raw_vol.item() if hasattr(raw_vol, 'item') else raw_vol))
 
         # Historical candles matching the same time of day from previous sessions
         same_time_bars = df_copy[(df_copy['Time'] == target_time) & (df_copy['Date'] < current_date)]
@@ -44,7 +48,8 @@ class AnomalyDetector:
     def calculate_rvol(v_series, window=20):
         if len(v_series) < 2:
             return 1.0
-        curr_vol = float(v_series.iloc[-1])
+        raw_v = v_series.iloc[-1]
+        curr_vol = float(raw_v.iloc[0] if isinstance(raw_v, pd.Series) else (raw_v.item() if hasattr(raw_v, 'item') else raw_v))
         prior = v_series.iloc[:-1]
         avg_vol = float(prior.tail(window).values.mean()) or 1.0
         return round(curr_vol / avg_vol, 2)
@@ -58,14 +63,17 @@ class AnomalyDetector:
         if df is None or len(df) < 2:
             return {"is_flat_open": False, "is_sudden_expansion": False, "rvol": 1.0, "range_expansion": 1.0, "direction": "NEUTRAL"}
 
-        o = df['Open']
-        h = df['High']
-        l = df['Low']
-        c = df['Close']
-        v = df['Volume']
+        df_copy = df.copy()
+        if isinstance(df_copy.columns, pd.MultiIndex):
+            df_copy.columns = df_copy.columns.get_level_values(0)
+
+        o = df_copy['Open']
+        h = df_copy['High']
+        l = df_copy['Low']
+        c = df_copy['Close']
+        v = df_copy['Volume']
 
         # Isolate today's session
-        df_copy = df.copy()
         if not pd.api.types.is_datetime64_any_dtype(df_copy.index):
             df_copy.index = pd.to_datetime(df_copy.index)
         df_copy['Date'] = df_copy.index.date
@@ -74,7 +82,8 @@ class AnomalyDetector:
         if today_df.empty:
             today_df = df_copy
 
-        open_price = float(today_df['Open'].iloc[0])
+        raw_open = today_df['Open'].iloc[0]
+        open_price = float(raw_open.iloc[0] if isinstance(raw_open, pd.Series) else (raw_open.item() if hasattr(raw_open, 'item') else raw_open))
         if prev_close and prev_close > 0:
             gap_pct = abs((open_price - prev_close) / prev_close) * 100
         else:
@@ -83,16 +92,24 @@ class AnomalyDetector:
         is_flat_open = gap_pct <= 0.65
 
         # Current candle velocity: compare current candle against completed prior candles
-        curr_c = float(c.iloc[-1])
-        curr_o = float(o.iloc[-1])
-        curr_range = float((h.iloc[-1] - l.iloc[-1]))
+        raw_c = c.iloc[-1]
+        raw_o = o.iloc[-1]
+        raw_h = h.iloc[-1]
+        raw_l = l.iloc[-1]
+
+        curr_c = float(raw_c.iloc[0] if isinstance(raw_c, pd.Series) else (raw_c.item() if hasattr(raw_c, 'item') else raw_c))
+        curr_o = float(raw_o.iloc[0] if isinstance(raw_o, pd.Series) else (raw_o.item() if hasattr(raw_o, 'item') else raw_o))
+        val_h = float(raw_h.iloc[0] if isinstance(raw_h, pd.Series) else (raw_h.item() if hasattr(raw_h, 'item') else raw_h))
+        val_l = float(raw_l.iloc[0] if isinstance(raw_l, pd.Series) else (raw_l.item() if hasattr(raw_l, 'item') else raw_l))
+        curr_range = float(val_h - val_l)
+
         prior_ranges = (h - l).iloc[:-1]
         avg_range = float(prior_ranges.tail(15).values.mean()) if len(prior_ranges) > 0 else (curr_range or 0.0001)
         avg_range = avg_range or 0.0001
 
         range_expansion = curr_range / avg_range
         # True time-of-day RVOL
-        tod_rvol = AnomalyDetector.calculate_time_of_day_rvol(df)
+        tod_rvol = AnomalyDetector.calculate_time_of_day_rvol(df_copy)
 
         is_sudden_expansion = bool(tod_rvol >= 1.5 and range_expansion >= 1.4)
         direction = "BULLISH" if curr_c >= curr_o else "BEARISH"
