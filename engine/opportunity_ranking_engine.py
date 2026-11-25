@@ -677,7 +677,7 @@ class OpportunityRankingEngine:
 
         # Explicit actionability flag: strictly requires confirmed stage with validated risk
         # IGNITION, PREPARING, and OBSERVING are strictly watch-only (is_actionable = False)
-        is_actionable = bool(stage == "CONFIRMED" and has_valid_structural_risk and computed_rr >= 1.20)
+        is_actionable = bool(stage == "CONFIRMED" and has_valid_structural_risk and computed_rr >= 1.10)
 
         return {
             "symbol": symbol,
