@@ -314,8 +314,6 @@
             align-items: center;
             justify-content: center;
             flex-shrink: 0;
-            overflow: hidden;
-            background: rgba(15, 23, 42, 0.6);
         }
 
         .radar-sweep-dial::after {
@@ -326,19 +324,6 @@
             border-radius: 50%;
             background: conic-gradient(from 0deg, transparent 0deg, transparent 270deg, rgba(0, 240, 255, 0.6) 360deg);
             animation: radarSpin 3.5s linear infinite;
-            pointer-events: none;
-            z-index: 2;
-        }
-
-        .radar-center-content {
-            position: relative;
-            z-index: 3;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            width: 100%;
-            height: 100%;
         }
 
         @keyframes radarSpin {
@@ -488,14 +473,12 @@
                 <div class="radar-scan-canvas-container cyber-panel">
                     <div style="display:flex; align-items:center; gap:20px;">
                         <div class="radar-sweep-dial">
-                            <div class="radar-center-content">
-                                <img id="radarStockIcon" src=""
-                                    style="width:48px; height:48px; border-radius:50%; border:2px solid var(--neon-cyan); object-fit:contain; background:#0f172a; margin-bottom:2px;"
-                                    onerror="this.src=makeMonogramSvg(document.getElementById('radarTargetSymbol').innerText);">
-                                <span style="font-size:0.70rem; font-weight:900; color:var(--neon-cyan); text-shadow:0 0 6px rgba(0,240,255,0.8);"
-                                    id="radarTargetSymbol">NIFTY</span>
-                            </div>
+                            <span style="font-size:0.82rem; font-weight:900; color:var(--neon-cyan); letter-spacing:0.8px;"
+                                id="radarTargetSymbol">NIFTY</span>
                         </div>
+                        <img id="radarStockIcon" src=""
+                            style="width:52px; height:52px; border-radius:50%; border:2px solid var(--neon-cyan); object-fit:contain; background:#0f172a; box-shadow:0 0 16px rgba(0,240,255,0.3); display:none;"
+                            onerror="this.style.display='none';">
                         <div>
                             <div
                                 style="font-size:0.68rem; color:var(--text-muted); letter-spacing:1.2px; text-transform:uppercase; font-weight:700;">
@@ -918,7 +901,7 @@
             if (stockLogosCache[sym]) {
                 return stockLogosCache[sym];
             }
-            return makeMonogramSvg(sym);
+            return null;
         }
 
         function renderMoversList(stocks, containerId, isBull) {
@@ -941,6 +924,7 @@
                 const isPrep = stk.is_preparing;
                 const scoreBadge = stk.score ? `<span style="font-size:0.55rem; background:rgba(255,170,0,0.15); color:var(--neon-amber); padding:1px 4px; border-radius:2px; font-weight:800;">COIL ${stk.score}</span>` : '';
                 const logoUrl = getStockLogoUrl(cleanSym);
+                const logoHtml = logoUrl ? `<img src="${logoUrl}" style="width:20px; height:20px; border-radius:50%; object-fit:contain; background:#1e293b;" onerror="this.style.display='none';">` : '';
 
                 // Add to auto-cycle universe pool if not already present
                 if (!universePool.includes(sym)) {
@@ -951,7 +935,7 @@
                 <div class="stock-mover-card ${isSelected ? 'active-selected' : ''}" onclick="userSelectStock('${sym}')" style="${isPrep ? 'border-left: 4px solid var(--neon-amber);' : ''}">
                     <div style="display:flex; justify-content:space-between; align-items:center;">
                         <span style="font-weight:900; font-size:0.86rem; color:#fff; display:flex; align-items:center; gap:8px;">
-                            <img src="${logoUrl}" style="width:20px; height:20px; border-radius:50%; object-fit:contain; background:#1e293b;" onerror="this.onerror=null; this.src=makeMonogramSvg('${cleanSym}');">
+                            ${logoHtml}
                             #${idx + 1} ${cleanSym}
                             ${scoreBadge}
                         </span>
@@ -985,9 +969,16 @@
 
             const iconEl = document.getElementById('radarStockIcon');
             if (iconEl) {
-                iconEl.onerror = null;
-                iconEl.src = getStockLogoUrl(cleanSym);
-                iconEl.style.display = 'block';
+                const logo = getStockLogoUrl(cleanSym);
+                if (logo) {
+                    iconEl.src = logo;
+                    iconEl.style.display = 'block';
+                    iconEl.onerror = function() {
+                        this.style.display = 'none';
+                    };
+                } else {
+                    iconEl.style.display = 'none';
+                }
             }
 
             // Visual feedback: show mode (LIVE USER INSPECTION vs BACKGROUND SCANNING)
@@ -1124,12 +1115,13 @@
                     const col = isBull ? 'var(--neon-green)' : 'var(--neon-red)';
                     const score = c.conviction_score || 70;
                     const logoUrl = getStockLogoUrl(sym);
+                    const logoHtml = logoUrl ? `<img src="${logoUrl}" style="width:20px; height:20px; border-radius:50%; object-fit:contain; background:#1e293b;" onerror="this.style.display='none';">` : '';
                     const prc = c.current_price ? `₹${Number(c.current_price).toFixed(2)}` : '';
                     html += `
                     <div class="stock-mover-card" onclick="userSelectStock('${c.symbol}')" style="border-left-color:${col}; margin-bottom:6px; padding:10px 14px;">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
                             <span style="font-weight:900; font-size:0.90rem; color:#fff; display:flex; align-items:center; gap:8px;">
-                                <img src="${logoUrl}" style="width:20px; height:20px; border-radius:50%; object-fit:contain; background:#1e293b;" onerror="this.onerror=null; this.src=makeMonogramSvg('${sym}');">
+                                ${logoHtml}
                                 #${idx + 1} ${sym} <span style="font-size:0.68rem; color:${col}; font-weight:800;">${isBull ? '▲ PRE-BREAKOUT' : '▼ PRE-BREAKDOWN'}</span>
                             </span>
                             <span style="display:flex; align-items:center; gap:8px;">
@@ -1156,12 +1148,13 @@
                     const isBull = c.direction === 'BULLISH';
                     const col = isBull ? 'var(--neon-green)' : 'var(--neon-red)';
                     const logoUrl = getStockLogoUrl(sym);
+                    const logoHtml = logoUrl ? `<img src="${logoUrl}" style="width:22px; height:22px; border-radius:50%; object-fit:contain; background:#1e293b;" onerror="this.style.display='none';">` : '';
                     const prc = c.current_price ? `₹${Number(c.current_price).toFixed(2)}` : '';
                     html += `
                     <div class="stock-mover-card" onclick="userSelectStock('${c.symbol}')" style="border-left-color:${col}; border-color:${col}; background:rgba(0,255,163,0.08); margin-bottom:6px; padding:10px 14px;">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
                             <span style="font-weight:900; font-size:0.92rem; color:#fff; display:flex; align-items:center; gap:8px;">
-                                <img src="${logoUrl}" style="width:22px; height:22px; border-radius:50%; object-fit:contain; background:#1e293b;" onerror="this.onerror=null; this.src=makeMonogramSvg('${sym}');">
+                                ${logoHtml}
                                 #${idx + 1} ${sym} <span style="font-size:0.68rem; background:${col}; color:#000; padding:2px 6px; border-radius:3px; font-weight:900;">${isBull ? 'BUY (CALL)' : 'SELL (PUT)'}</span>
                             </span>
                             <span style="display:flex; align-items:center; gap:8px;">
