@@ -4,10 +4,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI QUANT // 3D HOLOGRAPHIC F&O SNIPER RADAR</title>
+    <title>Finithic Intraday Scanner </title>
     <!-- Three.js for 3D Holographic Matrix Grid & Cyberpunk Particles -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700;800;900&family=Inter:wght@400;500;600;700;800&family=Orbitron:wght@600;800;900&display=swap" rel="stylesheet">
+    <link
+        href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700;800;900&family=Inter:wght@400;500;600;700;800&family=Orbitron:wght@600;800;900&display=swap"
+        rel="stylesheet">
 
     <style>
         :root {
@@ -60,7 +62,7 @@
             width: 100vw;
             height: 100vh;
             background: linear-gradient(rgba(18, 16, 38, 0) 50%, rgba(0, 0, 0, 0.15) 50%),
-                        linear-gradient(90deg, rgba(255, 0, 0, 0.01), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.01));
+                linear-gradient(90deg, rgba(255, 0, 0, 0.01), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.01));
             background-size: 100% 4px, 8px 100%;
             z-index: 1;
             pointer-events: none;
@@ -81,10 +83,23 @@
         }
 
         @keyframes laserSweep {
-            0% { top: -20px; opacity: 0; }
-            10% { opacity: 1; }
-            90% { opacity: 1; }
-            100% { top: 105vh; opacity: 0; }
+            0% {
+                top: -20px;
+                opacity: 0;
+            }
+
+            10% {
+                opacity: 1;
+            }
+
+            90% {
+                opacity: 1;
+            }
+
+            100% {
+                top: 105vh;
+                opacity: 0;
+            }
         }
 
         /* Command Workspace Master Layout */
@@ -165,8 +180,17 @@
         }
 
         @keyframes pulseGlow {
-            0%, 100% { transform: scale(1); opacity: 1; }
-            50% { transform: scale(1.4); opacity: 0.4; }
+
+            0%,
+            100% {
+                transform: scale(1);
+                opacity: 1;
+            }
+
+            50% {
+                transform: scale(1.4);
+                opacity: 0.4;
+            }
         }
 
         .hud-badges-group {
@@ -200,6 +224,7 @@
             background: rgba(0, 255, 163, 0.12);
             color: var(--neon-green);
         }
+
         .audio-ctrl-btn:hover {
             box-shadow: 0 0 12px var(--neon-green);
             background: var(--neon-green);
@@ -238,12 +263,14 @@
             cursor: pointer;
             transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.2s, border-color 0.2s;
         }
+
         .stock-mover-card:hover {
             transform: translateX(4px) scale(1.02);
             background: rgba(30, 41, 59, 0.85);
             border-color: var(--neon-cyan);
             box-shadow: 0 0 16px rgba(0, 240, 255, 0.25);
         }
+
         .stock-mover-card.active-selected {
             border-left: 4px solid var(--neon-cyan) !important;
             background: rgba(0, 240, 255, 0.08);
@@ -285,6 +312,7 @@
             align-items: center;
             justify-content: center;
         }
+
         .radar-sweep-dial::after {
             content: '';
             position: absolute;
@@ -294,9 +322,15 @@
             background: conic-gradient(from 0deg, transparent 0deg, transparent 270deg, rgba(0, 240, 255, 0.5) 360deg);
             animation: radarSpin 3.5s linear infinite;
         }
+
         @keyframes radarSpin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
         }
 
         /* Confirmed Trade Execution Box */
@@ -320,12 +354,14 @@
             border-radius: 4px;
             padding: 8px 10px;
         }
+
         .m-tile .label {
             font-size: 0.60rem;
             color: var(--text-muted);
             text-transform: uppercase;
             letter-spacing: 0.5px;
         }
+
         .m-tile .val {
             font-size: 0.88rem;
             font-weight: 800;
@@ -345,13 +381,16 @@
             width: 4px;
             height: 4px;
         }
+
         ::-webkit-scrollbar-track {
             background: rgba(0, 0, 0, 0.2);
         }
+
         ::-webkit-scrollbar-thumb {
             background: rgba(0, 240, 255, 0.35);
             border-radius: 2px;
         }
+
         ::-webkit-scrollbar-thumb:hover {
             background: var(--neon-cyan);
         }
@@ -385,14 +424,22 @@
             </div>
 
             <div class="hud-badges-group">
-                <span class="hud-pill" id="mktBadge" style="color:var(--neon-amber); border-color:var(--neon-amber);">FEED CONNECTING...</span>
-                <span class="hud-pill" style="color:var(--neon-cyan); border-color:var(--neon-cyan);">219 F&O ACTIVE</span>
-                <span class="hud-pill" id="trackerBadge" style="color:var(--neon-green); border-color:var(--neon-green); background:rgba(0,255,163,0.08);">⚡ TRACKER: 0 COILS</span>
-                <span class="hud-pill" id="learningBadge" style="color:var(--neon-amber); border-color:var(--neon-amber); background:rgba(255,170,0,0.08);">🧠 LEARNER: ACTIVE</span>
+                <span class="hud-pill" id="mktBadge"
+                    style="color:var(--neon-amber); border-color:var(--neon-amber);">FEED CONNECTING...</span>
+                <span class="hud-pill" style="color:var(--neon-cyan); border-color:var(--neon-cyan);">219 F&O
+                    ACTIVE</span>
+                <span class="hud-pill" id="trackerBadge"
+                    style="color:var(--neon-green); border-color:var(--neon-green); background:rgba(0,255,163,0.08);">⚡
+                    TRACKER: 0 COILS</span>
+                <span class="hud-pill" id="learningBadge"
+                    style="color:var(--neon-amber); border-color:var(--neon-amber); background:rgba(255,170,0,0.08);">🧠
+                    LEARNER: ACTIVE</span>
                 <span class="hud-pill" id="timerBadge" style="color:#fff;">NEXT SCAN: 05:00</span>
-                
+
                 <button class="audio-ctrl-btn" id="audioToggleBtn" onclick="toggleAudioMute()">🔊 AUDIO: ON</button>
-                <button class="audio-ctrl-btn" onclick="testChimeSound()" style="border-color:var(--neon-cyan); color:var(--neon-cyan); background:rgba(0,240,255,0.1);">TEST 🔔</button>
+                <button class="audio-ctrl-btn" onclick="testChimeSound()"
+                    style="border-color:var(--neon-cyan); color:var(--neon-cyan); background:rgba(0,240,255,0.1);">TEST
+                    🔔</button>
             </div>
         </header>
 
@@ -419,41 +466,68 @@
                 <div class="radar-scan-canvas-container cyber-panel">
                     <div style="display:flex; align-items:center; gap:16px;">
                         <div class="radar-sweep-dial">
-                            <span style="font-size:0.65rem; font-weight:800; color:var(--neon-cyan);" id="radarTargetSymbol">NIFTY</span>
+                            <span style="font-size:0.65rem; font-weight:800; color:var(--neon-cyan);"
+                                id="radarTargetSymbol">NIFTY</span>
                         </div>
+                        <img id="radarStockIcon" src=""
+                            style="width:36px; height:36px; border-radius:50%; border:1px solid var(--neon-cyan); object-fit:contain; background:#0f172a; display:none;"
+                            onerror="this.style.display='none';">
                         <div>
-                            <div style="font-size:0.60rem; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">REAL-TIME F&O SNIPER RADAR</div>
-                            <div style="font-size:1.15rem; font-weight:900; color:#fff;" id="radarStockTitle">AWAITING SELECTION...</div>
-                            <div style="font-size:0.68rem; color:var(--neon-amber); margin-top:2px;" id="selectedSectorTitle">SCANNING UNIVERSE</div>
+                            <div
+                                style="font-size:0.60rem; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase;">
+                                REAL-TIME F&O SNIPER RADAR</div>
+                            <div style="display:flex; align-items:baseline; gap:10px;">
+                                <span style="font-size:1.15rem; font-weight:900; color:#fff;"
+                                    id="radarStockTitle">AWAITING SELECTION...</span>
+                                <span style="font-size:1.00rem; font-weight:800; color:var(--neon-green);"
+                                    id="radarStockLivePrice">--</span>
+                                <span
+                                    style="font-size:0.75rem; font-weight:800; color:var(--neon-cyan); background:rgba(0,240,255,0.12); padding:1px 6px; border-radius:3px; border:1px solid rgba(0,240,255,0.3);"
+                                    id="radarStockScore">SCORE --/100</span>
+                            </div>
+                            <div style="font-size:0.68rem; color:var(--neon-amber); margin-top:2px;"
+                                id="selectedSectorTitle">SCANNING UNIVERSE</div>
                         </div>
                     </div>
 
                     <div style="text-align:right;">
                         <div style="font-size:0.58rem; color:var(--text-muted);">SCAN TELEMETRY</div>
-                        <div style="font-size:0.85rem; font-weight:800; color:var(--neon-green);" id="telemetryCycle">CONTINUOUS 15s SYNC</div>
-                        <div style="font-size:0.65rem; color:#94a3b8; margin-top:2px;" id="hologramCoords">LATENCY: 4ms // 0 SLIPPAGE GATE</div>
+                        <div style="font-size:0.85rem; font-weight:800; color:var(--neon-green);" id="telemetryCycle">
+                            CONTINUOUS 15s SYNC</div>
+                        <div style="font-size:0.65rem; color:#94a3b8; margin-top:2px;" id="hologramCoords">LATENCY: 4ms
+                            // 0 SLIPPAGE GATE</div>
                     </div>
                 </div>
 
                 <!-- Active Trade Banner (If live position exists) -->
-                <div id="confirmedTradeAlert" style="display:none; padding:10px 14px; border-radius:6px; background:rgba(0,255,163,0.06); border:1px solid var(--neon-green);">
+                <div id="confirmedTradeAlert"
+                    style="display:none; padding:10px 14px; border-radius:6px; background:rgba(0,255,163,0.06); border:1px solid var(--neon-green);">
                     <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <span style="font-size:0.75rem; font-weight:bold; color:var(--neon-green); letter-spacing:0.8px;">⚡ CONFIRMED LIVE TRADE EXECUTION</span>
+                        <span
+                            style="font-size:0.75rem; font-weight:bold; color:var(--neon-green); letter-spacing:0.8px;">⚡
+                            CONFIRMED LIVE TRADE EXECUTION</span>
                         <span id="alertTime" style="font-size:0.65rem; color:var(--text-muted);">ACTIVE</span>
                     </div>
-                    <div id="alertDetails" style="font-size:0.82rem; font-weight:700; color:#fff; margin-top:4px;">--</div>
+                    <div id="alertDetails" style="font-size:0.82rem; font-weight:700; color:#fff; margin-top:4px;">--
+                    </div>
                 </div>
 
                 <!-- SMC & Quant Trade Decision HUD -->
                 <div class="trade-decision-matrix cyber-panel">
-                    <div style="display:flex; justify-content:space-between; align-items:center; padding-bottom:8px; border-bottom:1px solid rgba(255,255,255,0.08);">
+                    <div
+                        style="display:flex; justify-content:space-between; align-items:center; padding-bottom:8px; border-bottom:1px solid rgba(255,255,255,0.08);">
                         <div>
-                            <div style="font-size:0.60rem; color:var(--text-muted); letter-spacing:0.8px;">INTRADAY TRADE DECISION</div>
-                            <div id="decisionAction" style="font-size:0.95rem; font-weight:900; color:#94a3b8; margin-top:2px;">NO TRADE SETUP YET</div>
+                            <div style="font-size:0.60rem; color:var(--text-muted); letter-spacing:0.8px;">INTRADAY
+                                TRADE DECISION</div>
+                            <div id="decisionAction"
+                                style="font-size:0.95rem; font-weight:900; color:#94a3b8; margin-top:2px;">NO TRADE
+                                SETUP YET</div>
                         </div>
                         <div style="text-align:right;">
-                            <div style="font-size:0.60rem; color:var(--text-muted); letter-spacing:0.8px;">CONFIRMATION STAGE</div>
-                            <div id="decisionPillTag" style="font-size:0.75rem; font-weight:800; color:var(--neon-cyan);">MONITORING</div>
+                            <div style="font-size:0.60rem; color:var(--text-muted); letter-spacing:0.8px;">CONFIRMATION
+                                STAGE</div>
+                            <div id="decisionPillTag"
+                                style="font-size:0.75rem; font-weight:800; color:var(--neon-cyan);">MONITORING</div>
                         </div>
                     </div>
 
@@ -485,7 +559,8 @@
                     <div class="metric-tiles-grid" style="margin-top:6px;">
                         <div class="m-tile">
                             <div class="label">Demand Zone (Buy Zone)</div>
-                            <div class="val" id="valDemandOb" style="color:var(--neon-green); font-size:0.75rem;">--</div>
+                            <div class="val" id="valDemandOb" style="color:var(--neon-green); font-size:0.75rem;">--
+                            </div>
                         </div>
                         <div class="m-tile">
                             <div class="label">Supply Zone (Sell Ceiling)</div>
@@ -506,13 +581,16 @@
                 <div class="opportunities-cockpit">
                     <!-- PREPARING (All Pre-Breakout Coils) -->
                     <div class="cyber-panel" style="padding:10px;">
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                            <span style="font-size:0.70rem; font-weight:800; color:var(--neon-amber); display:flex; align-items:center; gap:5px;">
+                        <div
+                            style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                            <span
+                                style="font-size:0.70rem; font-weight:800; color:var(--neon-amber); display:flex; align-items:center; gap:5px;">
                                 <span>⚡</span> PREPARING — ALL PRE-BREAKOUT COILS (<span id="prepCountBadge">0</span>)
                             </span>
                             <span style="font-size:0.58rem; color:#94a3b8;">BEFORE THE MOVE</span>
                         </div>
-                        <div id="rankedPreparingList" style="display:flex; flex-direction:column; gap:5px; min-height:80px; max-height:280px; overflow-y:auto;">
+                        <div id="rankedPreparingList"
+                            style="display:flex; flex-direction:column; gap:5px; min-height:80px; max-height:280px; overflow-y:auto;">
                             <div style="font-size:0.68rem; color:var(--text-muted); text-align:center; padding:12px 0;">
                                 Continuous tracker polling for pre-breakout accumulation coils...
                             </div>
@@ -521,13 +599,17 @@
 
                     <!-- ENTRY READY (Confirmed Breakouts) -->
                     <div class="cyber-panel" style="padding:10px;">
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                            <span style="font-size:0.70rem; font-weight:800; color:var(--neon-green); display:flex; align-items:center; gap:5px;">
-                                <span>🎯</span> ENTRY READY — CONFIRMED 5M BREAKOUTS (<span id="entryCountBadge">0</span>)
+                        <div
+                            style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                            <span
+                                style="font-size:0.70rem; font-weight:800; color:var(--neon-green); display:flex; align-items:center; gap:5px;">
+                                <span>🎯</span> ENTRY READY — CONFIRMED 5M BREAKOUTS (<span
+                                    id="entryCountBadge">0</span>)
                             </span>
                             <span style="font-size:0.58rem; color:var(--neon-green);">ACTIONABLE BREAKOUT</span>
                         </div>
-                        <div id="rankedEntryReadyList" style="display:flex; flex-direction:column; gap:5px; min-height:80px; max-height:280px; overflow-y:auto;">
+                        <div id="rankedEntryReadyList"
+                            style="display:flex; flex-direction:column; gap:5px; min-height:80px; max-height:280px; overflow-y:auto;">
                             <div style="font-size:0.68rem; color:var(--text-muted); text-align:center; padding:12px 0;">
                                 NO 5M TRADE (Default state: waiting for confirmed structure)
                             </div>
@@ -538,7 +620,8 @@
                 <!-- Official NSE India Institutional FII / DII Order Flow -->
                 <div class="cyber-panel" style="padding:10px 14px;">
                     <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <span style="font-size:0.68rem; font-weight:800; color:#e2e8f0; display:flex; align-items:center; gap:6px;">
+                        <span
+                            style="font-size:0.68rem; font-weight:800; color:#e2e8f0; display:flex; align-items:center; gap:6px;">
                             <span>🏛️</span> NSE INDIA INSTITUTIONAL ORDER FLOW (FII / DII & LARGE DEALS)
                         </span>
                         <span id="nseSyncTime" style="font-size:0.60rem; color:var(--text-muted);">SYNCED</span>
@@ -788,6 +871,11 @@
             } catch (e) { }
         }
 
+        function getStockLogoUrl(cleanSym) {
+            // Groww high-resolution official stock logo CDN
+            return `https://groww.in/images/partners/${cleanSym.toLowerCase()}.svg`;
+        }
+
         function renderMoversList(stocks, containerId, isBull) {
             const container = document.getElementById(containerId);
             if (!container) return;
@@ -797,7 +885,7 @@
             }
 
             let html = '';
-            stocks.slice(0, 15).forEach((stk, idx) => {
+            stocks.slice(0, 20).forEach((stk, idx) => {
                 const sym = stk.symbol;
                 const cleanSym = sym.replace('.NS', '');
                 const chg = Number(stk.change || stk.change_pct || 0).toFixed(1);
@@ -805,15 +893,22 @@
                 const col = isBull ? 'var(--neon-green)' : 'var(--neon-red)';
                 const sign = Number(chg) >= 0 ? '+' : '';
                 const isSelected = cleanSym === (currentStockSymbol || '').replace('.NS', '');
+                const isPrep = stk.is_preparing;
+                const scoreBadge = stk.score ? `<span style="font-size:0.55rem; background:rgba(255,170,0,0.15); color:var(--neon-amber); padding:1px 4px; border-radius:2px; font-weight:800;">COIL ${stk.score}</span>` : '';
+                const logoUrl = getStockLogoUrl(cleanSym);
 
                 html += `
-                <div class="stock-mover-card ${isSelected ? 'active-selected' : ''}" onclick="selectStock('${sym}')">
+                <div class="stock-mover-card ${isSelected ? 'active-selected' : ''}" onclick="selectStock('${sym}')" style="${isPrep ? 'border-left: 3px solid var(--neon-amber);' : ''}">
                     <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <span style="font-weight:800; font-size:0.75rem; color:#fff;">#${idx+1} ${cleanSym}</span>
+                        <span style="font-weight:800; font-size:0.75rem; color:#fff; display:flex; align-items:center; gap:6px;">
+                            <img src="${logoUrl}" style="width:16px; height:16px; border-radius:50%; object-fit:contain; background:#1e293b;" onerror="this.style.display='none';">
+                            #${idx + 1} ${cleanSym}
+                            ${scoreBadge}
+                        </span>
                         <span style="font-size:0.72rem; font-weight:800; color:${col};">${sign}${chg}%</span>
                     </div>
                     <div style="font-size:0.58rem; color:var(--text-muted); margin-top:2px; display:flex; justify-content:space-between;">
-                        <span>Mom Vol: ${vel}</span>
+                        <span>${isPrep ? '⚡ PRE-BREAKOUT' : 'Mom Vol: ' + vel}</span>
                         <span style="color:${isBull ? 'var(--neon-cyan)' : 'var(--neon-amber)'};">${isBull ? 'CALL / BULL' : 'PUT / BEAR'}</span>
                     </div>
                 </div>`;
@@ -832,6 +927,12 @@
             document.getElementById('radarTargetSymbol').innerText = cleanSym;
             document.getElementById('radarStockTitle').innerText = cleanSym;
 
+            const iconEl = document.getElementById('radarStockIcon');
+            if (iconEl) {
+                iconEl.src = getStockLogoUrl(cleanSym);
+                iconEl.style.display = 'block';
+            }
+
             try {
                 const res = await fetch(`/api/market/smc-scan?symbol=${encodeURIComponent(symbol)}`);
                 const data = await res.json();
@@ -844,6 +945,14 @@
         }
 
         function renderRadarData(symbol, smc) {
+            const priceVal = smc.current_price ? `₹${Number(smc.current_price).toFixed(2)}` : '--';
+            const scoreVal = smc.composite_score !== undefined ? smc.composite_score : '--';
+
+            const livePriceEl = document.getElementById('radarStockLivePrice');
+            if (livePriceEl) livePriceEl.innerText = priceVal;
+            const scoreEl = document.getElementById('radarStockScore');
+            if (scoreEl) scoreEl.innerText = `SCORE ${scoreVal}/100`;
+
             document.getElementById('valPrice').innerText = `₹${smc.current_price || '--'} (VWAP: ₹${smc.vwap || '--'})`;
             document.getElementById('valRsi').innerText = `RSI: ${smc.rsi || '--'} | VOL: ${smc.vol_multiplier || 1.0}x`;
             document.getElementById('valEma').innerText = `EMA9: ₹${smc.ema9 || '--'} | EMA21: ₹${smc.ema21 || '--'}`;
@@ -936,15 +1045,23 @@
                     const isBull = c.direction === 'BULLISH';
                     const col = isBull ? 'var(--neon-green)' : 'var(--neon-red)';
                     const score = c.conviction_score || 70;
+                    const logoUrl = getStockLogoUrl(sym);
+                    const prc = c.current_price ? `₹${Number(c.current_price).toFixed(2)}` : '';
                     html += `
                     <div class="stock-mover-card" onclick="selectStock('${c.symbol}')" style="border-left-color:${col}; margin-bottom:4px;">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <span style="font-weight:800; font-size:0.75rem; color:#fff;">#${idx+1} ${sym} <span style="font-size:0.60rem; color:${col};">${isBull ? '▲ PRE-BREAKOUT' : '▼ PRE-BREAKDOWN'}</span></span>
-                            <span style="font-size:0.70rem; color:${col}; font-weight:800;">${c.change_pct >= 0 ? '+' : ''}${c.change_pct}%</span>
+                            <span style="font-weight:800; font-size:0.75rem; color:#fff; display:flex; align-items:center; gap:6px;">
+                                <img src="${logoUrl}" style="width:16px; height:16px; border-radius:50%; object-fit:contain; background:#1e293b;" onerror="this.style.display='none';">
+                                #${idx + 1} ${sym} <span style="font-size:0.60rem; color:${col};">${isBull ? '▲ PRE-BREAKOUT' : '▼ PRE-BREAKDOWN'}</span>
+                            </span>
+                            <span style="display:flex; align-items:center; gap:6px;">
+                                <span style="font-size:0.72rem; color:#fff; font-weight:700;">${prc}</span>
+                                <span style="font-size:0.70rem; color:${col}; font-weight:800;">${c.change_pct >= 0 ? '+' : ''}${c.change_pct}%</span>
+                            </span>
                         </div>
                         <div style="display:flex; justify-content:space-between; font-size:0.58rem; color:var(--text-muted); margin-top:2px;">
-                            <span>Score: <b style="color:#fff;">${score}/100</b></span>
-                            <span style="color:${col};">${c.entry_trigger || 'Awaiting level'}</span>
+                            <span>Score: <b style="color:var(--neon-cyan);">${score}/100</b></span>
+                            <span style="color:${col}; font-weight:700;">${c.entry_trigger || 'Awaiting level'}</span>
                         </div>
                     </div>`;
                 });
@@ -960,11 +1077,19 @@
                     const sym = c.symbol.replace('.NS', '');
                     const isBull = c.direction === 'BULLISH';
                     const col = isBull ? 'var(--neon-green)' : 'var(--neon-red)';
+                    const logoUrl = getStockLogoUrl(sym);
+                    const prc = c.current_price ? `₹${Number(c.current_price).toFixed(2)}` : '';
                     html += `
                     <div class="stock-mover-card" onclick="selectStock('${c.symbol}')" style="border-left-color:${col}; border-color:${col}; background:rgba(0,255,163,0.06);">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <span style="font-weight:800; font-size:0.78rem; color:#fff;">#${idx+1} ${sym} <span style="font-size:0.60rem; background:${col}; color:#000; padding:1px 4px; border-radius:2px; font-weight:bold;">${isBull ? 'BUY (CALL)' : 'SELL (PUT)'}</span></span>
-                            <span style="font-size:0.72rem; color:${col}; font-weight:800;">${c.change_pct >= 0 ? '+' : ''}${c.change_pct}%</span>
+                            <span style="font-weight:800; font-size:0.78rem; color:#fff; display:flex; align-items:center; gap:6px;">
+                                <img src="${logoUrl}" style="width:18px; height:18px; border-radius:50%; object-fit:contain; background:#1e293b;" onerror="this.style.display='none';">
+                                #${idx + 1} ${sym} <span style="font-size:0.60rem; background:${col}; color:#000; padding:1px 4px; border-radius:2px; font-weight:bold;">${isBull ? 'BUY (CALL)' : 'SELL (PUT)'}</span>
+                            </span>
+                            <span style="display:flex; align-items:center; gap:6px;">
+                                <span style="font-size:0.75rem; color:#fff; font-weight:700;">${prc}</span>
+                                <span style="font-size:0.72rem; color:${col}; font-weight:800;">${c.change_pct >= 0 ? '+' : ''}${c.change_pct}%</span>
+                            </span>
                         </div>
                         <div style="font-size:0.60rem; color:#fff; margin-top:3px; display:flex; justify-content:space-between;">
                             <span>SL: ₹${c.suggested_sl} | TP1: ₹${c.suggested_tp1}</span>
@@ -1081,7 +1206,7 @@
                 if (data.success) {
                     const activeDbList = data.active_signals || [];
                     const recentTracked = data.recent_tracked || [];
-                    
+
                     if (activeDbList.length === 0) {
                         activeConfirmedTrades = {};
                         try { localStorage.removeItem('activeConfirmedTrades'); } catch (e) { }

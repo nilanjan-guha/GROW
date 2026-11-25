@@ -1889,9 +1889,38 @@ def get_stock_specific_news():
 
 @app.route("/api/fno/momentum-watchlists")
 def get_fno_momentum_watchlists_endpoint():
-    """Returns dynamically scanned Top Bullish & Bearish momentum movers from all 219 F&O stocks"""
-    bull = screener_state.get("bullish_momentum_watchlist", [])
-    bear = screener_state.get("bearish_momentum_watchlist", [])
+    """Returns dynamically scanned Top Bullish & Bearish momentum movers from all 219 F&O stocks, including PREPARING stocks"""
+    bull = list(screener_state.get("bullish_momentum_watchlist", []))
+    bear = list(screener_state.get("bearish_momentum_watchlist", []))
+
+    # Seamlessly merge all PREPARING stocks into the appropriate Bullish or Bearish list
+    ranked = screener_state.get("ranked_opportunities") or {}
+    prep_list = ranked.get("preparing", []) + list(screener_state.get("persistent_preparing_stocks", {}).values())
+
+    seen_bull = {s.get("symbol") for s in bull}
+    seen_bear = {s.get("symbol") for s in bear}
+
+    for p in prep_list:
+        p_sym = p.get("symbol")
+        if not p_sym:
+            continue
+        p_dir = (p.get("direction") or "BULLISH").upper()
+        item = {
+            "symbol": p_sym,
+            "change": p.get("change_pct", 0.0),
+            "velocity": "COIL",
+            "is_preparing": True,
+            "score": p.get("conviction_score", 70)
+        }
+        if p_dir in ("BULLISH", "BUY"):
+            if p_sym not in seen_bull:
+                bull.insert(0, item)
+                seen_bull.add(p_sym)
+        else:
+            if p_sym not in seen_bear:
+                bear.insert(0, item)
+                seen_bear.add(p_sym)
+
     return jsonify({
         "success": True,
         "bullish": bull,
