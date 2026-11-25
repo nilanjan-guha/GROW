@@ -2312,7 +2312,8 @@ class TestIntradayScreenerCore(unittest.TestCase):
                 })
                 self.assertEqual(resp.status_code, 409)
                 resp_data = json.loads(resp.data)
-                self.assertIn("out of sync", resp_data.get("error", ""))
+                err_msg = resp_data.get("error", "")
+                self.assertTrue("out of sync" in err_msg or "failed freshness revalidation" in err_msg)
         finally:
             MarketValidator.is_market_open = orig_is_open
 

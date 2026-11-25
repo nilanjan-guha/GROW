@@ -66,12 +66,17 @@
             <div class="panel-body">
 
                 <!-- Live Market Status Bar -->
-                <div style="display:flex; justify-content:space-between; align-items:center; background:#0c121e; border:1px solid #1e293b; border-radius:6px; padding:6px 12px; margin-bottom:10px;">
+                <div
+                    style="display:flex; justify-content:space-between; align-items:center; background:#0c121e; border:1px solid #1e293b; border-radius:6px; padding:6px 12px; margin-bottom:10px;">
                     <div style="display:flex; align-items:center; gap:8px;">
-                        <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#10b981; box-shadow:0 0 8px #10b981;"></span>
-                        <span id="activeSectorSweepText" style="font-size:0.75rem; font-weight:700; color:#e2e8f0; font-family:'Inter', sans-serif;">SECTOR ENGINE: ACTIVE LIVE FEED</span>
+                        <span
+                            style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#10b981; box-shadow:0 0 8px #10b981;"></span>
+                        <span id="activeSectorSweepText"
+                            style="font-size:0.75rem; font-weight:700; color:#e2e8f0; font-family:'Inter', sans-serif;">SECTOR
+                            ENGINE: ACTIVE LIVE FEED</span>
                     </div>
-                    <div style="font-family:'JetBrains Mono', monospace; font-size:0.68rem; color:#64748b;" id="hologramCoords">
+                    <div style="font-family:'JetBrains Mono', monospace; font-size:0.68rem; color:#64748b;"
+                        id="hologramCoords">
                         EXECUTION: 5-MIN CANDLE ENGINE // 0 SLIPPAGE GATE
                     </div>
                 </div>
@@ -1257,7 +1262,9 @@
 
         // Audio Synthesizer for Institutional Alert Chime
         let audioCtx = null;
-        function playSignalAlertSound(isBuy = true) {
+        let isAudioEnabled = true;
+
+        function initAudioContext() {
             try {
                 if (!audioCtx) {
                     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -1265,7 +1272,109 @@
                 if (audioCtx.state === 'suspended') {
                     audioCtx.resume();
                 }
+            } catch (e) {
+                console.warn('AudioContext init error:', e);
+            }
+        }
 
+        // Auto-enable audio on page load and first user interaction
+        window.addEventListener('DOMContentLoaded', () => {
+            initAudioContext();
+            updateAudioUI();
+        });
+        ['click', 'touchstart', 'keydown'].forEach(evt => {
+            window.addEventListener(evt, () => {
+                initAudioContext();
+            }, { once: true });
+        });
+
+        function toggleAudioAlerts() {
+            initAudioContext();
+            isAudioEnabled = !isAudioEnabled;
+            updateAudioUI();
+            if (isAudioEnabled) {
+                playSignalAlertSound(true);
+                log('Audio alerts enabled manually.', 'SUCCESS');
+            } else {
+                log('Audio alerts muted manually.', 'INFO');
+            }
+        }
+
+        function updateAudioUI() {
+            const btn = document.getElementById('btnAudioToggle');
+            const icon = document.getElementById('audioIcon');
+            const text = document.getElementById('audioStatusText');
+            if (!btn || !icon || !text) return;
+            if (isAudioEnabled) {
+                btn.style.background = 'rgba(0,255,170,0.1)';
+                btn.style.borderColor = 'var(--neon-green)';
+                btn.style.color = 'var(--neon-green)';
+                icon.textContent = '🔊';
+                text.textContent = 'AUDIO: ON';
+            } else {
+                btn.style.background = 'rgba(255,51,102,0.1)';
+                btn.style.borderColor = 'var(--neon-red)';
+                btn.style.color = 'var(--neon-red)';
+                icon.textContent = '🔇';
+                text.textContent = 'AUDIO: OFF';
+            }
+        }
+
+        function testAudioChime() {
+            initAudioContext();
+            playSignalAlertSound(true);
+        }
+
+        // Distinct futuristic notification chime for new PREPARING stock (Score >= 70/100)
+        function playPreparingAlertSound(symbol, score, isBull = true) {
+            if (!isAudioEnabled) return;
+            initAudioContext();
+            try {
+                const now = audioCtx.currentTime;
+                const osc1 = audioCtx.createOscillator();
+                const osc2 = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+
+                osc1.type = 'triangle';
+                osc2.type = 'sine';
+
+                if (isBull) {
+                    // Ascending radar ping: 660Hz -> 880Hz -> 1320Hz
+                    osc1.frequency.setValueAtTime(659.25, now);
+                    osc1.frequency.setValueAtTime(880.00, now + 0.08);
+                    osc1.frequency.exponentialRampToValueAtTime(1318.51, now + 0.22);
+                    osc2.frequency.setValueAtTime(440.00, now);
+                    osc2.frequency.exponentialRampToValueAtTime(880.00, now + 0.22);
+                } else {
+                    // Alert double tone: 880Hz -> 587Hz -> 440Hz
+                    osc1.frequency.setValueAtTime(880.00, now);
+                    osc1.frequency.setValueAtTime(587.33, now + 0.08);
+                    osc1.frequency.exponentialRampToValueAtTime(440.00, now + 0.22);
+                    osc2.frequency.setValueAtTime(587.33, now);
+                    osc2.frequency.exponentialRampToValueAtTime(293.66, now + 0.22);
+                }
+
+                gain.gain.setValueAtTime(0.01, now);
+                gain.gain.linearRampToValueAtTime(0.32, now + 0.04);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
+
+                osc1.connect(gain);
+                osc2.connect(gain);
+                gain.connect(audioCtx.destination);
+
+                osc1.start(now);
+                osc2.start(now);
+                osc1.stop(now + 0.6);
+                osc2.stop(now + 0.6);
+            } catch (e) {
+                console.warn('Audio alert error:', e);
+            }
+        }
+
+        function playSignalAlertSound(isBuy = true) {
+            if (!isAudioEnabled) return;
+            initAudioContext();
+            try {
                 const now = audioCtx.currentTime;
                 // High-probability two-tone notification chord
                 const osc1 = audioCtx.createOscillator();
@@ -1522,6 +1631,9 @@
             } catch (e) { }
         }
 
+        // Track previously notified PREPARING stocks so sound only plays ONCE when a new stock appears with Score >= 70
+        let notifiedPreparingStocksSet = new Set();
+
         function renderRankedOpportunitiesUI(ranked) {
             const prepContainer = document.getElementById('rankedPreparingList');
             const entryContainer = document.getElementById('rankedEntryReadyList');
@@ -1530,6 +1642,18 @@
             const entryReady = ranked.entry_ready || [];
             const preparing = ranked.preparing || [];
             const ignition = ranked.ignition || [];
+
+            // Audio Alert Trigger: Check top PREPARING candidates for NEW entries with Score >= 70
+            preparing.forEach((c) => {
+                const sym = c.symbol;
+                const score = Number(c.conviction_score || c.confirmation_score || 0);
+                const isBull = c.direction === 'BULLISH';
+                if (score >= 70 && !notifiedPreparingStocksSet.has(sym)) {
+                    notifiedPreparingStocksSet.add(sym);
+                    playPreparingAlertSound(sym, score, isBull);
+                    log(`[PRE-MOVE ALERT] New Top Setup: ${sym.replace('.NS', '')} (Score: ${score}/100) entered PREPARING coil!`, isBull ? 'SUCCESS' : 'WARN');
+                }
+            });
 
             // 1. Render Preparing List (Max 5) - Strictly Coils before the move
             if (preparing.length === 0 && ignition.length === 0) {
