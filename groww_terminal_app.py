@@ -245,6 +245,17 @@ def auto_connect_groww():
             # Register dynamic company names into news engine
             news_engine.register_symbol_names(symbol_to_name)
             print(f"Dynamically mapped {len(symbol_to_name)} company names from Groww for real-time news.")
+
+            # Dynamically map BSE exchange tokens to high-res Groww CDN logos (GSTK<bse_scrip_code>.png)
+            bse_cash = df[(df['exchange'] == 'BSE') & (df['segment'] == 'CASH')].dropna(subset=['trading_symbol', 'exchange_token'])
+            logo_map = {}
+            for _, r in bse_cash.iterrows():
+                s_sym = str(r['trading_symbol']).upper().strip()
+                tok = str(r['exchange_token']).strip()
+                if tok and tok.isdigit():
+                    logo_map[s_sym] = f"https://assets-netstorage.groww.in/stock-assets/logos/GSTK{tok}.png"
+            screener_state["stock_logos"] = logo_map
+            print(f"Dynamically mapped {len(logo_map)} official Groww company logo CDN paths.")
         except Exception as e:
             print("Error loading FNO universe:", e)
 
@@ -1059,11 +1070,26 @@ def smc_scan():
             news_headline=news_headline
         )
         
+        # Check if candidate is in ranked opportunities to use its exact conviction score
+        ranked_cache = screener_state.get("ranked_opportunities") or {}
+        all_ranked_cands = (ranked_cache.get("top_bullish", []) + 
+                            ranked_cache.get("top_bearish", []) + 
+                            ranked_cache.get("entry_ready", []) + 
+                            ranked_cache.get("ignition", []) + 
+                            ranked_cache.get("preparing", []) + 
+                            ranked_cache.get("observing", []))
+        
+        matching_cand = next((c for c in all_ranked_cands if c.get("symbol") in (symbol, clean_sym, f"{clean_sym}.NS")), None)
+        if matching_cand and matching_cand.get("conviction_score") is not None:
+            final_display_score = matching_cand["conviction_score"]
+        else:
+            final_display_score = inst_res["composite_score"]
+
         # Merge metrics into response (Using Session VWAP from Institutional Engine)
         res["vwap"] = inst_res["vwap"]
         res["rvol"] = inst_res["rvol"]
         res["vol_multiplier"] = inst_res["rvol"] if inst_res.get("rvol") else res.get("vol_multiplier", 1.0)
-        res["composite_score"] = inst_res["composite_score"]
+        res["composite_score"] = final_display_score
         res["probability_pct"] = inst_res["probability_pct"]
         res["triggered_strategies"] = inst_res["triggered_strategies"]
         res["news_headline"] = news_headline
@@ -1886,6 +1912,11 @@ def get_stock_specific_news():
     clean = symbol.replace(".NS", "")
     articles = news_engine.fetch_news_for_stock(clean)
     return jsonify({"success": True, "symbol": clean, "news": articles})
+
+@app.route("/api/stock-logos")
+def get_stock_logos_endpoint():
+    """Returns mapping of ticker symbols to official Groww CDN logo URLs"""
+    return jsonify({"success": True, "logos": screener_state.get("stock_logos", {})})
 
 @app.route("/api/fno/momentum-watchlists")
 def get_fno_momentum_watchlists_endpoint():

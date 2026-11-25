@@ -822,6 +822,7 @@
             // Enable audio automatically on first user click anywhere
             document.body.addEventListener('click', initAudioContext, { once: true });
 
+            await loadStockLogos();
             await loadStatus();
             await loadDynamicTopSectors();
             await loadRankedOpportunities();
@@ -874,9 +875,25 @@
             } catch (e) { }
         }
 
+        let stockLogosCache = {};
+
+        async function loadStockLogos() {
+            try {
+                const res = await fetch('/api/stock-logos');
+                const d = await res.json();
+                if (d.success && d.logos) {
+                    stockLogosCache = d.logos;
+                }
+            } catch (e) { }
+        }
+
         function getStockLogoUrl(cleanSym) {
-            // Groww high-resolution official stock logo CDN
-            return `https://groww.in/images/partners/${cleanSym.toLowerCase()}.svg`;
+            const sym = cleanSym.toUpperCase();
+            if (stockLogosCache[sym]) {
+                return stockLogosCache[sym];
+            }
+            // Fallback to Clearbit / Google favicon / Groww CDN
+            return `https://assets-netstorage.groww.in/stock-assets/logos/GSTK_${sym}.png`;
         }
 
         function renderMoversList(stocks, containerId, isBull) {
@@ -932,8 +949,14 @@
 
             const iconEl = document.getElementById('radarStockIcon');
             if (iconEl) {
-                iconEl.src = getStockLogoUrl(cleanSym);
+                const logo = getStockLogoUrl(cleanSym);
+                iconEl.src = logo;
                 iconEl.style.display = 'block';
+                iconEl.onerror = function() {
+                    // Fallback to high-visibility circular SVG monogram
+                    this.onerror = null;
+                    this.src = `data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='48' height='48' viewBox='0 0 48 48'><rect width='48' height='48' rx='24' fill='%230f172a' stroke='%2300f0ff' stroke-width='2'/><text x='50%25' y='55%25' dominant-baseline='middle' text-anchor='middle' font-family='sans-serif' font-weight='900' font-size='18' fill='%2300f0ff'>${cleanSym.substring(0, 2)}</text></svg>`;
+                };
             }
 
             try {
