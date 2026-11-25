@@ -9,10 +9,15 @@ import numpy as np
 from flask import Flask, request, jsonify, render_template
 from dotenv import load_dotenv
 import yfinance as yf
+from yfinance.utils import get_yf_logger
 
-# Suppress noisy external yfinance download warnings for transient network drops
-logging.getLogger("yfinance").setLevel(logging.ERROR)
-logging.getLogger("urllib3").setLevel(logging.ERROR)
+# Suppress yfinance delisted/failed download console spam
+_yf_logger = get_yf_logger()
+_yf_logger.setLevel(logging.CRITICAL)
+for _h in _yf_logger.handlers:
+    _h.setLevel(logging.CRITICAL)
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+logging.getLogger("urllib3").setLevel(logging.CRITICAL)
 import growwapi
 from growwapi import GrowwAPI
 

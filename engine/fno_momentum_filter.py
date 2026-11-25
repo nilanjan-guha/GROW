@@ -1,8 +1,17 @@
 import time
+import logging
 import yfinance as yf
+from yfinance.utils import get_yf_logger
 import pandas as pd
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# Suppress yfinance delisted/failed download console spam across worker threads
+_yf_log = get_yf_logger()
+_yf_log.setLevel(logging.CRITICAL)
+for _h in _yf_log.handlers:
+    _h.setLevel(logging.CRITICAL)
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 class FNOMomentumFilter:
     """
