@@ -1,0 +1,520 @@
+import datetime
+import pytz
+import pandas as pd
+
+# Multi-Year Indian NSE/BSE Market Holidays (2025 - 2027)
+# Supports special/extended calendar lookup with configurable overrides
+OFFICIAL_NSE_HOLIDAYS = {
+    # 2025
+    datetime.date(2025, 1, 26), datetime.date(2025, 2, 26), datetime.date(2025, 3, 14),
+    datetime.date(2025, 3, 31), datetime.date(2025, 4, 10), datetime.date(2025, 4, 14),
+    datetime.date(2025, 4, 18), datetime.date(2025, 5, 1), datetime.date(2025, 8, 15),
+    datetime.date(2025, 8, 27), datetime.date(2025, 10, 2), datetime.date(2025, 10, 21),
+    datetime.date(2025, 11, 1), datetime.date(2025, 11, 5), datetime.date(2025, 12, 25),
+    # 2026
+    datetime.date(2026, 1, 26), datetime.date(2026, 3, 6), datetime.date(2026, 3, 20),
+    datetime.date(2026, 4, 3), datetime.date(2026, 4, 14), datetime.date(2026, 5, 1),
+    datetime.date(2026, 5, 27), datetime.date(2026, 8, 15), datetime.date(2026, 8, 26),
+    datetime.date(2026, 10, 2), datetime.date(2026, 10, 20), datetime.date(2026, 11, 8),
+    datetime.date(2026, 11, 10), datetime.date(2026, 11, 24), datetime.date(2026, 12, 25),
+    # 2027
+    datetime.date(2027, 1, 26), datetime.date(2027, 3, 22), datetime.date(2027, 4, 14),
+    datetime.date(2027, 5, 1), datetime.date(2027, 8, 15), datetime.date(2027, 10, 2),
+    datetime.date(2027, 12, 25)
+}
+
+# Configurable special trading sessions (e.g. Diwali Muhurat trading, disaster recovery live tests)
+SPECIAL_TRADING_SESSIONS = {
+    datetime.date(2026, 11, 8): {"start_minute": 1095, "end_minute": 1155} # Example 18:15 to 19:15 IST
+}
+
+class MarketValidator:
+    """
+    Production-grade validation for Indian Equity & F&O Market Data:
+    1. Trading session & official holiday calendar verification (Multi-year + special sessions).
+    2. Candle timestamp completion & maximum feed latency checks.
+    3. Missing candle / feed gap anomaly detection & feed integrity enforcement.
+    """
+
+    @staticmethod
+    def validate_3way_alignment(stock_df, nifty_df=None, sector_df=None):
+        """
+        Validates strict point-in-time completed candle timestamp equality across:
+        1. Stock completed candle
+        2. NIFTY benchmark completed candle
+        3. Sector index completed candle
+        If any required benchmark is missing, unaligned, or stale, marks that benchmark
+        explicitly UNAVAILABLE rather than silently using stale data or misaligned bars.
+        """
+        if stock_df is None or stock_df.empty:
+            return {"is_aligned": False, "stock_ts": None, "nifty_aligned": False, "sector_aligned": False}
+
+        stock_ts = stock_df.index[-1]
+        
+        nifty_aligned = False
+        nifty_ts = None
+        if nifty_df is not None and not nifty_df.empty:
+            nifty_ts = nifty_df.index[-1]
+            nifty_aligned = (stock_ts == nifty_ts)
+
+        sector_aligned = False
+        sector_ts = None
+        if sector_df is not None and not sector_df.empty:
+            sector_ts = sector_df.index[-1]
+            sector_aligned = (stock_ts == sector_ts)
+
+        return {
+            "stock_ts": stock_ts,
+            "nifty_ts": nifty_ts,
+            "sector_ts": sector_ts,
+            "nifty_aligned": nifty_aligned,
+            "sector_aligned": sector_aligned,
+            "is_aligned": nifty_aligned and (sector_df is None or sector_aligned)
+        }
+
+    @staticmethod
+    def get_ist_now():
+        ist = pytz.timezone('Asia/Kolkata')
+        return datetime.datetime.now(ist)
+
+    @staticmethod
+    def is_trading_day(dt=None):
+        if dt is None:
+            dt = MarketValidator.get_ist_now().date()
+        elif isinstance(dt, datetime.datetime):
+            dt = dt.date()
+        
+        # Check special trading session whitelist first
+        if dt in SPECIAL_TRADING_SESSIONS:
+            return True
+
+        # Weekend check: Monday is 0, Sunday is 6
+        if dt.weekday() >= 5:
+            return False
+        # Holiday check
+        if dt in OFFICIAL_NSE_HOLIDAYS:
+            return False
+        return True
+
+    @staticmethod
+    def is_market_open(dt=None):
+        """Returns True strictly during regular NSE/BSE cash & F&O trading hours (09:15 to 15:30 IST) or special sessions"""
+        now = dt or MarketValidator.get_ist_now()
+        cur_date = now.date()
+        minute = now.hour * 60 + now.minute
+
+        # Special session timing check
+        if cur_date in SPECIAL_TRADING_SESSIONS:
+            cfg = SPECIAL_TRADING_SESSIONS[cur_date]
+            return cfg["start_minute"] <= minute <= cfg["end_minute"]
+
+        if not MarketValidator.is_trading_day(cur_date):
+            return False
+        return 555 <= minute <= 930
+
+    @staticmethod
+    def validate_feed_freshness(df, max_delay_seconds=900, candle_duration_seconds=300, now_dt=None):
+        """
+        Validates OHLCV DataFrame integrity and freshness as single source of truth:
+        - Rejects empty feeds or feeds with insufficient candle history (< 5 candles).
+        - Enforces candle completion (`now >= last_ts + candle_duration_seconds`).
+        - Rejects stale previous session feeds during active market hours.
+        - Rejects stalled feeds (> max_delay_seconds delay).
+        - Strictly rejects intra-session gaps or non-300s candles (strict continuity required).
+        - Supports now_dt override for deterministic historical/test validation.
+        """
+        if df is None or df.empty:
+            return {"is_valid": False, "status": "EMPTY_FEED", "reason": "Market dataframe is empty"}
+
+        if len(df) < 5:
+            return {"is_valid": False, "status": "INSUFFICIENT_HISTORY", "reason": f"Only {len(df)} candles available (< 5 required)"}
+
+        df_eval = df.copy()
+        ist = pytz.timezone('Asia/Kolkata')
+        if now_dt is not None:
+            now = pd.to_datetime(now_dt)
+            if now.tz is None:
+                now = now.tz_localize(ist)
+            elif str(now.tz) != 'Asia/Kolkata':
+                now = now.tz_convert(ist)
+        else:
+            now = MarketValidator.get_ist_now()
+        now_ts = now.timestamp()
+        
+        # Check index type and ensure timezone awareness in Asia/Kolkata
+        if not pd.api.types.is_datetime64_any_dtype(df_eval.index):
+            try:
+                df_eval.index = pd.to_datetime(df_eval.index)
+            except Exception as e:
+                return {"is_valid": False, "status": "INVALID_INDEX", "reason": f"Cannot parse datetime index: {e}"}
+
+        # Check unique chronological ordering
+        if df_eval.index.has_duplicates:
+            return {"is_valid": False, "status": "DUPLICATE_TIMESTAMPS", "reason": "Duplicate candle timestamps detected in live feed"}
+
+        if not df_eval.index.is_monotonic_increasing:
+            return {"is_valid": False, "status": "NON_MONOTONIC_INDEX", "reason": "Live candles not strictly chronological"}
+
+        # Validate required columns
+        req_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+        if not all(col in df_eval.columns for col in req_cols):
+            return {"is_valid": False, "status": "MISSING_COLUMNS", "reason": f"Required OHLCV columns missing in live feed: {[c for c in req_cols if c not in df_eval.columns]}"}
+
+        c_arr = df_eval['Close'].values
+        h_arr = df_eval['High'].values
+        l_arr = df_eval['Low'].values
+        o_arr = df_eval['Open'].values
+        v_arr = df_eval['Volume'].values
+
+        import numpy as np
+        # Finite number check (no NaN, no Inf)
+        for name, arr in [('Open', o_arr), ('High', h_arr), ('Low', l_arr), ('Close', c_arr), ('Volume', v_arr)]:
+            if not np.all(np.isfinite(arr)):
+                return {"is_valid": False, "status": "NON_FINITE_DATA", "reason": f"NaN or Inf values detected in live {name} array"}
+
+        # Price values must be strictly positive
+        if np.any(c_arr <= 0) or np.any(h_arr <= 0) or np.any(l_arr <= 0) or np.any(o_arr <= 0):
+            return {"is_valid": False, "status": "INVALID_PRICES", "reason": "Non-positive price values detected in live feed"}
+
+        # Volume must be non-negative
+        if np.any(v_arr < 0):
+            return {"is_valid": False, "status": "NEGATIVE_VOLUME", "reason": "Negative volume values detected in live feed"}
+
+        # Strict OHLC logical relationships
+        if np.any(h_arr < l_arr) or np.any(h_arr < o_arr) or np.any(h_arr < c_arr):
+            return {"is_valid": False, "status": "CORRUPT_OHLC_HIGH", "reason": "High price violated boundary in live feed (High < Low, High < Open, or High < Close)"}
+
+        if np.any(l_arr > o_arr) or np.any(l_arr > c_arr):
+            return {"is_valid": False, "status": "CORRUPT_OHLC_LOW", "reason": "Low price violated boundary in live feed (Low > Open or Low > Close)"}
+
+        # Normalize naive datetime index to Asia/Kolkata
+        if df_eval.index.tz is None:
+            df_eval.index = df_eval.index.tz_localize(ist)
+        elif str(df_eval.index.tz) != 'Asia/Kolkata':
+            df_eval.index = df_eval.index.tz_convert(ist)
+
+        last_dt = df_eval.index[-1]
+        last_ts = last_dt.timestamp() if hasattr(last_dt, 'timestamp') else float(last_dt)
+        candle_end = last_ts + candle_duration_seconds  # Candle closes after configured duration
+
+        is_completed = (now_ts >= candle_end)
+
+        # STRICT 5-MINUTE TIMEFRAME & SESSION GRID ENFORCEMENT (Live P0/P1):
+        # 1. Enforce every candle interval in the current session is exactly 300 seconds (distinguishing overnight gaps)
+        # 2. Reject 1-minute, 3-minute, 15-minute or other invalid candle intervals
+        # 3. Enforce seconds == 0 and microseconds == 0 on every candle in the feed
+        # 4. Enforce minutes % 5 == 0 on every candle in the feed
+        # 5. Check against the date-aware expected NSE 5-minute session grid (supports SPECIAL_TRADING_SESSIONS)
+        if len(df_eval) >= 1:
+            for t in df_eval.index:
+                if t.second != 0 or t.microsecond != 0 or (t.minute % 5 != 0):
+                    return {
+                        "is_valid": False,
+                        "status": "UNALIGNED_CANDLE_TIMESTAMPS",
+                        "reason": f"Candle timestamp {t.strftime('%Y-%m-%d %H:%M:%S')} is not aligned to exact 5-minute boundary"
+                    }
+                
+                # Check trading session hours dynamically (special evening session vs standard 09:15-15:25)
+                c_date = t.date()
+                if c_date in SPECIAL_TRADING_SESSIONS:
+                    spec = SPECIAL_TRADING_SESSIONS[c_date]
+                    allowed_start_m = spec.get("start_minute", 1095)
+                    allowed_end_m = spec.get("end_minute", 1155)
+                else:
+                    allowed_start_m = 555   # 09:15 IST
+                    allowed_end_m = 925     # 15:25 IST start of 5m bar
+                
+                t_m = t.hour * 60 + t.minute
+                if t_m < allowed_start_m or t_m > allowed_end_m:
+                    return {
+                        "is_valid": False,
+                        "status": "OFF_HOURS_CANDLE",
+                        "reason": f"Candle timestamp {t.strftime('%H:%M')} on {c_date} is outside configured session hours ({allowed_start_m//60:02d}:{allowed_start_m%60:02d} - {allowed_end_m//60:02d}:{allowed_end_m%60:02d})"
+                    }
+
+        # Check consecutive intervals strictly: intra-session intervals must be exactly candle_duration_seconds (300s).
+        # Any missing candle gap within the active session is strictly rejected.
+        # Exception: At standard NSE session close, Yahoo Finance often timestamps the final closing auction candle at 15:25
+        # following the 15:15 bar (600s gap due to no trades during post-close auction at 15:20). Allow this specific closing gap.
+        missing_count = 0
+        if len(df_eval) >= 2:
+            for idx_c in range(1, len(df_eval)):
+                t_prev = df_eval.index[idx_c - 1]
+                t_curr = df_eval.index[idx_c]
+                if t_prev.date() == t_curr.date():
+                    int_diff = (t_curr - t_prev).total_seconds()
+                    # Allow closing auction gaps between 15:10/15:15 and 15:25/15:30 on standard session
+                    # (e.g. 15:10 -> 15:25 is 900s, 15:15 -> 15:25 is 600s, 15:20 -> 15:25/15:30 is 300s/600s)
+                    is_closing_auction_gap = (t_prev.hour == 15 and t_prev.minute in (10, 15, 20) and t_curr.hour == 15 and t_curr.minute in (20, 25, 30) and 300 <= int_diff <= 900)
+                    if int_diff != candle_duration_seconds and not is_closing_auction_gap:
+                        missing_count += 1
+                        return {
+                            "is_valid": False,
+                            "status": "INVALID_TIMEFRAME",
+                            "missing_candle_gaps": missing_count,
+                            "reason": f"Intra-session candle interval between {t_prev.strftime('%H:%M')} and {t_curr.strftime('%H:%M')} is {int(int_diff)}s (strictly {candle_duration_seconds}s expected; non-contiguous feeds or invalid timeframes rejected)"
+                        }
+
+        # Session freshness check
+        if MarketValidator.is_market_open(now):
+            last_date = last_dt.date() if hasattr(last_dt, 'date') else None
+            today_date = now.date()
+            if last_date and last_date < today_date:
+                return {
+                    "is_valid": False,
+                    "status": "PREVIOUS_SESSION_DATA",
+                    "reason": f"Feed contains previous session data ({last_date}) during active market hours ({today_date})"
+                }
+
+            # Same-day delay check after 09:30 IST:
+            # Measure delay from candle close (candle_end) rather than candle open (last_ts)
+            # to allow the standard 5-minute candle to complete plus standard data feed propagation latency.
+            curr_min = now.hour * 60 + now.minute
+            effective_delay = max(0.0, now_ts - candle_end)
+            if curr_min >= 570 and (effective_delay > max_delay_seconds):
+                delay_m = int(effective_delay / 60)
+                return {
+                    "is_valid": False,
+                    "status": "FEED_STALLED",
+                    "delay_minutes": delay_m,
+                    "reason": f"Feed delayed by {delay_m} minutes (> {int(max_delay_seconds/60)}m allowed)"
+                }
+
+        return {
+            "is_valid": True,
+            "status": "FRESH",
+            "is_completed_candle": is_completed,
+            "latest_candle_ts": last_ts,
+            "candle_end_ts": candle_end,
+            "missing_candle_gaps": 0
+        }
+
+    @staticmethod
+    def validate_candle_sequence_continuity(df, candle_duration_seconds=300):
+        """
+        P1: Validates continuity across a candle sequence (DataFrame or DatetimeIndex):
+        - Detects any missing 5-minute candle intervals inside a trading session.
+        - Accurately respects inter-day session boundaries, weekends, and official NSE holidays (not flagging overnight gaps as missing candles).
+        - Allows closing auction interval adjustments between 15:10/15:15 and 15:25.
+        
+        Returns (is_continuous, missing_gaps_count, first_gap_details).
+        """
+        if df is None or len(df) < 2:
+            return True, 0, None
+
+        if hasattr(df, 'index'):
+            idx = df.index
+        else:
+            idx = df
+
+        missing_count = 0
+        first_gap = None
+        for i in range(1, len(idx)):
+            t_prev = idx[i - 1]
+            t_curr = idx[i]
+            # Same trading session: check exact 300s interval
+            if t_prev.date() == t_curr.date():
+                diff_s = (t_curr - t_prev).total_seconds()
+                is_closing_gap = (t_prev.hour == 15 and t_prev.minute in (10, 15, 20) and t_curr.hour == 15 and t_curr.minute in (20, 25, 30) and 300 <= diff_s <= 900)
+                if diff_s != candle_duration_seconds and not is_closing_gap:
+                    missing_count += 1
+                    if first_gap is None:
+                        first_gap = f"Missing intra-session candle(s) between {t_prev.strftime('%Y-%m-%d %H:%M')} and {t_curr.strftime('%Y-%m-%d %H:%M')} ({int(diff_s)}s gap)"
+            else:
+                # Across different calendar days: verify no missed intermediate trading days
+                # Inter-day overnight transition is standard, but check if an entire trading day was skipped unexpectedly
+                p_date = t_prev.date()
+                c_date = t_curr.date()
+                # Check dates strictly between p_date and c_date
+                check_dt = p_date + datetime.timedelta(days=1)
+                while check_dt < c_date:
+                    if MarketValidator.is_trading_day(check_dt):
+                        missing_count += 1
+                        if first_gap is None:
+                            first_gap = f"Missing entire trading session: {check_dt} between {p_date} and {c_date}"
+                    check_dt += datetime.timedelta(days=1)
+
+        return (missing_count == 0), missing_count, first_gap
+
+    @staticmethod
+    def validate_historical_replay_data(df, candle_duration_seconds=300, allow_partial_final_session=True, requested_start_dt=None, requested_end_dt=None):
+        """
+        Validates historical data integrity for backtesting/replay (NO current wall-clock checks):
+        - Enforces strictly unique, monotonic datetime index ordering.
+        - Validates all OHLCV values: rejects NaN, infinite, or negative values.
+        - Enforces strict mathematical OHLC relationships:
+          High >= Open, High >= Close, Low <= Open, Low <= Close, High >= Low.
+        - Validates volume is non-negative and finite.
+        - Rigorous Session Grid Comparison:
+          Generates the exact expected timestamp list for each completed session and validates that:
+          1. Every candle timestamp matches the exact expected 5m session grid.
+          2. Exactly 75 bars exist for completed full trading days (or the exact count for special sessions).
+          3. Zero missing internal candle gaps exist.
+          4. When requested_start_dt is provided, partial opening session is validated against requested window;
+             otherwise, full sessions require market open (09:15 IST).
+        """
+        if df is None or df.empty:
+            return {"is_valid": False, "status": "EMPTY_FEED", "reason": "Historical dataframe is empty"}
+
+        if len(df) < 5:
+            return {"is_valid": False, "status": "INSUFFICIENT_HISTORY", "reason": f"Only {len(df)} candles available (< 5 required)"}
+
+        df_eval = df.copy()
+        if isinstance(df_eval.columns, pd.MultiIndex):
+            df_eval.columns = df_eval.columns.get_level_values(0)
+
+        if not pd.api.types.is_datetime64_any_dtype(df_eval.index):
+            try:
+                df_eval.index = pd.to_datetime(df_eval.index)
+            except Exception as e:
+                return {"is_valid": False, "status": "INVALID_INDEX", "reason": f"Cannot parse datetime index: {e}"}
+
+        # Check unique chronological ordering
+        if df_eval.index.has_duplicates:
+            return {"is_valid": False, "status": "DUPLICATE_TIMESTAMPS", "reason": "Duplicate candle timestamps detected in historical slice"}
+
+        if not df_eval.index.is_monotonic_increasing:
+            return {"is_valid": False, "status": "NON_MONOTONIC_INDEX", "reason": "Historical candles not strictly chronological"}
+
+        # Validate required columns
+        req_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+        if not all(col in df_eval.columns for col in req_cols):
+            return {"is_valid": False, "status": "MISSING_COLUMNS", "reason": f"Required OHLCV columns missing: {[c for c in req_cols if c not in df_eval.columns]}"}
+
+        c = df_eval['Close'].values
+        h = df_eval['High'].values
+        l = df_eval['Low'].values
+        o = df_eval['Open'].values
+        v = df_eval['Volume'].values
+
+        import numpy as np
+        # Finite number check (no NaN, no Inf)
+        for name, arr in [('Open', o), ('High', h), ('Low', l), ('Close', c), ('Volume', v)]:
+            if not np.all(np.isfinite(arr)):
+                return {"is_valid": False, "status": "NON_FINITE_DATA", "reason": f"NaN or Inf values detected in {name} array"}
+
+        # Price values must be strictly positive
+        if np.any(c <= 0) or np.any(h <= 0) or np.any(l <= 0) or np.any(o <= 0):
+            return {"is_valid": False, "status": "INVALID_PRICES", "reason": "Non-positive price values detected in historical slice"}
+
+        # Volume must be non-negative
+        if np.any(v < 0):
+            return {"is_valid": False, "status": "NEGATIVE_VOLUME", "reason": "Negative volume values detected in historical slice"}
+
+        # Strict OHLC logical relationships
+        if np.any(h < l) or np.any(h < o) or np.any(h < c):
+            return {"is_valid": False, "status": "CORRUPT_OHLC_HIGH", "reason": "High price violated boundary (High < Low, High < Open, or High < Close)"}
+
+        if np.any(l > o) or np.any(l > c):
+            return {"is_valid": False, "status": "CORRUPT_OHLC_LOW", "reason": "Low price violated boundary (Low > Open or Low > Close)"}
+
+        # Exact Expected Session Grid Comparison:
+        df_eval['Date'] = df_eval.index.date
+        session_dates = list(df_eval['Date'].unique())
+        session_stats = []
+        has_intraday_data_corruption = False
+        corrupt_session_reason = ""
+
+        ist = pytz.timezone('Asia/Kolkata')
+
+        for idx_date, s_date in enumerate(session_dates):
+            s_slice = df_eval[df_eval['Date'] == s_date]
+            n_bars = len(s_slice)
+            is_first_session = (idx_date == 0)
+            is_final_session = (idx_date == len(session_dates) - 1)
+
+            # Generate exact expected timestamp list for this date
+            if s_date in SPECIAL_TRADING_SESSIONS:
+                spec = SPECIAL_TRADING_SESSIONS[s_date]
+                start_m = spec.get("start_minute", 1095)
+                end_m = spec.get("end_minute", 1155)
+            else:
+                start_m = 555   # 09:15 IST
+                end_m = 925     # 15:25 IST start of bar
+
+            expected_minutes = list(range(start_m, end_m + 1, 5))
+            expected_count = len(expected_minutes)
+
+            # Check for any timestamps not matching expected session minute grid
+            actual_minutes = [t.hour * 60 + t.minute for t in s_slice.index]
+            off_grid_bars = sum(1 for m in actual_minutes if m not in expected_minutes)
+            if off_grid_bars > 0:
+                has_intraday_data_corruption = True
+                corrupt_session_reason = f"Session {s_date} contains {off_grid_bars} candles outside the official NSE 5-minute schedule"
+                break
+
+            # Internal gaps check: all consecutive bars must have exactly 300s spacing
+            if n_bars >= 2:
+                sec_diffs = (s_slice.index[1:] - s_slice.index[:-1]).total_seconds()
+                if any(d != 300 for d in sec_diffs):
+                    has_intraday_data_corruption = True
+                    corrupt_session_reason = f"Session {s_date} has internal missing candle gaps"
+                    break
+
+            # Window boundary awareness:
+            # If intermediate completed session, must strictly have all expected bars
+            if not is_first_session and not is_final_session:
+                if n_bars != expected_count:
+                    has_intraday_data_corruption = True
+                    corrupt_session_reason = f"Session {s_date} incomplete: expected {expected_count} bars, found {n_bars} (missing {expected_count - n_bars})"
+                    break
+            elif is_first_session:
+                if requested_start_dt is not None:
+                    # Strict window start boundary validation:
+                    req_start = pd.to_datetime(requested_start_dt)
+                    if hasattr(req_start, 'tz') and req_start.tz is not None and df_eval.index.tz is None:
+                        req_start = req_start.tz_localize(None)
+                    elif hasattr(req_start, 'tz') and req_start.tz is None and df_eval.index.tz is not None:
+                        req_start = req_start.tz_localize(df_eval.index.tz)
+                    if df_eval.index[0] != req_start:
+                        has_intraday_data_corruption = True
+                        corrupt_session_reason = f"First candle {df_eval.index[0]} does not match requested_start_dt {req_start}"
+                        break
+                elif len(session_dates) > 1 and actual_minutes[0] != start_m:
+                    # If requested_start_dt not specified and intermediate sessions follow, must start at 09:15
+                    has_intraday_data_corruption = True
+                    corrupt_session_reason = f"First session {s_date} missing market open (starts at {s_slice.index[0].strftime('%H:%M')})"
+                    break
+            elif is_final_session:
+                if requested_end_dt is not None:
+                    # Strict window end boundary validation:
+                    req_end = pd.to_datetime(requested_end_dt)
+                    if hasattr(req_end, 'tz') and req_end.tz is not None and df_eval.index.tz is None:
+                        req_end = req_end.tz_localize(None)
+                    elif hasattr(req_end, 'tz') and req_end.tz is None and df_eval.index.tz is not None:
+                        req_end = req_end.tz_localize(df_eval.index.tz)
+                    if df_eval.index[-1] != req_end:
+                        has_intraday_data_corruption = True
+                        corrupt_session_reason = f"Final candle {df_eval.index[-1]} does not match requested_end_dt {req_end}"
+                        break
+                elif not allow_partial_final_session:
+                    if n_bars != expected_count:
+                        has_intraday_data_corruption = True
+                        corrupt_session_reason = f"Final session {s_date} incomplete: expected {expected_count} bars, found {n_bars}"
+                        break
+
+            session_stats.append({
+                "date": str(s_date),
+                "candles_count": n_bars,
+                "expected_count": expected_count
+            })
+
+        if has_intraday_data_corruption:
+            return {
+                "is_valid": False,
+                "status": "CORRUPT_INTRADAY_SESSION",
+                "reason": corrupt_session_reason
+            }
+
+        last_dt = df_eval.index[-1]
+        last_ts = last_dt.timestamp() if hasattr(last_dt, 'timestamp') else float(last_dt)
+
+        return {
+            "is_valid": True,
+            "status": "VALID_HISTORICAL",
+            "is_completed_candle": True,
+            "latest_candle_ts": last_ts,
+            "candle_end_ts": last_ts + candle_duration_seconds,
+            "total_sessions": len(session_dates),
+            "session_stats": session_stats
+        }
