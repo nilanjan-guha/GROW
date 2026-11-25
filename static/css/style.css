@@ -264,32 +264,33 @@ header {
 
 /* Sector Cards: Holographic Elevation & 3D Tilt */
 .sector-card {
-    background: #0d1424;
-    border: 1px solid #1e293b;
-    border-radius: 7px;
-    padding: 10px 12px;
+    background: #0b1220;
+    border: 1px solid #1a2536;
+    border-radius: 8px;
+    padding: 12px 14px;
+    min-height: 64px;
     cursor: pointer;
     transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
     position: relative;
     overflow: hidden;
-    margin-bottom: 9px;
+    margin-bottom: 10px;
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
-    justify-content: center;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+    justify-content: space-between;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
 }
 
 .sector-card:hover {
     border-color: #38bdf8;
-    background: #131e33;
+    background: #111c30;
     transform: translateY(-1px);
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+    box-shadow: 0 5px 16px rgba(0, 0, 0, 0.45);
 }
 
 .sector-card.selected {
     border-color: #38bdf8 !important;
-    background: #14243b !important;
+    background: #13243d !important;
     box-shadow: 0 0 16px rgba(56, 189, 248, 0.45), inset 0 0 8px rgba(56, 189, 248, 0.15) !important;
 }
 
