@@ -417,11 +417,9 @@ class GrowwSectorEngine:
         active_sectors_with_fno = sum(1 for s in sector_results.values() if s.get("fno_coverage_count", 0) > 0)
         
         has_healthy_coverage = (
-            self.selected_sector_fno_count >= 25 and 
-            self.selected_sector_coverage_pct >= 15.0 and
-            active_sectors_with_fno >= 5 and 
-            len(sector_results) >= 6
-        )
+            (self.selected_sector_fno_count >= 20 and self.selected_sector_coverage_pct >= 9.0) or
+            (self.full_universe_mapped_count >= 150)
+        ) and active_sectors_with_fno >= 4 and len(sector_results) >= 4
 
         self.sector_diagnostics = {
             "expected_fno_universe_size": exp_denom,

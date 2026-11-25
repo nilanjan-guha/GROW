@@ -3,11 +3,16 @@ import json
 import time
 import threading
 import traceback
+import logging
 import pandas as pd
 import numpy as np
 from flask import Flask, request, jsonify, render_template
 from dotenv import load_dotenv
 import yfinance as yf
+
+# Suppress noisy external yfinance download warnings for transient network drops
+logging.getLogger("yfinance").setLevel(logging.ERROR)
+logging.getLogger("urllib3").setLevel(logging.ERROR)
 import growwapi
 from growwapi import GrowwAPI
 
