@@ -82,9 +82,9 @@ class OpportunityPotentialEngine:
         for d in completed_dates:
             day_data = df_copy[df_copy['Date'] == d]
             if not day_data.empty:
-                d_high = float(day_data['High'].max())
-                d_low = float(day_data['Low'].min())
-                d_close = float(day_data['Close'].iloc[-1])
+                d_high = float(day_data['High'].squeeze().max())
+                d_low = float(day_data['Low'].squeeze().min())
+                d_close = float(day_data['Close'].squeeze().iloc[-1])
                 daily_records.append({"high": d_high, "low": d_low, "close": d_close})
 
         if len(daily_records) >= 2:
@@ -125,10 +125,17 @@ class OpportunityPotentialEngine:
             }
 
         curr_c = float(current_price)
-        h = df['High']
-        l = df['Low']
-        c = df['Close']
-        o = df['Open']
+
+        # Ensure single-level flat columns if MultiIndex columns were passed from yfinance or upstream cache
+        if isinstance(df.columns, pd.MultiIndex):
+            df = df.copy()
+            df.columns = df.columns.get_level_values(0)
+
+        # Extract 1D Series safely
+        h = df['High'].squeeze()
+        l = df['Low'].squeeze()
+        c = df['Close'].squeeze()
+        o = df['Open'].squeeze()
 
         # 1. Date isolation
         df_copy = df.copy()
@@ -141,8 +148,8 @@ class OpportunityPotentialEngine:
         pdl = None
         if len(dates) >= 2:
             prev_day_df = df_copy[df_copy['Date'] == dates[-2]]
-            pdh = float(prev_day_df['High'].max())
-            pdl = float(prev_day_df['Low'].min())
+            pdh = float(prev_day_df['High'].squeeze().max())
+            pdl = float(prev_day_df['Low'].squeeze().min())
 
         today_df = df_copy[df_copy['Date'] == dates[-1]] if dates else df_copy
         
@@ -154,16 +161,16 @@ class OpportunityPotentialEngine:
         else:
             # Fallback unified multi-duration ORB calculation
             if len(today_df) >= 6:
-                orh = float(today_df['High'].iloc[:6].max())
-                orl = float(today_df['Low'].iloc[:6].min())
+                orh = float(today_df['High'].squeeze().iloc[:6].max())
+                orl = float(today_df['Low'].squeeze().iloc[:6].min())
                 orb_type = "30m ORB"
             elif len(today_df) >= 3:
-                orh = float(today_df['High'].iloc[:3].max())
-                orl = float(today_df['Low'].iloc[:3].min())
+                orh = float(today_df['High'].squeeze().iloc[:3].max())
+                orl = float(today_df['Low'].squeeze().iloc[:3].min())
                 orb_type = "15m ORB"
             elif not today_df.empty:
-                orh = float(today_df['High'].iloc[0])
-                orl = float(today_df['Low'].iloc[0])
+                orh = float(today_df['High'].squeeze().iloc[0])
+                orl = float(today_df['Low'].squeeze().iloc[0])
                 orb_type = "5m ORB"
             else:
                 orh = float(h.iloc[0])
@@ -177,7 +184,9 @@ class OpportunityPotentialEngine:
 
         # True Daily Wilder ATR14 using dedicated daily data when available
         daily_atr, daily_atr_source = OpportunityPotentialEngine.calculate_daily_atr(df_copy, dates, curr_c, daily_df=daily_df)
-        today_range = float(today_df['High'].max() - today_df['Low'].min()) if not today_df.empty else atr_5m_14
+        today_h_max = float(today_df['High'].squeeze().max()) if not today_df.empty else curr_c
+        today_l_min = float(today_df['Low'].squeeze().min()) if not today_df.empty else curr_c
+        today_range = float(today_h_max - today_l_min) if not today_df.empty else atr_5m_14
         range_exhaustion_ratio = round(today_range / daily_atr, 2)
 
         # Volatility-aware dynamic clearance threshold:
@@ -188,11 +197,17 @@ class OpportunityPotentialEngine:
         hist_df = df
         swing_highs = []
         swing_lows = []
+        h_vals = h.values if hasattr(h, 'values') else list(h)
+        l_vals = l.values if hasattr(l, 'values') else list(l)
         for i in range(2, len(hist_df) - 2):
-            if float(h.iloc[i]) == max([float(x) for x in h.iloc[i-2:i+3]]):
-                swing_highs.append(float(h.iloc[i]))
-            if float(l.iloc[i]) == min([float(x) for x in l.iloc[i-2:i+3]]):
-                swing_lows.append(float(l.iloc[i]))
+            val_h = float(h_vals[i])
+            window_h = [float(x) for x in h_vals[i-2:i+3]]
+            if val_h == max(window_h):
+                swing_highs.append(val_h)
+            val_l = float(l_vals[i])
+            window_l = [float(x) for x in l_vals[i-2:i+3]]
+            if val_l == min(window_l):
+                swing_lows.append(val_l)
 
         # 4. REVERSAL & SETUP INVALIDATION DETECTION
         # Check opposing candle pattern, rejection wick, and opposing OB reactions

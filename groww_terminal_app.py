@@ -1338,9 +1338,14 @@ def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
         enriched_candle_ts = str(enriched_entry.get("last_candle_ts", ""))
         enriched = enriched_entry.get("data", {}) if (enriched_candle_ts and enriched_candle_ts == stock_candle_ts) else {}
         
+        # Flatten multi-level columns if present and safely extract scalar price
+        if isinstance(eval_df_sym.columns, pd.MultiIndex):
+            eval_df_sym = eval_df_sym.copy()
+            eval_df_sym.columns = eval_df_sym.columns.get_level_values(0)
+
         from engine.opportunity_potential_engine import OpportunityPotentialEngine
-        c_price = float(eval_df_sym['Close'].iloc[-1])
-        c_open = float(eval_df_sym['Open'].iloc[-1])
+        c_price = float(eval_df_sym['Close'].squeeze().iloc[-1])
+        c_open = float(eval_df_sym['Open'].squeeze().iloc[-1])
         guess_dir = "BUY" if c_price >= c_open else "SELL"
         direct_pot = OpportunityPotentialEngine.evaluate_potential(eval_df_sym, c_price, guess_dir)
 
