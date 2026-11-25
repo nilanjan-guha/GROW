@@ -401,63 +401,81 @@ class OpportunityRankingEngine:
         # Dual Scoring Architecture:
         # A. Early Opportunity Score (Pre-Breakout, Energy Coil, Volume Accumulation, RS Lead)
         # B. Confirmation Score (Completed Expansion, Broken Level, High RVOL, Institutional OB)
-        early_bull_score = 0
-        early_bear_score = 0
-        conf_bull_score = 0
-        conf_bear_score = 0
+        early_bull_score = 0.0
+        early_bear_score = 0.0
+        conf_bull_score = 0.0
+        conf_bear_score = 0.0
+
+        # Fine-grained continuous adjustments (creates distinct, realistic scores like 69, 74, 83):
+        pot_val = float(opp_eval.get("potential_pct", 0.0)) if opp_eval else 0.0
+        # 1. Volume bonus: proportional to RVOL
+        rvol_bonus = min(12.0, max(0.0, (rvol - 1.0) * 8.0))
+        # 2. RS bonus: proportional to relative strength
+        rs_bonus_bull = min(10.0, max(0.0, rs_nifty * 3.0 + rs_accel_3 * 5.0))
+        rs_bonus_bear = min(10.0, max(0.0, -rs_nifty * 3.0 - rs_accel_3 * 5.0))
+        # 3. Expansion room bonus
+        room_bonus = min(8.0, max(0.0, pot_val * 4.0))
 
         # Bullish Early Opportunity Factors (Must reflect true structural accumulation):
-        if is_coiling_near_orh or is_coiling_near_pdh: early_bull_score += 25
-        if is_range_squeezed and has_swing_higher_lows: early_bull_score += 20
-        if vol_consecutive_rise and curr_c > curr_o: early_bull_score += 15
-        if rs_accel_3 > 0.3: early_bull_score += 15
-        if is_pdl_liquidity_sweep_bull: early_bull_score += 20
-        if is_pdh_retest_hold_bull: early_bull_score += 15
-        if is_flat_open_ignition: early_bull_score += 15
-        if is_gap_up_holding: early_bull_score += 10
-        if above_vwap: early_bull_score += 10
+        if is_coiling_near_orh or is_coiling_near_pdh: early_bull_score += 24.0
+        if is_range_squeezed and has_swing_higher_lows: early_bull_score += 19.0
+        if vol_consecutive_rise and curr_c > curr_o: early_bull_score += 14.0
+        if rs_accel_3 > 0.15: early_bull_score += 13.0
+        if is_pdl_liquidity_sweep_bull: early_bull_score += 18.0
+        if is_pdh_retest_hold_bull: early_bull_score += 14.0
+        if is_flat_open_ignition: early_bull_score += 14.0
+        if is_gap_up_holding: early_bull_score += 9.0
+        if above_vwap: early_bull_score += 11.0
         # Deep Institutional Triggers (Breaker Blocks & Liquidity Inducement Sweeps):
-        if opp_eval and opp_eval.get("has_eql_inducement_sweep"): early_bull_score += 25
-        if opp_eval and opp_eval.get("nearest_bull_breaker"): conf_bull_score += 25
+        if opp_eval and opp_eval.get("has_eql_inducement_sweep"): early_bull_score += 21.0
+        if opp_eval and opp_eval.get("nearest_bull_breaker"): conf_bull_score += 21.0
+
+        early_bull_score += (rvol_bonus + rs_bonus_bull)
 
         # Bullish Confirmation Factors:
-        if is_broken_above_orh or is_broken_above_pdh: conf_bull_score += 25
-        if is_expanding_now and curr_c > curr_o: conf_bull_score += 20
-        if rvol >= 1.5: conf_bull_score += 20
-        if above_vwap: conf_bull_score += 15
-        if rs_nifty > 0.5: conf_bull_score += 15
-        if rs_accel_6 > 0.3: conf_bull_score += 15
+        if is_broken_above_orh or is_broken_above_pdh: conf_bull_score += 24.0
+        if is_expanding_now and curr_c > curr_o: conf_bull_score += 19.0
+        if rvol >= 1.25: conf_bull_score += 18.0
+        if above_vwap: conf_bull_score += 13.0
+        if rs_nifty > 0.3: conf_bull_score += 12.0
+        if rs_accel_6 > 0.2: conf_bull_score += 12.0
+
+        conf_bull_score += (rvol_bonus + rs_bonus_bull + room_bonus)
 
         # Bearish Early Opportunity Factors:
-        if is_coiling_near_orl or is_coiling_near_pdl: early_bear_score += 25
-        if is_range_squeezed and has_swing_lower_highs: early_bear_score += 20
-        if vol_consecutive_rise and curr_c < curr_o: early_bear_score += 15
-        if rs_accel_3 < -0.3: early_bear_score += 15
-        if is_pdh_liquidity_sweep_bear: early_bear_score += 20
-        if is_pdl_retest_hold_bear: early_bear_score += 15
-        if is_gap_down_holding: early_bear_score += 10
-        if below_vwap: early_bear_score += 10
+        if is_coiling_near_orl or is_coiling_near_pdl: early_bear_score += 24.0
+        if is_range_squeezed and has_swing_lower_highs: early_bear_score += 19.0
+        if vol_consecutive_rise and curr_c < curr_o: early_bear_score += 14.0
+        if rs_accel_3 < -0.15: early_bear_score += 13.0
+        if is_pdh_liquidity_sweep_bear: early_bear_score += 18.0
+        if is_pdl_retest_hold_bear: early_bear_score += 14.0
+        if is_gap_down_holding: early_bear_score += 9.0
+        if below_vwap: early_bear_score += 11.0
         # Deep Institutional Triggers (Breaker Blocks & Liquidity Inducement Sweeps):
-        if opp_eval and opp_eval.get("has_eqh_inducement_sweep"): early_bear_score += 25
-        if opp_eval and opp_eval.get("nearest_bear_breaker"): conf_bear_score += 25
+        if opp_eval and opp_eval.get("has_eqh_inducement_sweep"): early_bear_score += 21.0
+        if opp_eval and opp_eval.get("nearest_bear_breaker"): conf_bear_score += 21.0
+
+        early_bear_score += (rvol_bonus + rs_bonus_bear)
 
         # Bearish Confirmation Factors:
-        if is_broken_below_orl or is_broken_below_pdl: conf_bear_score += 25
-        if is_expanding_now and curr_c < curr_o: conf_bear_score += 20
-        if rvol >= 1.5: conf_bear_score += 20
-        if below_vwap: conf_bear_score += 15
-        if rs_nifty < -0.5: conf_bear_score += 15
-        if rs_accel_6 < -0.3: conf_bear_score += 15
+        if is_broken_below_orl or is_broken_below_pdl: conf_bear_score += 24.0
+        if is_expanding_now and curr_c < curr_o: conf_bear_score += 19.0
+        if rvol >= 1.25: conf_bear_score += 18.0
+        if below_vwap: conf_bear_score += 13.0
+        if rs_nifty < -0.3: conf_bear_score += 12.0
+        if rs_accel_6 < -0.2: conf_bear_score += 12.0
 
-        early_bull_score = min(100, early_bull_score)
-        conf_bull_score = min(100, conf_bull_score)
-        early_bear_score = min(100, early_bear_score)
-        conf_bear_score = min(100, conf_bear_score)
+        conf_bear_score += (rvol_bonus + rs_bonus_bear + room_bonus)
+
+        early_bull_score = int(round(min(98.0, early_bull_score)))
+        conf_bull_score = int(round(min(98.0, conf_bull_score)))
+        early_bear_score = int(round(min(98.0, early_bear_score)))
+        conf_bear_score = int(round(min(98.0, conf_bear_score)))
 
         total_bull = max(early_bull_score, conf_bull_score)
         total_bear = max(early_bear_score, conf_bear_score)
 
-        direction = "BULLISH" if (total_bull >= total_bear and total_bull >= 35) else ("BEARISH" if total_bear >= 35 else "NEUTRAL")
+        direction = "BULLISH" if (total_bull >= total_bear and total_bull >= 30) else ("BEARISH" if total_bear >= 30 else "NEUTRAL")
         conviction_score = total_bull if direction == "BULLISH" else (total_bear if direction == "BEARISH" else max(total_bull, total_bear))
 
         # Correct Stop-Loss & Targets from Opportunity Potential Engine
@@ -468,11 +486,11 @@ class OpportunityRankingEngine:
         rr_ratio = float(opp_eval.get("risk_reward_ratio", 0.0)) if opp_eval else 0.0
         exhaustion_risk = opp_eval.get("exhaustion_risk", "LOW") if opp_eval else "LOW"
 
-        # Quality Gates for CONFIRMED (Calibrated: potential >= 0.45%, RR >= 1.10):
+        # Quality Gates for CONFIRMED (Calibrated: potential >= 0.35%, RR >= 1.05):
         is_viable_opportunity = (
             opp_eval.get("is_viable", False) and 
-            potential_pct >= 0.45 and 
-            rr_ratio >= 1.10 and 
+            potential_pct >= 0.35 and 
+            rr_ratio >= 1.05 and 
             exhaustion_risk != "HIGH"
         ) if opp_eval else False
 
@@ -480,7 +498,7 @@ class OpportunityRankingEngine:
         # 1. SL and TP must be finite, positive numbers (not NaN or Inf)
         # 2. For BUY: SL < curr_c and TP1 > curr_c
         # 3. For SELL: SL > curr_c and TP1 < curr_c
-        # 4. Computed RR = (reward / risk) >= 1.10 without lossy premature rounding
+        # 4. Computed RR = (reward / risk) >= 1.05 without lossy premature rounding
         import math
         computed_rr = 0.0
         has_valid_structural_risk = False
@@ -495,40 +513,39 @@ class OpportunityRankingEngine:
                         risk = curr_c_val - sl_val
                         reward = tp1_val - curr_c_val
                         raw_rr = reward / risk if risk > 0 else 0.0
-                        if math.isfinite(raw_rr) and raw_rr >= 1.10:
+                        if math.isfinite(raw_rr) and raw_rr >= 1.05:
                             computed_rr = round(raw_rr, 2)
                             has_valid_structural_risk = True
                     elif direction == "BEARISH" and sl_val > curr_c_val and tp1_val < curr_c_val:
                         risk = sl_val - curr_c_val
                         reward = curr_c_val - tp1_val
                         raw_rr = reward / risk if risk > 0 else 0.0
-                        if math.isfinite(raw_rr) and raw_rr >= 1.10:
+                        if math.isfinite(raw_rr) and raw_rr >= 1.05:
                             computed_rr = round(raw_rr, 2)
                             has_valid_structural_risk = True
             except (ValueError, TypeError):
                 has_valid_structural_risk = False
 
-        # Stage Classification with Strictly Enforced Directional Quality Gates:
-        # A stock can ONLY be CONFIRMED (ENTRY READY) if EVERY condition is met simultaneously:
-        # 1. is_viable_opportunity (opp_eval viable, potential >= 0.45%, RR >= 1.10, not high exhaustion)
-        # 2. Valid structural stop-loss, target, and computed RR >= 1.10
-        # 3. Confirmation score meets threshold (>= 40) strictly aligned with direction
-        # 4. Conviction score >= 45
+        # Stage Classification with Calibrated Quality Gates:
+        # A stock is CONFIRMED (ENTRY READY) when:
+        # 1. is_viable_opportunity (opp_eval viable, potential >= 0.35%, RR >= 1.05, not high exhaustion)
+        # 2. Valid structural stop-loss, target, and computed RR >= 1.05
+        # 3. Confirmation score meets threshold (>= 32) aligned with direction
+        # 4. Conviction score >= 38
         is_strictly_confirmed = (
             is_viable_opportunity and 
             has_valid_structural_risk and 
-            potential_pct >= 0.45 and 
+            potential_pct >= 0.35 and 
             exhaustion_risk != "HIGH" and
-            ((direction == "BULLISH" and conf_bull_score >= 40 and curr_c > curr_o) or 
-             (direction == "BEARISH" and conf_bear_score >= 40 and curr_c < curr_o)) and
-            conviction_score >= 45
+            ((direction == "BULLISH" and conf_bull_score >= 32 and curr_c > curr_o) or 
+             (direction == "BEARISH" and conf_bear_score >= 32 and curr_c < curr_o)) and
+            conviction_score >= 38
         )
 
         # Direction-specific IGNITION trigger:
         # Activated when price breaks out of ORH/PDH (Long) or breaks down from ORL/PDL (Short) with closing confirmation
-        # Requires:
         # 1. Price breaking out of ORH/PDH (Long) or breaking down from ORL/PDL (Short) or expanding with volume
-        # 2. Volume expansion: RVOL >= 1.15 or expanding range >= 1.2x ATR
+        # 2. Volume expansion: RVOL >= 1.10 or expanding range >= 1.1x ATR
         # 3. STRICT VWAP VALIDATION: Must hold above VWAP for Longs / below VWAP for Shorts.
         # 4. Valid structural risk boundaries: Invalidation level must exist with computed RR >= 1.05
         has_ignition_risk_gate = has_valid_structural_risk and (computed_rr >= 1.05)
@@ -537,16 +554,16 @@ class OpportunityRankingEngine:
             direction == "BULLISH" and 
             above_vwap and 
             has_ignition_risk_gate and (
-                ((is_broken_above_orh or is_broken_above_pdh) and curr_c > curr_o and (rvol >= 1.15 or is_expanding_now)) or
-                (is_expanding_now and curr_c > curr_o and rvol >= 1.2)
+                ((is_broken_above_orh or is_broken_above_pdh) and curr_c > curr_o and (rvol >= 1.10 or is_expanding_now)) or
+                (is_expanding_now and curr_c > curr_o and rvol >= 1.15)
             )
         )
         is_bear_ignition = (
             direction == "BEARISH" and 
             below_vwap and 
             has_ignition_risk_gate and (
-                ((is_broken_below_orl or is_broken_below_pdl) and curr_c < curr_o and (rvol >= 1.15 or is_expanding_now)) or
-                (is_expanding_now and curr_c < curr_o and rvol >= 1.2)
+                ((is_broken_below_orl or is_broken_below_pdl) and curr_c < curr_o and (rvol >= 1.10 or is_expanding_now)) or
+                (is_expanding_now and curr_c < curr_o and rvol >= 1.15)
             )
         )
 
@@ -678,8 +695,8 @@ class OpportunityRankingEngine:
         # Explicit actionability flag: strictly requires confirmed stage or confirmed ignition breakout with validated risk
         # CONFIRMED and IGNITION (breakouts with confirmed risk & RVOL) are actionable entries!
         is_actionable = bool(
-            (stage == "CONFIRMED" and has_valid_structural_risk and computed_rr >= 1.10) or
-            (stage == "IGNITION" and has_ignition_risk_gate and computed_rr >= 1.05 and rvol >= 1.15)
+            (stage == "CONFIRMED" and has_valid_structural_risk and computed_rr >= 1.05) or
+            (stage == "IGNITION" and has_ignition_risk_gate and computed_rr >= 1.05 and rvol >= 1.10)
         )
 
         return {
