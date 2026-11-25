@@ -1003,6 +1003,8 @@ def smc_scan():
         
         # Merge metrics into response (Using Session VWAP from Institutional Engine)
         res["vwap"] = inst_res["vwap"]
+        res["rvol"] = inst_res["rvol"]
+        res["vol_multiplier"] = inst_res["rvol"] if inst_res.get("rvol") else res.get("vol_multiplier", 1.0)
         res["composite_score"] = inst_res["composite_score"]
         res["probability_pct"] = inst_res["probability_pct"]
         res["triggered_strategies"] = inst_res["triggered_strategies"]
