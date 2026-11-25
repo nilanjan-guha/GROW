@@ -430,8 +430,6 @@ class OpportunityRankingEngine:
         if opp_eval and opp_eval.get("has_eql_inducement_sweep"): early_bull_score += 21.0
         if opp_eval and opp_eval.get("nearest_bull_breaker"): conf_bull_score += 21.0
 
-        early_bull_score += (rvol_bonus + rs_bonus_bull)
-
         # Bullish Confirmation Factors:
         if is_broken_above_orh or is_broken_above_pdh: conf_bull_score += 24.0
         if is_expanding_now and curr_c > curr_o: conf_bull_score += 19.0
@@ -439,8 +437,6 @@ class OpportunityRankingEngine:
         if above_vwap: conf_bull_score += 13.0
         if rs_nifty > 0.3: conf_bull_score += 12.0
         if rs_accel_6 > 0.2: conf_bull_score += 12.0
-
-        conf_bull_score += (rvol_bonus + rs_bonus_bull + room_bonus)
 
         # Bearish Early Opportunity Factors:
         if is_coiling_near_orl or is_coiling_near_pdl: early_bear_score += 24.0
@@ -455,8 +451,6 @@ class OpportunityRankingEngine:
         if opp_eval and opp_eval.get("has_eqh_inducement_sweep"): early_bear_score += 21.0
         if opp_eval and opp_eval.get("nearest_bear_breaker"): conf_bear_score += 21.0
 
-        early_bear_score += (rvol_bonus + rs_bonus_bear)
-
         # Bearish Confirmation Factors:
         if is_broken_below_orl or is_broken_below_pdl: conf_bear_score += 24.0
         if is_expanding_now and curr_c < curr_o: conf_bear_score += 19.0
@@ -465,12 +459,16 @@ class OpportunityRankingEngine:
         if rs_nifty < -0.3: conf_bear_score += 12.0
         if rs_accel_6 < -0.2: conf_bear_score += 12.0
 
-        conf_bear_score += (rvol_bonus + rs_bonus_bear + room_bonus)
+        # 4. Adaptive Machine Learning Multiplier from historical feedback:
+        from engine.adaptive_trade_learner import AdaptiveTradeLearner
+        strat_key = "MOMENTUM_BREAKOUT" if (is_broken_above_orh or is_broken_below_orl) else "INTRADAY_TREND"
+        learn_mult_bull = AdaptiveTradeLearner.get_pattern_multiplier(strat_key, "BULLISH")
+        learn_mult_bear = AdaptiveTradeLearner.get_pattern_multiplier(strat_key, "BEARISH")
 
-        early_bull_score = int(round(min(98.0, early_bull_score)))
-        conf_bull_score = int(round(min(98.0, conf_bull_score)))
-        early_bear_score = int(round(min(98.0, early_bear_score)))
-        conf_bear_score = int(round(min(98.0, conf_bear_score)))
+        early_bull_score = int(round(min(98.0, (early_bull_score + rvol_bonus + rs_bonus_bull) * learn_mult_bull)))
+        conf_bull_score = int(round(min(98.0, (conf_bull_score + rvol_bonus + rs_bonus_bull + room_bonus) * learn_mult_bull)))
+        early_bear_score = int(round(min(98.0, (early_bear_score + rvol_bonus + rs_bonus_bear) * learn_mult_bear)))
+        conf_bear_score = int(round(min(98.0, (conf_bear_score + rvol_bonus + rs_bonus_bear + room_bonus) * learn_mult_bear)))
 
         total_bull = max(early_bull_score, conf_bull_score)
         total_bear = max(early_bear_score, conf_bear_score)

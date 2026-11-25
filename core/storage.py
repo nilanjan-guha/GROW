@@ -726,6 +726,15 @@ def evaluate_open_outcomes(data_map, force_eod=False, evaluation_time=None):
                 WHERE id = ?
                 """, (outcome, final_pnl, now, net_pnl, brokerage_costs, sig["id"]))
                 outcomes_changed = True
+
+                # Run Trade Learning Post-Mortem Feedback
+                try:
+                    from engine.adaptive_trade_learner import AdaptiveTradeLearner
+                    sig_updated = dict(sig)
+                    sig_updated.update({"outcome": outcome, "final_pnl": final_pnl, "closed_at": now, "net_pnl": net_pnl})
+                    AdaptiveTradeLearner.analyze_and_record_outcome(sig_updated)
+                except Exception:
+                    pass
                 continue
 
             if data is None:
@@ -864,6 +873,19 @@ def evaluate_open_outcomes(data_map, force_eod=False, evaluation_time=None):
             if outcome in ("WIN", "WIN_FULL", "WIN_PARTIAL", "LOSS"):
                 update_strategy_performance(cursor, strategy, sig["id"])
                 outcomes_changed = True
+
+            # If trade has concluded, trigger Adaptive Post-Mortem Analysis
+            if outcome != "ACTIVE":
+                try:
+                    from engine.adaptive_trade_learner import AdaptiveTradeLearner
+                    sig_completed = dict(sig)
+                    sig_completed.update({
+                        "outcome": outcome, "final_pnl": final_pnl, "closed_at": now,
+                        "mfe": mfe, "mae": mae, "net_pnl": net_pnl
+                    })
+                    AdaptiveTradeLearner.analyze_and_record_outcome(sig_completed)
+                except Exception:
+                    pass
 
         conn.commit()
         conn.close()
