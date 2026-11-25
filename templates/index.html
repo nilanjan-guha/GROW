@@ -471,14 +471,18 @@
             <div class="center-stage">
                 <!-- 3D Holographic Radar Scanner HUD -->
                 <div class="radar-scan-canvas-container cyber-panel">
-                    <div style="display:flex; align-items:center; gap:20px;">
+                    <div style="display:flex; align-items:center; gap:16px;">
+                        <!-- Radar Sweep Dial (Shows clean live ticker text and continuous radar sweep) -->
                         <div class="radar-sweep-dial">
-                            <span style="font-size:0.82rem; font-weight:900; color:var(--neon-cyan); letter-spacing:0.8px;"
+                            <span style="font-size:0.86rem; font-weight:900; color:var(--neon-cyan); letter-spacing:1px; text-shadow:0 0 10px rgba(0,240,255,0.7);"
                                 id="radarTargetSymbol">NIFTY</span>
                         </div>
-                        <img id="radarStockIcon" src=""
-                            style="width:52px; height:52px; border-radius:50%; border:2px solid var(--neon-cyan); object-fit:contain; background:#0f172a; box-shadow:0 0 16px rgba(0,240,255,0.3); display:none;"
-                            onerror="this.style.display='none';">
+                        <!-- Company Avatar / Brand Icon Circle (Mounted right beside the radar dial) -->
+                        <div id="radarStockIconWrapper" style="position:relative; width:56px; height:56px; flex-shrink:0; display:flex; align-items:center; justify-content:center; border-radius:50%; background:#0b1329; border:2px solid var(--neon-cyan); box-shadow:0 0 16px rgba(0,240,255,0.35);">
+                            <img id="radarStockIcon" src=""
+                                style="width:100%; height:100%; border-radius:50%; object-fit:contain; background:#0f172a;"
+                                onerror="this.onerror=null; this.src=makeMonogramSvg(document.getElementById('radarTargetSymbol').innerText);">
+                        </div>
                         <div>
                             <div
                                 style="font-size:0.68rem; color:var(--text-muted); letter-spacing:1.2px; text-transform:uppercase; font-weight:700;">
@@ -901,7 +905,7 @@
             if (stockLogosCache[sym]) {
                 return stockLogosCache[sym];
             }
-            return null;
+            return makeMonogramSvg(sym);
         }
 
         function renderMoversList(stocks, containerId, isBull) {
@@ -970,15 +974,8 @@
             const iconEl = document.getElementById('radarStockIcon');
             if (iconEl) {
                 const logo = getStockLogoUrl(cleanSym);
-                if (logo) {
-                    iconEl.src = logo;
-                    iconEl.style.display = 'block';
-                    iconEl.onerror = function() {
-                        this.style.display = 'none';
-                    };
-                } else {
-                    iconEl.style.display = 'none';
-                }
+                iconEl.onerror = null;
+                iconEl.src = logo;
             }
 
             // Visual feedback: show mode (LIVE USER INSPECTION vs BACKGROUND SCANNING)
