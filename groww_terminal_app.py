@@ -848,6 +848,8 @@ def smc_scan():
         # Fallback to first stock in active watchlist or universe dynamically
         fno_list = screener_state.get("fno_universe", [])
         symbol = f"{fno_list[0]}.NS" if fno_list else "NIFTY"
+    elif not symbol.endswith(".NS") and not symbol.startswith("^") and symbol != "NIFTY":
+        symbol = f"{symbol}.NS"
     now = time.time()
     
     try:

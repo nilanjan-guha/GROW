@@ -484,20 +484,15 @@
                                 onerror="this.onerror=null; this.src=makeMonogramSvg(document.getElementById('radarTargetSymbol').innerText);">
                         </div>
                         <div>
-                            <div
-                                style="font-size:0.68rem; color:var(--text-muted); letter-spacing:1.2px; text-transform:uppercase; font-weight:700;">
-                                REAL-TIME F&O SNIPER RADAR</div>
-                            <div style="display:flex; align-items:baseline; gap:14px; margin-top:2px;">
-                                <span style="font-size:1.45rem; font-weight:900; color:#fff;"
+                            <div style="display:flex; align-items:baseline; gap:14px;">
+                                <span style="font-size:1.60rem; font-weight:900; color:#fff;"
                                     id="radarStockTitle">AWAITING SELECTION...</span>
-                                <span style="font-size:1.30rem; font-weight:900; color:var(--neon-green);"
+                                <span style="font-size:1.40rem; font-weight:900; color:var(--neon-green);"
                                     id="radarStockLivePrice">--</span>
                                 <span
-                                    style="font-size:0.86rem; font-weight:900; color:var(--neon-cyan); background:rgba(0,240,255,0.15); padding:3px 10px; border-radius:4px; border:1px solid rgba(0,240,255,0.4);"
+                                    style="font-size:0.88rem; font-weight:900; color:var(--neon-cyan); background:rgba(0,240,255,0.15); padding:4px 12px; border-radius:4px; border:1px solid rgba(0,240,255,0.4);"
                                     id="radarStockScore">SCORE --/100</span>
                             </div>
-                            <div style="font-size:0.80rem; color:var(--neon-amber); margin-top:4px; font-weight:700;"
-                                id="selectedSectorTitle">SCANNING UNIVERSE</div>
                         </div>
                     </div>
 
@@ -936,7 +931,7 @@
                 }
 
                 html += `
-                <div class="stock-mover-card ${isSelected ? 'active-selected' : ''}" onclick="userSelectStock('${sym}')" style="${isPrep ? 'border-left: 4px solid var(--neon-amber);' : ''}">
+                <div class="stock-mover-card ${isSelected ? 'active-selected' : ''}" data-symbol="${sym}" onclick="userSelectStock('${sym}')" style="${isPrep ? 'border-left: 4px solid var(--neon-amber);' : ''}">
                     <div style="display:flex; justify-content:space-between; align-items:center;">
                         <span style="font-weight:900; font-size:0.86rem; color:#fff; display:flex; align-items:center; gap:8px;">
                             ${logoHtml}
@@ -978,21 +973,10 @@
                 iconEl.src = logo;
             }
 
-            // Visual feedback: show mode (LIVE USER INSPECTION vs BACKGROUND SCANNING)
-            const cycleModeEl = document.getElementById('selectedSectorTitle');
-            if (cycleModeEl) {
-                if (isAuto) {
-                    cycleModeEl.innerText = `BACKGROUND SCANNING UNIVERSE // AUTO-CYCLE`;
-                    cycleModeEl.style.color = 'var(--neon-cyan)';
-                } else {
-                    cycleModeEl.innerText = `MANUAL INSPECTION // LIVE TRACKING ACTIVE`;
-                    cycleModeEl.style.color = 'var(--neon-green)';
-                }
-            }
-
             // Highlight corresponding active card on sidebar if visible
             document.querySelectorAll('.stock-mover-card').forEach(card => {
-                if (card.innerText.includes(cleanSym)) {
+                const cardSym = card.getAttribute('data-symbol') || '';
+                if (cardSym.includes(cleanSym) || card.innerText.includes(cleanSym)) {
                     card.classList.add('active-selected');
                 } else {
                     card.classList.remove('active-selected');
@@ -1000,7 +984,9 @@
             });
 
             try {
-                const res = await fetch(`/api/market/smc-scan?symbol=${encodeURIComponent(symbol)}`);
+                // Ensure ticker is properly passed to SMC scan
+                const querySym = symbol.includes('.') ? symbol : `${symbol}.NS`;
+                const res = await fetch(`/api/market/smc-scan?symbol=${encodeURIComponent(querySym)}`);
                 const data = await res.json();
                 if (data.success && data.smc) {
                     renderRadarData(symbol, data.smc);
@@ -1115,7 +1101,7 @@
                     const logoHtml = logoUrl ? `<img src="${logoUrl}" style="width:20px; height:20px; border-radius:50%; object-fit:contain; background:#1e293b;" onerror="this.style.display='none';">` : '';
                     const prc = c.current_price ? `₹${Number(c.current_price).toFixed(2)}` : '';
                     html += `
-                    <div class="stock-mover-card" onclick="userSelectStock('${c.symbol}')" style="border-left-color:${col}; margin-bottom:6px; padding:10px 14px;">
+                    <div class="stock-mover-card" data-symbol="${c.symbol}" onclick="userSelectStock('${c.symbol}')" style="border-left-color:${col}; margin-bottom:6px; padding:10px 14px;">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
                             <span style="font-weight:900; font-size:0.90rem; color:#fff; display:flex; align-items:center; gap:8px;">
                                 ${logoHtml}
@@ -1148,7 +1134,7 @@
                     const logoHtml = logoUrl ? `<img src="${logoUrl}" style="width:22px; height:22px; border-radius:50%; object-fit:contain; background:#1e293b;" onerror="this.style.display='none';">` : '';
                     const prc = c.current_price ? `₹${Number(c.current_price).toFixed(2)}` : '';
                     html += `
-                    <div class="stock-mover-card" onclick="userSelectStock('${c.symbol}')" style="border-left-color:${col}; border-color:${col}; background:rgba(0,255,163,0.08); margin-bottom:6px; padding:10px 14px;">
+                    <div class="stock-mover-card" data-symbol="${c.symbol}" onclick="userSelectStock('${c.symbol}')" style="border-left-color:${col}; border-color:${col}; background:rgba(0,255,163,0.08); margin-bottom:6px; padding:10px 14px;">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
                             <span style="font-weight:900; font-size:0.92rem; color:#fff; display:flex; align-items:center; gap:8px;">
                                 ${logoHtml}
@@ -1323,19 +1309,14 @@
             }
 
             // Gather candidate pool: all mover cards across Bullish, Bearish, and Preparing
-            const cards = Array.from(document.querySelectorAll('.stock-mover-card'));
+            const cards = Array.from(document.querySelectorAll('.stock-mover-card[data-symbol]'));
             if (cards.length === 0 && universePool.length === 0) return;
 
-            // Pick next stock from cards or universePool
             let nextSymbol = null;
             if (cards.length > 0) {
                 autoCycleIndex = (autoCycleIndex + 1) % cards.length;
                 const card = cards[autoCycleIndex];
-                // Extract clean symbol from card text
-                const match = card.innerText.match(/#\d+\s+([A-Z0-9_\-]+)/);
-                if (match && match[1]) {
-                    nextSymbol = match[1];
-                }
+                nextSymbol = card.getAttribute('data-symbol');
             }
 
             if (!nextSymbol && universePool.length > 0) {
