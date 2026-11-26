@@ -70,6 +70,36 @@ class BackgroundContinuousTracker:
         Registry updates are strictly transactional (only added after state successfully updates).
         Returns True if newly promoted, False if duplicate or rejected.
         """
+        # P2 Defensive Validation: Validate inputs, direction, finite prices, and level BEFORE any state mutation
+        if not symbol or not isinstance(symbol, str):
+            return False
+
+        if direction not in ("BULLISH", "BEARISH"):
+            print(f"[PROMOTION REJECTED] {symbol} invalid direction: {direction}")
+            return False
+
+        try:
+            completed_c = float(completed_c)
+            if not math.isfinite(completed_c) or completed_c <= 0:
+                print(f"[PROMOTION REJECTED] {symbol} non-finite/invalid completed price: {completed_c}")
+                return False
+        except (TypeError, ValueError):
+            return False
+
+        try:
+            if level is None or not math.isfinite(float(level)) or float(level) <= 0:
+                print(f"[PROMOTION REJECTED] {symbol} invalid or missing trigger level: {level}")
+                return False
+            lvl_val = float(level)
+        except (TypeError, ValueError):
+            return False
+
+        if not isinstance(prep_info, dict) or not isinstance(direct_eval, dict):
+            return False
+
+        if direct_eval.get("is_viable") is not True:
+            return False
+
         cand_prom_key = f"{symbol.replace('.NS', '').upper()}:{evaluated_completed_ts}"
         if cand_prom_key in self._promoted_candle_keys:
             return False
@@ -87,7 +117,20 @@ class BackgroundContinuousTracker:
         # Calculate genuine structural SL from breakout level / candle geometry, and recalculate RR against that exact SL.
         tp1_val = direct_eval.get("tp1")
         tp2_val = direct_eval.get("tp2")
-        lvl_val = float(level) if level and float(level) > 0 else float(completed_c)
+
+        # Validate finite numeric values if provided in direct_eval
+        try:
+            if tp1_val is not None:
+                tp1_val = float(tp1_val)
+                if not math.isfinite(tp1_val) or tp1_val <= 0:
+                    tp1_val = None
+            if tp2_val is not None:
+                tp2_val = float(tp2_val)
+                if not math.isfinite(tp2_val) or tp2_val <= 0:
+                    tp2_val = None
+        except (TypeError, ValueError):
+            tp1_val = None
+            tp2_val = None
 
         # Genuine structural invalidation level:
         # Bullish: SL placed structurally below the breakout level (with minimum 0.35% buffer to avoid tick whipsaws)
@@ -111,6 +154,18 @@ class BackgroundContinuousTracker:
                 tp2_val = round(completed_c - (2.5 * actual_risk), 2)
             actual_reward = completed_c - tp1_val
 
+        # Defensive sanity checks on SL and TP
+        if not math.isfinite(calc_sl) or calc_sl <= 0 or not math.isfinite(tp1_val) or tp1_val <= 0:
+            print(f"[PROMOTION REJECTED] {symbol} non-finite SL ({calc_sl}) or TP1 ({tp1_val})")
+            return False
+
+        if direction == "BULLISH" and (calc_sl >= completed_c or tp1_val <= completed_c):
+            print(f"[PROMOTION REJECTED] {symbol} bullish SL ({calc_sl}) >= Entry ({completed_c}) or TP1 ({tp1_val}) <= Entry")
+            return False
+        if direction == "BEARISH" and (calc_sl <= completed_c or tp1_val >= completed_c):
+            print(f"[PROMOTION REJECTED] {symbol} bearish SL ({calc_sl}) <= Entry ({completed_c}) or TP1 ({tp1_val}) >= Entry")
+            return False
+
         # Recalculate RR against exact structural SL (Must meet minimum 1.05 threshold)
         promoted_rr = round(actual_reward / actual_risk, 2) if actual_risk > 0 else 0.0
         if promoted_rr < 1.05:
@@ -128,6 +183,7 @@ class BackgroundContinuousTracker:
             "suggested_sl": calc_sl,
             "suggested_tp1": tp1_val,
             "suggested_tp2": tp2_val,
+            "promoted_rr": promoted_rr,
             "conviction_score": genuine_score,
             "change_pct": prep_info.get("change_pct", 0.0),
             "completed_candle_ts": evaluated_completed_ts,
@@ -430,12 +486,14 @@ class BackgroundContinuousTracker:
                 if HistoricalStockLearner.should_skip_scan(clean_ticker, current_completed_candle_ts=completed_ts):
                     return
 
-                # Replay historical breakouts/breakdowns (with realistic next-open execution, slippage, and gap-through-stop)
-                mult = HistoricalStockLearner.analyze_30d_stock_history(
+                # Replay historical 5-minute breakouts/breakdowns (with realistic next-open execution, slippage, and gap-through-stop)
+                # Evaluates directional performance (Bullish and Bearish) and unresolved trade outcomes
+                bull_mult, bear_mult, stats = HistoricalStockLearner.replay_intraday_breakouts(
                     symbol=clean_ticker,
-                    df_history=study_df,
-                    is_replay=False
+                    df_5m=study_df,
+                    is_replay=False,
+                    return_directional=True
                 )
-                print(f"[OFFLINE 5M LEARNER] Studied {clean_ticker:<12} | Completed: {completed_ts} | Learned Multiplier: {mult}x ({m5_src})")
+                print(f"[OFFLINE 5M LEARNER] Studied {clean_ticker:<12} | Completed: {completed_ts} | Bull: {bull_mult}x ({stats['bull_win_rate']}%), Bear: {bear_mult}x ({stats['bear_win_rate']}%), Unresolved: {stats['unresolved_trades']} ({m5_src})")
         except Exception as le:
             pass

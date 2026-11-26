@@ -469,10 +469,13 @@ class OpportunityRankingEngine:
 
         # 30-day stock personality multiplier (rewards clean movers, penalizes wick traps)
         # Evaluates actual daily sessions dataset (30-45 sessions) when available (P0 Fix)
+        # P1 Fix: Uses separate directional multipliers (stock_bull_mult, stock_bear_mult)
         learner_df = daily_df if (daily_df is not None and not daily_df.empty and len(daily_df) >= 15) else stock_df
-        stock_mult = HistoricalStockLearner.analyze_30d_stock_history(symbol, learner_df, is_replay=is_replay, as_of_ts=as_of_ts)
-        combined_bull_mult = learn_mult_bull * stock_mult
-        combined_bear_mult = learn_mult_bear * stock_mult
+        stock_bull_mult, stock_bear_mult, _ = HistoricalStockLearner.analyze_30d_stock_history(
+            symbol, learner_df, is_replay=is_replay, as_of_ts=as_of_ts, return_directional=True
+        )
+        combined_bull_mult = learn_mult_bull * stock_bull_mult
+        combined_bear_mult = learn_mult_bear * stock_bear_mult
 
         early_bull_score = int(round(min(98.0, (early_bull_score + rvol_bonus + rs_bonus_bull) * combined_bull_mult)))
         conf_bull_score = int(round(min(98.0, (conf_bull_score + rvol_bonus + rs_bonus_bull + room_bonus) * combined_bull_mult)))

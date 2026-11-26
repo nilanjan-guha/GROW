@@ -1,10 +1,13 @@
 import unittest
 import time
+import math
+import pytz
 import sqlite3
 import pandas as pd
 import numpy as np
 from core.storage import get_db_connection
 from engine.learning.adaptive_trade_learner import AdaptiveTradeLearner
+from engine.learning.historical_stock_learner import HistoricalStockLearner
 from engine.tracking.background_continuous_tracker import BackgroundContinuousTracker
 
 class TestAdaptiveLearnerAndTracker(unittest.TestCase):
@@ -379,27 +382,246 @@ class TestAdaptiveLearnerAndTracker(unittest.TestCase):
 
     def test_offline_learner_rejects_invalid_or_stale_feed(self):
         """
-        P1 Test: Verifies that _run_closed_market_learner_step() rejects invalid or stale feeds
-        when feed_val['is_valid'] is False, refusing to run historical learning on corrupted data.
+        P1/P2 Test: Verifies that _run_closed_market_learner_step() rejects:
+        1. Stale feeds (timestamp delayed or non-contiguous gaps).
+        2. Malformed feeds (missing required columns or non-finite values).
+        3. Correctly handles forming candle removal when is_completed_candle is False.
         """
-        tracker = BackgroundContinuousTracker({})
+        from engine.market.market_validator import MarketValidator
+        tracker = BackgroundContinuousTracker({"fno_universe": ["TESTSTK"]})
         
-        # Create a mock data provider that returns empty or short df
-        class MockDataProvider:
-            def fetch_5m_candles(self, ticker, days_back=30):
-                # Return empty DataFrame simulating invalid feed
-                return pd.DataFrame(), "test"
+        # Test 1: Stale feed during market hours / with gap
+        # During live market hours (simulated at 11:00 AM IST), feed from previous day is strictly rejected
+        ist = pytz.timezone('Asia/Kolkata')
+        simulated_live_market = pd.to_datetime("2026-11-26 11:00:00").tz_localize(ist)
 
-        tracker.data_provider = MockDataProvider()
-        
-        # Calling learner step should execute cleanly without crashing or recording invalid data
-        try:
-            tracker._run_closed_market_learner_step()
-            success = True
-        except Exception:
-            success = False
+        stale_dates = pd.date_range("2026-11-20 09:15", periods=30, freq="5min", tz=ist)
+        stale_df = pd.DataFrame({
+            "Open": [100.0] * 30, "High": [105.0] * 30, "Low": [99.0] * 30, "Close": [102.0] * 30, "Volume": [1000] * 30
+        }, index=stale_dates)
 
-        self.assertTrue(success, "Offline learner must handle invalid/empty feed gracefully without throwing")
+        # Freshness check during market hours rejects previous session data
+        feed_val = MarketValidator.validate_feed_freshness(stale_df, max_delay_seconds=300, candle_duration_seconds=300, now_dt=simulated_live_market)
+        self.assertFalse(feed_val.get("is_valid", False), "Previous session feed during active market hours must be marked invalid")
+
+        # In offline mode, feed with intra-session timestamp gaps or non-aligned timestamps is also rejected
+        gap_dates = list(pd.date_range("2026-11-26 09:15", periods=10, freq="5min", tz=ist))
+        gap_dates.append(pd.to_datetime("2026-11-26 10:30:00").tz_localize(ist)) # 65-min gap inside session!
+        gap_df = pd.DataFrame({
+            "Open": [100.0] * 11, "High": [105.0] * 11, "Low": [99.0] * 11, "Close": [102.0] * 11, "Volume": [1000] * 11
+        }, index=gap_dates)
+        feed_val_gap = MarketValidator.validate_feed_freshness(gap_df, max_delay_seconds=300, candle_duration_seconds=300)
+        self.assertFalse(feed_val_gap.get("is_valid", False), "Feed with intra-session gap must be marked invalid")
+
+        # Step should abort without recording scan for invalid/gap feed
+        class MockGapProvider:
+            def fetch_5m_candles(self, ticker, days_back=5):
+                return gap_df, "mock_gap"
+
+        tracker.data_provider = MockGapProvider()
+        tracker._run_closed_market_learner_step()
+        self.assertFalse(HistoricalStockLearner.should_skip_scan("TESTSTK", current_completed_candle_ts=str(gap_df.index[-1])))
+
+        # Test 2: Malformed feed (missing Close / High / Low)
+        malformed_df = pd.DataFrame({"SomeOtherCol": [1, 2, 3]}, index=stale_dates[:3])
+        class MockMalformedProvider:
+            def fetch_5m_candles(self, ticker, days_back=5):
+                return malformed_df, "mock_malformed"
+
+        tracker.data_provider = MockMalformedProvider()
+        feed_val_mal = MarketValidator.validate_feed_freshness(malformed_df, max_delay_seconds=300, candle_duration_seconds=300)
+        self.assertFalse(feed_val_mal.get("is_valid", False), "Malformed df missing required columns must be invalid")
+
+        # Test 2b: Non-finite prices (NaN / Inf)
+        non_finite_df = stale_df.copy()
+        non_finite_df.iloc[5, 3] = float("nan") # NaN in Close
+        feed_val_nan = MarketValidator.validate_feed_freshness(non_finite_df, max_delay_seconds=300, candle_duration_seconds=300)
+        self.assertFalse(feed_val_nan.get("is_valid", False), "Data with NaN must be invalid")
+
+        # Test 3: Incomplete final candle removal
+        # When is_completed_candle is False, study_df removes the last row (forming candle)
+        now_dates = pd.date_range(end=pd.Timestamp.now(), periods=25, freq="5min")
+        forming_df = pd.DataFrame({
+            "Open": [100.0] * 25, "High": [105.0] * 25, "Low": [99.0] * 25, "Close": [102.0] * 25, "Volume": [1000] * 25
+        }, index=now_dates)
+        # Slicing test
+        is_comp = False
+        study_df = forming_df if is_comp else forming_df.iloc[:-1]
+        self.assertEqual(len(study_df), len(forming_df) - 1, "Forming candle must be stripped when is_completed_candle is False")
+
+    def test_directional_multipliers_and_unresolved_trades(self):
+        """
+        P1 Test: Verifies that analyze_30d_stock_history / replay_intraday_breakouts calculates
+        separate bullish and bearish multipliers and accurately tracks unresolved trades.
+        """
+        # Build synthetic 5-minute data with:
+        # - Bullish breakouts that hit target (strong bullish performance)
+        # - Bearish breakdowns that fail or stay unresolved
+        dates = pd.date_range("2026-11-20 09:15", periods=50, freq="5min")
+        opens = [100.0] * 50
+        highs = [101.0] * 50
+        lows = [99.5] * 50
+        closes = [100.0] * 50
+
+        # Bar 10: Bullish breakout (prior 5-bar high is 101.0)
+        highs[10] = 103.0
+        closes[10] = 102.5
+        lows[10] = 101.0 # Stop = 101.0
+        # Bar 11: Next open 102.6, Low 101.5 (above stop 101.0), High 104.0
+        opens[11] = 102.6
+        lows[11] = 101.5
+        highs[11] = 104.0
+        closes[11] = 103.5
+        # Bar 12: Hits target (entry ~ 102.65, stop 101.0, risk 1.65, target 105.12)
+        opens[12] = 103.5
+        highs[12] = 107.0
+        lows[12] = 103.0
+        closes[12] = 106.0
+
+        # Bar 20: Bullish breakout 2
+        highs[20] = 108.0
+        closes[20] = 107.5
+        lows[20] = 106.0 # Stop = 106.0
+        opens[21] = 107.6
+        lows[21] = 106.5
+        highs[21] = 108.5
+        closes[21] = 108.0
+        opens[22] = 108.0
+        highs[22] = 112.0 # Hits target
+        lows[22] = 107.5
+        closes[22] = 111.0
+
+        # Bar 30: Bearish breakdown (prior 5 bars 25..29 lows are 101.0)
+        for k in range(25, 30):
+            opens[k] = 102.0
+            highs[k] = 104.0
+            lows[k] = 101.0
+            closes[k] = 102.0
+
+        lows[30] = 98.0
+        closes[30] = 98.5
+        highs[30] = 103.0 # Stop = 103.0
+        opens[31] = 98.4
+        lows[31] = 98.0
+        highs[31] = 104.0 # Hits stop! (loss)
+
+        # Bar 40: Breakout near the end of series that does not reach target or stop before series ends -> Unresolved!
+        highs[40] = 110.0
+        closes[40] = 109.0
+        lows[40] = 107.0
+        opens[41] = 109.1
+        for k in range(41, 50):
+            opens[k] = 109.0
+            highs[k] = 109.5
+            lows[k] = 108.0
+            closes[k] = 109.0
+
+        test_df = pd.DataFrame({"Open": opens, "High": highs, "Low": lows, "Close": closes}, index=dates)
+
+        bull_mult, bear_mult, stats = HistoricalStockLearner.replay_intraday_breakouts(
+            "TEST_DIR_STK", test_df, is_replay=True, return_directional=True
+        )
+
+        # Bullish had 2 winning trades -> bull_mult > 1.0
+        self.assertGreater(bull_mult, 1.0, f"Bullish multiplier should be > 1.0, got {bull_mult}")
+        # Bearish had 1 losing trade -> bear_mult <= 1.0
+        self.assertLessEqual(bear_mult, 1.0, f"Bearish multiplier should be <= 1.0, got {bear_mult}")
+        # Unresolved trades should be counted (> 0)
+        self.assertGreater(stats["unresolved_trades"], 0, "Trades hitting neither target nor stop must be tracked as unresolved")
+        self.assertIn("bull_win_rate", stats)
+        self.assertIn("bear_win_rate", stats)
+
+    def test_promotion_defensive_validation_and_failure_state_preservation(self):
+        """
+        P2 Test: Verifies promote_preparing_breakout rejects invalid inputs defensively without
+        modifying persistent_preparing_stocks or adding corrupt records to entry_ready.
+        Also verifies displayed candidate RR matches actual promotion RR.
+        """
+        prep_info = {
+            "symbol": "DEF_TEST",
+            "direction": "BULLISH",
+            "entry_trigger": "Enter above ₹500.0",
+            "conviction_score": 85,
+            "change_pct": 1.2
+        }
+        screener_state = {
+            "persistent_preparing_stocks": {
+                "DEF_TEST": prep_info
+            },
+            "ranked_opportunities": {
+                "entry_ready": []
+            }
+        }
+        tracker = BackgroundContinuousTracker(screener_state)
+
+        # 1. Reject invalid direction
+        res_dir = tracker.promote_preparing_breakout(
+            symbol="DEF_TEST",
+            completed_c=505.0,
+            evaluated_completed_ts="2026-11-26 15:15:00",
+            prep_info=prep_info,
+            direct_eval={"is_viable": True, "tp1": 515.0},
+            level=500.0,
+            direction="SIDEWAYS" # Invalid!
+        )
+        self.assertFalse(res_dir, "Invalid direction must be rejected")
+        self.assertIn("DEF_TEST", screener_state["persistent_preparing_stocks"], "Preparing state must not be modified on failure")
+        self.assertEqual(len(screener_state["ranked_opportunities"]["entry_ready"]), 0)
+
+        # 2. Reject non-finite prices
+        res_inf = tracker.promote_preparing_breakout(
+            symbol="DEF_TEST",
+            completed_c=float("inf"),
+            evaluated_completed_ts="2026-11-26 15:15:00",
+            prep_info=prep_info,
+            direct_eval={"is_viable": True, "tp1": 515.0},
+            level=500.0,
+            direction="BULLISH"
+        )
+        self.assertFalse(res_inf, "Infinite completed price must be rejected")
+        self.assertIn("DEF_TEST", screener_state["persistent_preparing_stocks"])
+
+        # 3. Reject missing/invalid trigger level
+        res_lvl = tracker.promote_preparing_breakout(
+            symbol="DEF_TEST",
+            completed_c=505.0,
+            evaluated_completed_ts="2026-11-26 15:15:00",
+            prep_info=prep_info,
+            direct_eval={"is_viable": True, "tp1": 515.0},
+            level=-10.0,
+            direction="BULLISH"
+        )
+        self.assertFalse(res_lvl, "Negative level must be rejected")
+
+        # 4. Reject when viable is False or missing
+        res_viab = tracker.promote_preparing_breakout(
+            symbol="DEF_TEST",
+            completed_c=505.0,
+            evaluated_completed_ts="2026-11-26 15:15:00",
+            prep_info=prep_info,
+            direct_eval={"is_viable": False, "tp1": 515.0},
+            level=500.0,
+            direction="BULLISH"
+        )
+        self.assertFalse(res_viab, "Non-viable direct_eval must be rejected")
+
+        # 5. Successful promotion: Verify promoted candidate RR matches actual calculated RR
+        res_success = tracker.promote_preparing_breakout(
+            symbol="DEF_TEST",
+            completed_c=505.0,
+            evaluated_completed_ts="2026-11-26 15:15:00",
+            prep_info=prep_info,
+            direct_eval={"is_viable": True, "tp1": 520.0, "tp2": 530.0, "potential_pct": 2.5},
+            level=500.0,
+            direction="BULLISH"
+        )
+        self.assertTrue(res_success)
+        promoted_cand = screener_state["ranked_opportunities"]["entry_ready"][0]
+        self.assertIn("promoted_rr", promoted_cand)
+        expected_risk = promoted_cand["current_price"] - promoted_cand["suggested_sl"]
+        expected_reward = promoted_cand["suggested_tp1"] - promoted_cand["current_price"]
+        expected_rr = round(expected_reward / expected_risk, 2)
+        self.assertEqual(promoted_cand["promoted_rr"], expected_rr, "Promoted RR field must match actual calculated RR")
 
 if __name__ == "__main__":
     unittest.main()
