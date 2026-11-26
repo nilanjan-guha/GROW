@@ -936,8 +936,10 @@
                     universePool.push(sym);
                 }
 
+                const cardPrice = stk.price ? stk.price : '';
+                const cardScore = stk.score ? stk.score : '';
                 html += `
-                <div class="stock-mover-card ${isSelected ? 'active-selected' : ''}" data-symbol="${sym}" onclick="userSelectStock('${sym}')" style="${isPrep ? 'border-left: 4px solid var(--neon-amber);' : ''}">
+                <div class="stock-mover-card ${isSelected ? 'active-selected' : ''}" data-symbol="${sym}" data-price="${cardPrice}" data-score="${cardScore}" onclick="userSelectStock('${sym}', this)" style="${isPrep ? 'border-left: 4px solid var(--neon-amber);' : ''}">
                     <div style="display:flex; justify-content:space-between; align-items:center;">
                         <span style="font-weight:900; font-size:0.86rem; color:#fff; display:flex; align-items:center; gap:8px;">
                             ${logoHtml}
@@ -960,15 +962,31 @@
             }
         }
 
-        // When user manually clicks a card: freeze auto-cycle for 25s so user can inspect
-        function userSelectStock(symbol) {
+        // When user manually clicks a card: freeze auto-cycle for 30s so user can inspect without interruption
+        function userSelectStock(symbol, el = null) {
             userLastInteractionTime = Date.now();
-            selectStock(symbol, false);
+            let hintPrice = null;
+            let hintScore = null;
+            if (el) {
+                hintPrice = el.getAttribute('data-price');
+                hintScore = el.getAttribute('data-score');
+            } else {
+                const card = document.querySelector(`.stock-mover-card[data-symbol="${symbol}"]`);
+                if (card) {
+                    hintPrice = card.getAttribute('data-price');
+                    hintScore = card.getAttribute('data-score');
+                }
+            }
+            selectStock(symbol, false, hintPrice, hintScore);
         }
 
-        async function selectStock(symbol, isAuto = false) {
+        let activeScanAbortController = null;
+
+        async function selectStock(symbol, isAuto = false, hintPrice = null, hintScore = null) {
             currentStockSymbol = symbol;
             const cleanSym = symbol.replace('.NS', '');
+            
+            // 1. INSTANT ZERO-LATENCY HEADER UPDATE (Name, Logo, & Price change immediately on click)
             document.getElementById('radarTargetSymbol').innerText = cleanSym;
             document.getElementById('radarStockTitle').innerText = cleanSym;
 
@@ -979,25 +997,51 @@
                 iconEl.src = logo;
             }
 
-            // Highlight corresponding active card on sidebar if visible
+            if (hintPrice) {
+                const livePriceEl = document.getElementById('radarStockLivePrice');
+                if (livePriceEl) livePriceEl.innerText = `₹${Number(hintPrice).toFixed(2)}`;
+                const valP = document.getElementById('valPrice');
+                if (valP) valP.innerText = `₹${Number(hintPrice).toFixed(2)} (Fetching...)`;
+            }
+            if (hintScore) {
+                const scoreEl = document.getElementById('radarStockScore');
+                if (scoreEl) scoreEl.innerText = `SCORE ${hintScore}/100`;
+            }
+
+            // Highlight corresponding active card on sidebar immediately
             document.querySelectorAll('.stock-mover-card').forEach(card => {
                 const cardSym = card.getAttribute('data-symbol') || '';
-                if (cardSym.includes(cleanSym) || card.innerText.includes(cleanSym)) {
+                if (cardSym === symbol || cardSym.includes(cleanSym) || card.innerText.includes(cleanSym)) {
                     card.classList.add('active-selected');
                 } else {
                     card.classList.remove('active-selected');
                 }
             });
 
+            // Cancel any in-flight previous SMC request so quick clicks never get overwritten by stale responses
+            if (activeScanAbortController) {
+                activeScanAbortController.abort();
+            }
+            activeScanAbortController = new AbortController();
+
             try {
                 // Ensure ticker is properly passed to SMC scan
                 const querySym = symbol.includes('.') ? symbol : `${symbol}.NS`;
-                const res = await fetch(`/api/market/smc-scan?symbol=${encodeURIComponent(querySym)}`);
+                const res = await fetch(`/api/market/smc-scan?symbol=${encodeURIComponent(querySym)}`, {
+                    signal: activeScanAbortController.signal
+                });
                 const data = await res.json();
                 if (data.success && data.smc) {
-                    renderRadarData(symbol, data.smc);
+                    // Only render if the user hasn't switched to another stock in the meantime
+                    if (currentStockSymbol === symbol) {
+                        renderRadarData(symbol, data.smc);
+                    }
                 }
-            } catch (e) { }
+            } catch (e) {
+                if (e.name !== 'AbortError') {
+                    console.error("SMC Scan error:", e);
+                }
+            }
 
             loadNSEInstitutionalData(symbol);
         }
@@ -1075,21 +1119,24 @@
             if (!prepContainer || !entryContainer) return;
 
             // 1. Accumulate all PREPARING stocks persistently (remember previous coils across scans)
+            const nowMs = Date.now();
+            const MAX_PREP_AGE_MS = 25 * 60 * 1000; // Expire coiling setups older than 25 minutes (stale coils)
+
             (ranked.preparing || []).forEach(p => {
                 if (p && p.symbol) {
                     persistentPreparingMap[p.symbol] = {
                         ...p,
-                        last_updated: Date.now()
+                        last_updated: nowMs
                     };
                 }
             });
-            try { localStorage.setItem('persistentPreparingMap', JSON.stringify(persistentPreparingMap)); } catch (e) { }
 
-            // Strictly sort by highest score first across all remembered and current preparing coils
-            const preparing = Object.values(persistentPreparingMap).sort((a, b) => {
-                const scoreA = Number(a.conviction_score !== undefined ? a.conviction_score : (a.confirmation_score || 0));
-                const scoreB = Number(b.conviction_score !== undefined ? b.conviction_score : (b.confirmation_score || 0));
-                return scoreB - scoreA;
+            // Evict stale coiling stocks older than 25 minutes
+            Object.keys(persistentPreparingMap).forEach(sym => {
+                const item = persistentPreparingMap[sym];
+                if (!item || !item.last_updated || (nowMs - item.last_updated > MAX_PREP_AGE_MS)) {
+                    delete persistentPreparingMap[sym];
+                }
             });
 
             const entryReady = (ranked.entry_ready || []).slice().sort((a, b) => {
@@ -1098,7 +1145,7 @@
                 return scoreB - scoreA;
             });
 
-            // If any preparing stock has triggered an active or confirmed trade, remove from preparing list
+            // If any preparing stock has triggered an active or confirmed trade, remove from preparing list immediately
             entryReady.forEach(e => {
                 if (e && e.symbol && persistentPreparingMap[e.symbol]) {
                     delete persistentPreparingMap[e.symbol];
@@ -1110,6 +1157,15 @@
                 }
             });
             try { localStorage.setItem('persistentPreparingMap', JSON.stringify(persistentPreparingMap)); } catch (e) { }
+
+            // Recalculate preparing list AFTER removing triggered/closed stocks and enforce top 5 maximum limit
+            const preparing = Object.values(persistentPreparingMap)
+                .sort((a, b) => {
+                    const scoreA = Number(a.conviction_score !== undefined ? a.conviction_score : (a.confirmation_score || 0));
+                    const scoreB = Number(b.conviction_score !== undefined ? b.conviction_score : (b.confirmation_score || 0));
+                    return scoreB - scoreA;
+                })
+                .slice(0, 5); // Strict limit of top 5 highest-conviction PREPARING coils
 
             const pBadge = document.getElementById('prepCountBadge');
             if (pBadge) pBadge.innerText = preparing.length;
@@ -1140,8 +1196,9 @@
                     const logoUrl = getStockLogoUrl(sym);
                     const logoHtml = logoUrl ? `<img src="${logoUrl}" style="width:20px; height:20px; border-radius:50%; object-fit:contain; background:#1e293b;" onerror="this.style.display='none';">` : '';
                     const prc = c.current_price ? `₹${Number(c.current_price).toFixed(2)}` : '';
+                    const rawPrcVal = c.current_price ? Number(c.current_price) : '';
                     html += `
-                    <div class="stock-mover-card" data-symbol="${c.symbol}" onclick="userSelectStock('${c.symbol}')" style="border-left-color:${col}; margin-bottom:6px; padding:10px 14px;">
+                    <div class="stock-mover-card" data-symbol="${c.symbol}" data-price="${rawPrcVal}" data-score="${score}" onclick="userSelectStock('${c.symbol}', this)" style="border-left-color:${col}; margin-bottom:6px; padding:10px 14px;">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
                             <span style="font-weight:900; font-size:0.90rem; color:#fff; display:flex; align-items:center; gap:8px;">
                                 ${logoHtml}
@@ -1179,6 +1236,10 @@
                         symbol: tr.symbol,
                         direction: isBull ? 'BULLISH' : 'BEARISH',
                         current_price: smc.live_price || smc.current_price || smc.entry_price,
+                        live_price: smc.live_price || smc.current_price || smc.entry_price,
+                        entry_price: smc.entry_price || smc.current_price,
+                        lot_size: smc.lot_size || smc.quantity || null,
+                        quantity: smc.lot_size || smc.quantity || null,
                         change_pct: smc.change_pct || 0.0,
                         suggested_sl: smc.suggested_sl,
                         suggested_tp1: smc.suggested_tp1,
@@ -1257,8 +1318,10 @@
                         statusBadge = `<span style="font-size:0.68rem; background:var(--neon-red); color:#fff; padding:2px 6px; border-radius:3px; font-weight:900;">🛑 STOP LOSS HIT</span>`;
                     }
 
+                    const rawEntryPrc = currP ? currP : '';
+                    const rawEntryScore = c.conviction_score || c.confirmation_score || 90;
                     html += `
-                    <div class="stock-mover-card" data-symbol="${c.symbol}" onclick="userSelectStock('${c.symbol}')" style="border-left-color:${cardBorder}; border-color:${cardBorder}; background:${cardBg}; opacity:${cardOpacity}; margin-bottom:6px; padding:10px 14px; transition:opacity 0.3s ease;">
+                    <div class="stock-mover-card" data-symbol="${c.symbol}" data-price="${rawEntryPrc}" data-score="${rawEntryScore}" onclick="userSelectStock('${c.symbol}', this)" style="border-left-color:${cardBorder}; border-color:${cardBorder}; background:${cardBg}; opacity:${cardOpacity}; margin-bottom:6px; padding:10px 14px; transition:opacity 0.3s ease;">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
                             <span style="font-weight:900; font-size:0.92rem; color:#fff; display:flex; align-items:center; gap:8px;">
                                 ${logoHtml}
@@ -1409,15 +1472,22 @@
             const actionBg = isBuy ? 'var(--neon-green)' : 'var(--neon-red)';
             const actionColor = isBuy ? '#000' : '#fff';
 
-            // Real-time 1 Lot PnL calculation
-            const lotQty = Number(bestTrade.lot_size || bestTrade.quantity || 100);
+            // Real-time 1 Lot PnL calculation: Strictly require verified lot size and live price. No unsafe fake fallback!
+            const lotQty = Number(bestTrade.lot_size || bestTrade.quantity || 0);
             const entryVal = Number(bestTrade.entry_price || 0);
-            const currentVal = Number(bestTrade.live_price || bestTrade.current_price || entryVal);
-            const ptsDiff = isBuy ? (currentVal - entryVal) : (entryVal - currentVal);
-            const pnlRs = Math.round(ptsDiff * lotQty);
-            const pnlPct = entryVal > 0 ? ((ptsDiff / entryVal) * 100).toFixed(2) : '0.00';
-            const pnlColor = pnlRs >= 0 ? 'var(--neon-green)' : 'var(--neon-red)';
-            const pnlSign = pnlRs >= 0 ? '+' : '';
+            const currentVal = Number(bestTrade.live_price || bestTrade.current_price || 0);
+            let pnlPillHtml = '';
+            if (lotQty > 0 && entryVal > 0 && currentVal > 0) {
+                const ptsDiff = isBuy ? (currentVal - entryVal) : (entryVal - currentVal);
+                const pnlRs = Math.round(ptsDiff * lotQty);
+                const pnlPct = ((ptsDiff / entryVal) * 100).toFixed(2);
+                const pnlColor = pnlRs >= 0 ? 'var(--neon-green)' : 'var(--neon-red)';
+                const pnlSign = pnlRs >= 0 ? '+' : '';
+                pnlPillHtml = `
+                    <span style="font-size:0.86rem; background:rgba(0,0,0,0.6); padding:3px 10px; border-radius:4px; border:1px solid ${pnlColor}; color:${pnlColor}; font-weight:900;">
+                        1-Lot PnL (${lotQty} Qty): ${pnlSign}₹${pnlRs.toLocaleString('en-IN')} (${pnlSign}${pnlPct}%)
+                    </span>`;
+            }
 
             banner.style.display = 'block';
             banner.style.borderColor = isBuy ? 'var(--neon-green)' : 'var(--neon-red)';
@@ -1434,9 +1504,7 @@
                     <span style="font-size:1.05rem; font-weight:900; color:#fff;">⭐ TOP CONFIRMED TRADE: <b>${cleanSym}</b></span>
                     <span style="font-size:0.75rem; background:${actionBg}; color:${actionColor}; padding:3px 8px; border-radius:4px; font-weight:900; letter-spacing:0.5px;">${actionText}</span>
                     <span style="font-size:0.88rem; font-weight:800; color:#fff;">Entry: ₹${Number(bestTrade.entry_price).toFixed(2)}</span>
-                    <span style="font-size:0.86rem; background:rgba(0,0,0,0.6); padding:3px 10px; border-radius:4px; border:1px solid ${pnlColor}; color:${pnlColor}; font-weight:900;">
-                        1-Lot PnL (${lotQty} Qty): ${pnlSign}₹${pnlRs.toLocaleString('en-IN')} (${pnlSign}${pnlPct}%)
-                    </span>
+                    ${pnlPillHtml}
                 </div>
                 <div style="display:flex; align-items:center; gap:14px; font-size:0.80rem;">
                     <span>SL: <b style="color:var(--neon-red);">₹${bestTrade.stop_loss}</b></span>

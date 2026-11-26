@@ -136,14 +136,38 @@ class BackgroundContinuousTracker:
                                         pass
 
                                 if is_breakout:
-                                    # Anti-Chasing & Viability Safeguard (P0):
-                                    # Compare against live forming price so traders never chase an already-extended or missed move:
-                                    max_slippage_dist_pct = 0.65  # If live price has run > 0.65% past breakout level, do not chase!
+                                    # Anti-Chasing & Viability Safeguard (P1):
+                                    # Use dynamic volatility/ATR-based threshold (0.4 * 5m ATR or 0.25% - 1.25% adaptive envelope)
+                                    # instead of a static arbitrary percentage.
+                                    raw_atr = None
+                                    if eval_completed_df is not None and len(eval_completed_df) >= 14:
+                                        try:
+                                            high_s = eval_completed_df["high"] if "high" in eval_completed_df.columns else eval_completed_df["High"]
+                                            low_s = eval_completed_df["low"] if "low" in eval_completed_df.columns else eval_completed_df["Low"]
+                                            close_s = eval_completed_df["close"] if "close" in eval_completed_df.columns else eval_completed_df["Close"]
+                                            tr1 = high_s - low_s
+                                            tr2 = (high_s - close_s.shift()).abs()
+                                            tr3 = (low_s - close_s.shift()).abs()
+                                            tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+                                            atr14 = float(tr.rolling(14).mean().iloc[-1])
+                                            if not math.isnan(atr14) and atr14 > 0 and lvl > 0:
+                                                raw_atr = (atr14 / lvl) * 100.0
+                                        except Exception:
+                                            raw_atr = None
+                                    
+                                    # Adaptive slippage tolerance: 0.5x of 5m ATR%, bounded between [0.25%, 1.20%]
+                                    if raw_atr is not None:
+                                        max_slippage_dist_pct = min(1.20, max(0.25, round(0.50 * raw_atr, 2)))
+                                    else:
+                                        max_slippage_dist_pct = 0.50
+
                                     is_missed_or_extended = False
                                     if "Enter above" in entry_trig:
+                                        # Bullish breakout: reject if price fell back below level or stretched too far above
                                         if live_forming_price < lvl or ((live_forming_price - lvl) / lvl * 100.0) > max_slippage_dist_pct:
                                             is_missed_or_extended = True
                                     elif "Enter below" in entry_trig:
+                                        # Bearish breakdown: reject if price popped back above level or dumped too far below
                                         if live_forming_price > lvl or ((lvl - live_forming_price) / lvl * 100.0) > max_slippage_dist_pct:
                                             is_missed_or_extended = True
 
@@ -158,23 +182,32 @@ class BackgroundContinuousTracker:
                                         self.tracked_stats["promotions_today"] += 1
                                         print(f"[PRE-BREAKOUT TRIGGERED] {sym} confirmed 5m close @ ₹{completed_c} (Live: ₹{live_forming_price})! Level ₹{lvl} valid, actionable trade entry.")
                                     elif is_missed_or_extended:
-                                        print(f"[PRE-BREAKOUT CHASE PREVENTED] {sym} crossed level ₹{lvl} but live price ₹{live_forming_price} is overextended or reversed. Scan rejected stale chase.")
+                                        print(f"[PRE-BREAKOUT CHASE PREVENTED] {sym} crossed level ₹{lvl} but live price ₹{live_forming_price} is overextended (Tolerance: {max_slippage_dist_pct}%). Scan rejected stale chase.")
                         except Exception:
                             pass
                         time.sleep(0.08)
 
                 # 2. Evaluate open outcomes and trigger adaptive learning post-mortem
-                # Safeguard (P1): Evaluate outcomes ONLY for fresh completed candles that have not already been evaluated
+                # Safeguard (P0 Fix):
+                # - Deduplicate symbols using normalized ticker key (clean symbol)
+                # - Only advance/mark self._last_evaluated_candles AFTER evaluate_open_outcomes succeeds!
+                # If evaluation fails/throws an exception, the candles are retried next cycle rather than permanently skipped.
                 evaluable_fresh_dfs = {}
+                pending_eval_keys = {}
                 for s_key, c_df in fresh_dfs.items():
+                    norm_key = s_key.replace(".NS", "").upper()
                     c_ts = str(c_df.index[-1])
-                    if self._last_evaluated_candles.get(s_key) != c_ts:
-                        evaluable_fresh_dfs[s_key] = c_df
-                        self._last_evaluated_candles[s_key] = c_ts
+                    if self._last_evaluated_candles.get(norm_key) != c_ts:
+                        evaluable_fresh_dfs[norm_key] = c_df
+                        evaluable_fresh_dfs[f"{norm_key}.NS"] = c_df
+                        pending_eval_keys[norm_key] = c_ts
 
                 if (now - self.last_outcome_check > 15) and evaluable_fresh_dfs:
                     try:
                         evaluate_open_outcomes(evaluable_fresh_dfs)
+                        # Mark evaluated ONLY after successful execution without exception
+                        for n_k, n_ts in pending_eval_keys.items():
+                            self._last_evaluated_candles[n_k] = n_ts
                         self.last_outcome_check = now
                     except Exception as oe:
                         print("[CONTINUOUS TRACKER] Outcome check error:", oe)

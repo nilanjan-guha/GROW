@@ -864,8 +864,16 @@ def smc_scan():
     
     try:
         # Check raw market cache for pre-fetched dataframe to minimize network latency
-        raw_cached = screener_state["raw_market_cache"].get(symbol)
-        if raw_cached and (now - raw_cached.get("timestamp", 0) < 120) and raw_cached.get("df") is not None:
+        clean_s = symbol.replace(".NS", "").replace("^NSEI", "NIFTY").upper()
+        raw_cache = screener_state.get("raw_market_cache") or {}
+        raw_cached = raw_cache.get(symbol) or raw_cache.get(f"{clean_s}.NS") or raw_cache.get(clean_s)
+        
+        # Check fast memory cache for already computed smc analysis (TTL 120s)
+        enriched_cached = screener_state.get("enriched_signals_cache", {}).get(symbol) or screener_state.get("enriched_signals_cache", {}).get(clean_s)
+        if enriched_cached and (now - enriched_cached.get("timestamp", 0) < 120):
+            return jsonify({"success": True, "smc": enriched_cached["data"]})
+
+        if raw_cached and (now - raw_cached.get("timestamp", 0) < 300) and raw_cached.get("df") is not None:
             df = raw_cached["df"]
             if "data" in raw_cached and raw_cached["data"]:
                 res = raw_cached["data"].copy()
@@ -875,8 +883,7 @@ def smc_scan():
                     return jsonify({"success": False, "error": "Insufficient market data"}), 400
                 raw_cached["data"] = res
         else:
-            clean_sym = symbol.replace(".NS", "").replace("^NSEI", "NIFTY")
-            df, _ = groww_data_provider.fetch_5m_candles(clean_sym, days_back=5)
+            df, _ = groww_data_provider.fetch_5m_candles(clean_s, days_back=2)
             if df is None or df.empty:
                 return jsonify({"success": False, "error": "Insufficient market data"}), 400
             res = evaluate_explosive_momentum(df, symbol)
@@ -2043,6 +2050,24 @@ def get_fno_momentum_watchlists_endpoint():
             if p_sym not in seen_bear:
                 bear.append(item)
                 seen_bear.add(p_sym)
+
+    # Enrich all watchlist stocks with cached live price and score for zero-latency client rendering
+    for stk_list in (bull, bear):
+        for s in stk_list:
+            s_sym = s.get("symbol", "")
+            clean_s = s_sym.replace(".NS", "").upper()
+            c_entry = raw_cache.get(s_sym) or raw_cache.get(f"{clean_s}.NS") or raw_cache.get(clean_s)
+            if c_entry and isinstance(c_entry, dict) and c_entry.get("df") is not None:
+                cdf = c_entry["df"]
+                if not cdf.empty:
+                    close_col = "Close" if "Close" in cdf.columns else ("close" if "close" in cdf.columns else None)
+                    if close_col:
+                        s["price"] = round(float(cdf[close_col].iloc[-1]), 2)
+            # If still missing price, check persistent or ranked cache
+            if "price" not in s or not s["price"]:
+                cand = next((c for c in prep_list if c.get("symbol") in (s_sym, clean_s)), None)
+                if cand and cand.get("current_price"):
+                    s["price"] = round(float(cand["current_price"]), 2)
 
     # Sort watchlists so the most active movers stay at the top
     bull.sort(key=lambda x: (x.get("is_preparing", False) == False, abs(x.get("change", 0.0))), reverse=True)

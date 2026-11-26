@@ -1,6 +1,7 @@
 import time
 import json
 import math
+import pandas as pd
 from core.storage import get_db_connection
 
 class AdaptiveTradeLearner:
@@ -176,11 +177,14 @@ class AdaptiveTradeLearner:
             if as_of_ts is not None:
                 # Normalize timestamp to numeric Unix epoch seconds for accurate SQLite numeric comparison (P0 Fix)
                 try:
-                    ts_val = pd.Timestamp(as_of_ts)
-                    if ts_val.tzinfo is None:
-                        # Assume Asia/Kolkata for naive NSE intraday timestamps
-                        ts_val = ts_val.tz_localize("Asia/Kolkata")
-                    as_of_epoch = float(ts_val.timestamp())
+                    if isinstance(as_of_ts, (int, float)):
+                        as_of_epoch = float(as_of_ts)
+                    else:
+                        ts_val = pd.Timestamp(as_of_ts)
+                        if ts_val.tzinfo is None:
+                            # Assume Asia/Kolkata for naive NSE intraday timestamps
+                            ts_val = ts_val.tz_localize("Asia/Kolkata")
+                        as_of_epoch = float(ts_val.timestamp())
                 except Exception:
                     try:
                         as_of_epoch = float(as_of_ts)
@@ -200,7 +204,7 @@ class AdaptiveTradeLearner:
                 wins = sum(1 for t in closed_trades if "WIN" in (t["outcome"] or "") or (t["net_pnl"] or 0) > 0)
                 win_pct = (wins / tot) * 100.0
                 raw_mult = 0.70 + (win_pct / 100.0 * 0.60)
-                shrinkage = min(1.0, tot / 10.0)
+                shrinkage = min(1.0, max(0.10, tot / 10.0))
                 shrunk_mult = round(1.0 + shrinkage * (raw_mult - 1.0), 2)
                 return min(1.25, max(0.80, shrunk_mult))
 
