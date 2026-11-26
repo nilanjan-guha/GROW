@@ -29,11 +29,32 @@ class HistoricalStockLearner:
             scan_count INTEGER DEFAULT 1,
             historical_win_rate REAL DEFAULT 50.0,
             pattern_score REAL DEFAULT 50.0,
+            bull_win_rate REAL DEFAULT 50.0,
+            bear_win_rate REAL DEFAULT 50.0,
+            bull_trades INTEGER DEFAULT 0,
+            bear_trades INTEGER DEFAULT 0,
             best_strategy TEXT,
             failure_reasons TEXT,
             updated_at REAL
         )
         """)
+        # Safe schema migration for existing databases
+        try:
+            cursor.execute("ALTER TABLE stock_scan_memory ADD COLUMN bull_win_rate REAL DEFAULT 50.0")
+        except Exception:
+            pass
+        try:
+            cursor.execute("ALTER TABLE stock_scan_memory ADD COLUMN bear_win_rate REAL DEFAULT 50.0")
+        except Exception:
+            pass
+        try:
+            cursor.execute("ALTER TABLE stock_scan_memory ADD COLUMN bull_trades INTEGER DEFAULT 0")
+        except Exception:
+            pass
+        try:
+            cursor.execute("ALTER TABLE stock_scan_memory ADD COLUMN bear_trades INTEGER DEFAULT 0")
+        except Exception:
+            pass
         conn.commit()
         conn.close()
 
@@ -79,9 +100,10 @@ class HistoricalStockLearner:
         return False
 
     @staticmethod
-    def record_stock_scan(symbol, last_candle_date, completed_candle_ts=None, win_rate=50.0, pattern_score=50.0, best_strategy="Breakout"):
+    def record_stock_scan(symbol, last_candle_date, completed_candle_ts=None, win_rate=50.0, pattern_score=50.0, best_strategy="Breakout", bull_win_rate=50.0, bear_win_rate=50.0, bull_trades=0, bear_trades=0):
         """
-        Records or updates a stock scan in the persistent memory table with its evaluated candle timestamp.
+        Records or updates a stock scan in the persistent memory table with its evaluated candle timestamp
+        and separate directional statistics.
         """
         try:
             conn = get_db_connection()
@@ -91,8 +113,8 @@ class HistoricalStockLearner:
             cursor.execute("""
             INSERT INTO stock_scan_memory (
                 symbol, last_scanned_ts, last_candle_date, last_evaluated_candle_ts, scan_count, historical_win_rate,
-                pattern_score, best_strategy, failure_reasons, updated_at
-            ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, '', ?)
+                pattern_score, bull_win_rate, bear_win_rate, bull_trades, bear_trades, best_strategy, failure_reasons, updated_at
+            ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, '', ?)
             ON CONFLICT(symbol) DO UPDATE SET
                 last_scanned_ts = excluded.last_scanned_ts,
                 last_candle_date = excluded.last_candle_date,
@@ -100,9 +122,13 @@ class HistoricalStockLearner:
                 scan_count = stock_scan_memory.scan_count + 1,
                 historical_win_rate = excluded.historical_win_rate,
                 pattern_score = excluded.pattern_score,
+                bull_win_rate = excluded.bull_win_rate,
+                bear_win_rate = excluded.bear_win_rate,
+                bull_trades = excluded.bull_trades,
+                bear_trades = excluded.bear_trades,
                 best_strategy = excluded.best_strategy,
                 updated_at = excluded.updated_at
-            """, (clean_s, now, str(last_candle_date), str(completed_candle_ts or last_candle_date), win_rate, pattern_score, best_strategy, now))
+            """, (clean_s, now, str(last_candle_date), str(completed_candle_ts or last_candle_date), win_rate, pattern_score, bull_win_rate, bear_win_rate, bull_trades, bear_trades, best_strategy, now))
             conn.commit()
             conn.close()
         except Exception:
@@ -153,8 +179,10 @@ class HistoricalStockLearner:
             h = df['High'].squeeze()
             l = df['Low'].squeeze()
 
-            wins = 0
-            losses = 0
+            bull_wins = 0
+            bull_losses = 0
+            bear_wins = 0
+            bear_losses = 0
             n_bars = len(df)
 
             # Analyze prior breakout and breakdown events with genuine Target vs Stop evaluation
@@ -182,20 +210,20 @@ class HistoricalStockLearner:
                             fwd_l = float(l.iloc[fwd])
 
                             if fwd_o <= stop:
-                                losses += 1
+                                bull_losses += 1
                                 break
 
                             hit_target = fwd_h >= target
                             hit_stop = fwd_l <= stop
 
                             if hit_target and hit_stop:
-                                losses += 1
+                                bull_losses += 1
                                 break
                             elif hit_stop:
-                                losses += 1
+                                bull_losses += 1
                                 break
                             elif hit_target:
-                                wins += 1
+                                bull_wins += 1
                                 break
 
                 # 2. Bearish Breakdown condition (P2 Fix): close and low below prior 5-bar low
@@ -214,27 +242,29 @@ class HistoricalStockLearner:
                             fwd_l = float(l.iloc[fwd])
 
                             if fwd_o >= stop:
-                                losses += 1
+                                bear_losses += 1
                                 break
 
                             hit_target = fwd_l <= target
                             hit_stop = fwd_h >= stop
 
                             if hit_target and hit_stop:
-                                losses += 1
+                                bear_losses += 1
                                 break
                             elif hit_stop:
-                                losses += 1
+                                bear_losses += 1
                                 break
                             elif hit_target:
-                                wins += 1
+                                bear_wins += 1
                                 break
 
-            total_trades = wins + losses
-            if total_trades >= 3:
-                win_rate = round((wins / total_trades) * 100.0, 1)
-            else:
-                win_rate = 50.0
+            total_bull = bull_wins + bull_losses
+            total_bear = bear_wins + bear_losses
+            total_trades = total_bull + total_bear
+
+            bull_win_rate = round((bull_wins / total_bull) * 100.0, 1) if total_bull >= 2 else 50.0
+            bear_win_rate = round((bear_wins / total_bear) * 100.0, 1) if total_bear >= 2 else 50.0
+            overall_win_rate = round(((bull_wins + bear_wins) / total_trades) * 100.0, 1) if total_trades >= 3 else 50.0
 
             # Structural cleanliness: Body-to-Range ratio
             body = (c - o).abs()
@@ -244,19 +274,24 @@ class HistoricalStockLearner:
 
             # Empirical Bayesian Shrinkage towards 1.0 baseline
             sample_weight = min(1.0, total_trades / 10.0)
-            raw_mult = 0.70 + (win_rate / 100.0 * 0.60)
+            raw_mult = 0.70 + (overall_win_rate / 100.0 * 0.60)
             shrunk_mult = round(1.0 + sample_weight * (raw_mult - 1.0), 2)
             final_mult = min(1.20, max(0.85, shrunk_mult))
 
-            # Strictly persist ONLY during live trading
+            # Strictly persist ONLY during live trading with distinct directional stats
             if not is_replay:
+                best_strat = "Breakout 1:1.5 Target" if bull_win_rate >= bear_win_rate else "Breakdown Short 1:1.5"
                 HistoricalStockLearner.record_stock_scan(
                     symbol=symbol,
                     last_candle_date=str(df.index[-1]),
                     completed_candle_ts=str(df.index[-1]),
-                    win_rate=win_rate,
+                    win_rate=overall_win_rate,
                     pattern_score=pattern_score,
-                    best_strategy="Breakout 1:1.5 Target" if win_rate >= 50.0 else "Trap Reversal"
+                    best_strategy=best_strat,
+                    bull_win_rate=bull_win_rate,
+                    bear_win_rate=bear_win_rate,
+                    bull_trades=total_bull,
+                    bear_trades=total_bear
                 )
 
             return final_mult

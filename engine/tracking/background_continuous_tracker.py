@@ -84,28 +84,38 @@ class BackgroundContinuousTracker:
         genuine_score = int(round(min(98.0, base_score + evidence_bonus)))
 
         # P1 Fix: OpportunityPotentialEngine returns 'tp1' and 'tp2', and does not return 'suggested_sl'.
-        # Calculate genuine structural SL from breakout level / candle geometry, and map tp1/tp2.
+        # Calculate genuine structural SL from breakout level / candle geometry, and recalculate RR against that exact SL.
         tp1_val = direct_eval.get("tp1")
         tp2_val = direct_eval.get("tp2")
-        
-        # Calculate structural SL: Breakout level +/- dynamic ATR buffer or 0.75% default
         lvl_val = float(level) if level and float(level) > 0 else float(completed_c)
+
+        # Genuine structural invalidation level:
+        # Bullish: SL placed structurally below the breakout level (with minimum 0.35% buffer to avoid tick whipsaws)
+        # Bearish: SL placed structurally above the breakdown level (with minimum 0.35% buffer)
         if direction == "BULLISH":
-            # For buy/call, SL is below the breakout level
-            raw_risk = abs(tp1_val - completed_c) / 1.5 if (tp1_val and tp1_val > completed_c) else (completed_c * 0.0075)
-            calc_sl = round(completed_c - max(completed_c * 0.004, min(completed_c * 0.015, raw_risk)), 2)
+            structural_risk = max(completed_c * 0.0035, completed_c - lvl_val)
+            calc_sl = round(lvl_val - structural_risk, 2)
+            actual_risk = completed_c - calc_sl
             if not tp1_val or tp1_val <= completed_c:
-                tp1_val = round(completed_c + (1.5 * abs(completed_c - calc_sl)), 2)
+                tp1_val = round(completed_c + (1.5 * actual_risk), 2)
             if not tp2_val or tp2_val <= tp1_val:
-                tp2_val = round(completed_c + (2.5 * abs(completed_c - calc_sl)), 2)
+                tp2_val = round(completed_c + (2.5 * actual_risk), 2)
+            actual_reward = tp1_val - completed_c
         else:
-            # For sell/put, SL is above the breakdown level
-            raw_risk = abs(completed_c - tp1_val) / 1.5 if (tp1_val and tp1_val < completed_c) else (completed_c * 0.0075)
-            calc_sl = round(completed_c + max(completed_c * 0.004, min(completed_c * 0.015, raw_risk)), 2)
+            structural_risk = max(completed_c * 0.0035, lvl_val - completed_c)
+            calc_sl = round(lvl_val + structural_risk, 2)
+            actual_risk = calc_sl - completed_c
             if not tp1_val or tp1_val >= completed_c:
-                tp1_val = round(completed_c - (1.5 * abs(calc_sl - completed_c)), 2)
+                tp1_val = round(completed_c - (1.5 * actual_risk), 2)
             if not tp2_val or tp2_val >= tp1_val:
-                tp2_val = round(completed_c - (2.5 * abs(calc_sl - completed_c)), 2)
+                tp2_val = round(completed_c - (2.5 * actual_risk), 2)
+            actual_reward = completed_c - tp1_val
+
+        # Recalculate RR against exact structural SL (Must meet minimum 1.05 threshold)
+        promoted_rr = round(actual_reward / actual_risk, 2) if actual_risk > 0 else 0.0
+        if promoted_rr < 1.05:
+            print(f"[PROMOTION RR REJECTED] {symbol} structural RR 1:{promoted_rr} < 1:1.05 minimum threshold (SL: ₹{calc_sl}, TP1: ₹{tp1_val})")
+            return False
 
         confirmed_cand = {
             "symbol": symbol,
@@ -399,28 +409,24 @@ class BackgroundContinuousTracker:
 
             clean_ticker = target_sym.replace(".NS", "").upper()
 
-            # P1 Fix: Fetch both 5-minute intraday completed candles and daily candles
-            # Validate completed candle status and remove any forming candle before learning
+            # P1 Fix: Fetch exclusively 5-minute intraday completed candles for intraday setup learning.
+            # Strictly require feed_val["is_valid"] is True, and never silently fall back to daily candles.
             five_m_df, m5_src = self.data_provider.fetch_5m_candles(clean_ticker, days_back=5)
-            daily_df, d_src = self.data_provider.fetch_daily_candles(clean_ticker, days_back=45)
 
-            study_df = None
-            src_used = "NONE"
+            if five_m_df is None or five_m_df.empty or len(five_m_df) < 20:
+                return
 
-            if five_m_df is not None and not five_m_df.empty and len(five_m_df) >= 20:
-                # Strictly validate 5m feed freshness and isolate completed candles
-                feed_val = MarketValidator.validate_feed_freshness(five_m_df, max_delay_seconds=300, candle_duration_seconds=300)
-                is_comp = feed_val.get("is_completed_candle", False)
-                # Slice off forming candle if incomplete
-                study_df = five_m_df if is_comp else five_m_df.iloc[:-1]
-                src_used = m5_src
-            elif daily_df is not None and not daily_df.empty and len(daily_df) >= 10:
-                study_df = daily_df
-                src_used = d_src
+            feed_val = MarketValidator.validate_feed_freshness(five_m_df, max_delay_seconds=300, candle_duration_seconds=300)
+            if not feed_val.get("is_valid", False):
+                # Reject invalid or stale feeds immediately (P1)
+                return
 
-            if study_df is not None and not study_df.empty and len(study_df) >= 10:
+            is_comp = feed_val.get("is_completed_candle", False)
+            study_df = five_m_df if is_comp else five_m_df.iloc[:-1]
+
+            if study_df is not None and not study_df.empty and len(study_df) >= 15:
                 completed_ts = str(study_df.index[-1])
-                # Skip if already learned for this exact completed session/candle
+                # Skip if already learned for this exact completed candle
                 if HistoricalStockLearner.should_skip_scan(clean_ticker, current_completed_candle_ts=completed_ts):
                     return
 
@@ -430,6 +436,6 @@ class BackgroundContinuousTracker:
                     df_history=study_df,
                     is_replay=False
                 )
-                print(f"[OFFLINE LEARNER] Studied {clean_ticker:<12} | Completed: {completed_ts} | Learned Multiplier: {mult}x ({src_used})")
+                print(f"[OFFLINE 5M LEARNER] Studied {clean_ticker:<12} | Completed: {completed_ts} | Learned Multiplier: {mult}x ({m5_src})")
         except Exception as le:
             pass

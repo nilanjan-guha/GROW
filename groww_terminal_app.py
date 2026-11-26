@@ -2121,9 +2121,11 @@ def get_fno_momentum_watchlists_endpoint():
                                     overshoot_pct = ((curr_price - lvl) / lvl) * 100.0
                                     if overshoot_pct <= 0.50:
                                         proximity_score = 35.0 # Right at breakout trigger!
-                                    elif overshoot_pct > 2.0:
-                                        # Overextended run, not an early entry candidate
-                                        proximity_score = 0.0
+                                    elif overshoot_pct <= 1.50:
+                                        proximity_score = 15.0 # Acceptable breakout follow-through
+                                    else:
+                                        # P2 Fix: Overextended > 1.5% - 2.0% past trigger is marked invalidated for early entry
+                                        is_invalidated = True
                             # Bearish setup: price coiling above breakdown level
                             elif "Enter below" in trig_str or direction in ("BEARISH", "SELL"):
                                 if curr_price > lvl:
@@ -2140,8 +2142,11 @@ def get_fno_momentum_watchlists_endpoint():
                                     undershoot_pct = ((lvl - curr_price) / lvl) * 100.0
                                     if undershoot_pct <= 0.50:
                                         proximity_score = 35.0 # Right at breakdown trigger!
-                                    elif undershoot_pct > 2.0:
-                                        proximity_score = 0.0
+                                    elif undershoot_pct <= 1.50:
+                                        proximity_score = 15.0 # Acceptable breakdown follow-through
+                                    else:
+                                        # P2 Fix: Overextended dump > 1.5% - 2.0% past trigger is marked invalidated for early entry
+                                        is_invalidated = True
                     except Exception:
                         pass
             s["proximity_score"] = proximity_score

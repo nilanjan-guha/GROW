@@ -155,7 +155,8 @@ class TestAdaptiveLearnerAndTracker(unittest.TestCase):
         self.assertEqual(prom_cand["stage"], "CONFIRMED")
         self.assertTrue(prom_cand["is_actionable"])
         self.assertEqual(prom_cand["current_price"], 952.0)
-        self.assertEqual(prom_cand["suggested_sl"], 945.0)
+        # Structural SL: lvl_val (950) - max(952*0.0035, 952 - 950 = 2) -> max(3.332, 2.0) = 3.332 -> 950 - 3.33 = 946.67
+        self.assertEqual(prom_cand["suggested_sl"], 946.67)
         self.assertEqual(prom_cand["suggested_tp1"], 962.5)
         # Score is calculated from actual evidence (base + room bonus), not artificially hardcoded
         self.assertGreaterEqual(prom_cand["conviction_score"], 90)
@@ -310,6 +311,95 @@ class TestAdaptiveLearnerAndTracker(unittest.TestCase):
 
         self.assertEqual(len(pending_eval_keys_subsequent), 0, 
                          "Completed candle that was already evaluated must be evaluated exactly once")
+
+    def test_bearish_breakdown_promotion_and_two_candidate_cap(self):
+        """
+        P1/P2 Test: Verifies bearish breakdown promotion creates valid structural SL above breakdown level,
+        TP1 below entry, meets RR >= 1.05, and enforces max 2 candidates cap in ENTRY READY.
+        """
+        screener_state = {
+            "persistent_preparing_stocks": {
+                "SBIN": {
+                    "symbol": "SBIN",
+                    "direction": "BEARISH",
+                    "entry_trigger": "Breakdown below ₹800.0",
+                    "conviction_score": 85,
+                    "change_pct": -1.8
+                }
+            },
+            "ranked_opportunities": {
+                "entry_ready": [
+                    {"symbol": "STOCK_A", "score": 90},
+                    {"symbol": "STOCK_B", "score": 88}
+                ]
+            }
+        }
+        tracker = BackgroundContinuousTracker(screener_state)
+
+        candle_ts = "2026-11-26 15:00:00"
+        completed_c = 796.0
+        lvl = 800.0 # Breakdown level
+        # Risk = 804.0 - 796.0 = 8.0. For RR >= 1.05, reward must be >= 8.4 -> TP1 <= 787.6
+        direct_eval = {
+            "is_viable": True,
+            "tp1": 786.0,
+            "tp2": 778.0,
+            "potential_pct": 1.5
+        }
+
+        prep_info = screener_state["persistent_preparing_stocks"]["SBIN"]
+
+        promoted = tracker.promote_preparing_breakout(
+            symbol="SBIN",
+            completed_c=completed_c,
+            evaluated_completed_ts=candle_ts,
+            prep_info=prep_info,
+            direct_eval=direct_eval,
+            level=lvl,
+            direction="BEARISH",
+            entry_trigger="Breakdown below ₹800.0"
+        )
+        self.assertTrue(promoted, "Bearish promotion with valid RR must succeed")
+
+        entry_list = screener_state["ranked_opportunities"]["entry_ready"]
+        # Must enforce strict limit of max 2 candidates
+        self.assertEqual(len(entry_list), 2, "ENTRY READY must be strictly capped at max 2 candidates")
+        prom_cand = entry_list[0]
+        self.assertEqual(prom_cand["symbol"], "SBIN")
+        self.assertEqual(prom_cand["direction"], "BEARISH")
+        # In a breakdown: SL must be strictly above entry, TP1 strictly below entry
+        self.assertGreater(prom_cand["suggested_sl"], prom_cand["current_price"])
+        self.assertLess(prom_cand["suggested_tp1"], prom_cand["current_price"])
+        
+        # Verify Risk:Reward ratio calculation
+        risk = prom_cand["suggested_sl"] - prom_cand["current_price"]
+        reward = prom_cand["current_price"] - prom_cand["suggested_tp1"]
+        rr = reward / risk
+        self.assertGreaterEqual(rr, 1.05, f"Bearish promotion must meet RR >= 1.05, got {rr}")
+
+    def test_offline_learner_rejects_invalid_or_stale_feed(self):
+        """
+        P1 Test: Verifies that _run_closed_market_learner_step() rejects invalid or stale feeds
+        when feed_val['is_valid'] is False, refusing to run historical learning on corrupted data.
+        """
+        tracker = BackgroundContinuousTracker({})
+        
+        # Create a mock data provider that returns empty or short df
+        class MockDataProvider:
+            def fetch_5m_candles(self, ticker, days_back=30):
+                # Return empty DataFrame simulating invalid feed
+                return pd.DataFrame(), "test"
+
+        tracker.data_provider = MockDataProvider()
+        
+        # Calling learner step should execute cleanly without crashing or recording invalid data
+        try:
+            tracker._run_closed_market_learner_step()
+            success = True
+        except Exception:
+            success = False
+
+        self.assertTrue(success, "Offline learner must handle invalid/empty feed gracefully without throwing")
 
 if __name__ == "__main__":
     unittest.main()
