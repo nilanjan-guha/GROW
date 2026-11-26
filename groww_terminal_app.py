@@ -2085,28 +2085,56 @@ def get_fno_momentum_watchlists_endpoint():
                     s["is_nr7"] = is_nr7
                 s["rvol"] = rvol
                 s["is_compressed"] = compression
-            # If still missing price, check persistent or ranked cache
-            if "price" not in s or not s["price"]:
-                cand = next((c for c in prep_list if c.get("symbol") in (s_sym, clean_s)), None)
-                if cand and cand.get("current_price"):
-                    s["price"] = round(float(cand["current_price"]), 2)
-                    if not s.get("score"):
-                        s["score"] = cand.get("conviction_score", 70)
+            # P2 Fix: Compute trigger proximity and structural invalidation score
+            proximity_score = 0.0
+            is_invalidated = False
+            cand = next((c for c in prep_list if c.get("symbol") in (s_sym, clean_s)), None)
+            if cand:
+                if not s.get("score"):
+                    s["score"] = cand.get("conviction_score", 70)
+                if "price" not in s or not s["price"]:
+                    if cand.get("current_price"):
+                        s["price"] = round(float(cand["current_price"]), 2)
 
-    # Multi-factor Watchlist Prioritization (P1):
+                trig_str = str(cand.get("entry_trigger") or "")
+                curr_price = float(s.get("price") or 0.0)
+                if curr_price > 0 and trig_str:
+                    try:
+                        lvl = float(trig_str.split("₹")[-1].strip())
+                        if lvl > 0:
+                            dist_pct = abs(curr_price - lvl) / lvl * 100.0
+                            if dist_pct <= 0.35:
+                                proximity_score = 30.0 # Extremely close to breakout level!
+                            elif dist_pct <= 0.85:
+                                proximity_score = 20.0
+                            elif dist_pct <= 1.50:
+                                proximity_score = 10.0
+                            elif dist_pct > 3.5:
+                                is_invalidated = True
+                    except Exception:
+                        pass
+            s["proximity_score"] = proximity_score
+            s["is_structurally_invalidated"] = is_invalidated
+
+    # Multi-factor Watchlist Prioritization (P1/P2):
     # Rather than solely sorting by percentage change (which pushes already-exhausted stocks to top),
     # prioritize:
     # 1. Setup Quality (conviction score / stage confidence)
     # 2. Coiling / Pre-breakout Compression (imminent moves before the chase, using BB squeeze, NR4, NR7)
-    # 3. Relative Volume (RVOL >= 1.25x indicating institutional footprint)
-    # 4. Orderly session change % (reward early stage momentum over extreme overextensions)
+    # 3. Trigger Proximity (stocks within 0.35% - 1.5% of breakout level get high execution priority)
+    # 4. Relative Volume (RVOL >= 1.25x indicating institutional footprint)
+    # 5. Orderly session change % (reward early stage momentum over extreme overextensions)
     def compute_watchlist_rank_priority(item):
+        if item.get("is_structurally_invalidated"):
+            return -100.0 # Demote setups that broke their structure
+
         score = float(item.get("score") or 50.0)
         is_prep = 1.0 if item.get("is_preparing") else 0.0
         is_bb = 1.0 if item.get("is_bb_squeeze") else 0.0
         is_nr4 = 1.0 if item.get("is_nr4") else 0.0
         is_nr7 = 1.0 if item.get("is_nr7") else 0.0
         compression_bonus = (is_bb * 20.0) + (is_nr7 * 25.0) + (is_nr4 * 15.0)
+        proximity_bonus = float(item.get("proximity_score") or 0.0)
         rvol = min(4.0, float(item.get("rvol") or 1.0))
         chg = abs(float(item.get("change") or 0.0))
         
@@ -2116,7 +2144,8 @@ def get_fno_momentum_watchlists_endpoint():
         # Composite early momentum priority
         priority = (
             score * 1.5 +                # Base setup quality
-            (is_prep * 45.0) +           # High priority for active pre-breakout coils
+            (is_prep * 35.0) +           # Priority for active pre-breakout coils
+            proximity_bonus +            # Distance to trigger level bonus
             compression_bonus +          # Bonus for volatility contraction (BB Squeeze, NR4, NR7)
             (rvol * 20.0) +              # Institutional volume accumulation
             (orderly_chg * 10.0)         # Controlled directional momentum

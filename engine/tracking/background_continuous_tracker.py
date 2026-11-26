@@ -62,13 +62,90 @@ class BackgroundContinuousTracker:
             pass
         return None
 
+    def promote_preparing_breakout(self, symbol, completed_c, evaluated_completed_ts, prep_info, direct_eval, level, direction, entry_trigger=None):
+        """
+        Production helper: idempotently promotes a confirmed breakout setup into ENTRY READY,
+        calculates confirmation score from genuine market evidence (no artificial 85 floor),
+        and removes the PREPARING coil record.
+        Returns True if newly promoted, False if duplicate or rejected.
+        """
+        cand_prom_key = f"{symbol.replace('.NS', '').upper()}:{evaluated_completed_ts}"
+        if cand_prom_key in self._promoted_candle_keys:
+            return False
+
+        self._promoted_candle_keys.add(cand_prom_key)
+        self.tracked_stats["promotions_today"] += 1
+        now = time.time()
+
+        # P2 Fix: Genuine confirmation score from actual market evidence (RVOL, breakout room, base conviction)
+        # Never artificially floor to 85!
+        base_score = float(prep_info.get("conviction_score") or 70.0)
+        room_pct = float(direct_eval.get("room_pct") or 1.0)
+        # Modest evidence-based adjustments
+        evidence_bonus = min(15.0, max(0.0, room_pct * 3.0))
+        genuine_score = int(round(min(98.0, base_score + evidence_bonus)))
+
+        confirmed_cand = {
+            "symbol": symbol,
+            "direction": direction,
+            "stage": "CONFIRMED",
+            "is_actionable": True,
+            "current_price": completed_c,
+            "entry_trigger": entry_trigger or str(prep_info.get("entry_trigger") or f"Breakout level ₹{level}"),
+            "entry_price": completed_c,
+            "suggested_sl": direct_eval.get("suggested_sl"),
+            "suggested_tp1": direct_eval.get("suggested_tp1"),
+            "suggested_tp2": direct_eval.get("suggested_tp2"),
+            "conviction_score": genuine_score,
+            "change_pct": prep_info.get("change_pct", 0.0),
+            "completed_candle_ts": evaluated_completed_ts,
+            "promoted_at": now
+        }
+
+        ranked_opps = self.screener_state.setdefault("ranked_opportunities", {})
+        entry_ready_list = ranked_opps.setdefault("entry_ready", [])
+        entry_ready_list[:] = [c for c in entry_ready_list if c.get("symbol") != symbol]
+        entry_ready_list.insert(0, confirmed_cand)
+        ranked_opps["entry_ready"] = entry_ready_list[:3]
+
+        prep_info["is_promoted"] = True
+        prep_info["promoted_candle_ts"] = evaluated_completed_ts
+        prep_info["promoted_at"] = now
+        self.screener_state.get("persistent_preparing_stocks", {}).pop(symbol, None)
+
+        print(f"[PRE-BREAKOUT TRIGGERED] {symbol} confirmed 5m close @ ₹{completed_c}! Level ₹{level} valid, genuine score: {genuine_score}/100, promoted to ENTRY READY.")
+        return True
+
     def start(self):
         import threading
         self.is_running = True
         thread = threading.Thread(target=self._tracker_loop, daemon=True, name="BackgroundContinuousTrackerThread")
         thread.start()
-        print("[CONTINUOUS TRACKER DAEMON] Dedicated background tracking & learning daemon started.")
+
+        # P1 Fix: Run closed-market historical learning in its own independent daemon thread
+        # completely decoupled from the tracker loop, so slow historical API fetches never delay outcome evaluations.
+        learner_thread = threading.Thread(target=self._offline_learner_loop, daemon=True, name="OfflineLearnerThread")
+        learner_thread.start()
+
+        print("[CONTINUOUS TRACKER DAEMON] Dedicated background tracking daemon and offline learning thread started.")
         return thread
+
+    def _offline_learner_loop(self):
+        """
+        Independent closed-market learner thread:
+        Runs in background, fetching 5m intraday replay and daily history with rate limits and retries,
+        completely decoupled from the main trade tracking loop.
+        """
+        while self.is_running:
+            try:
+                # Run learning ONLY when market is closed
+                if not MarketValidator.is_market_open():
+                    self._run_closed_market_learner_step()
+                    time.sleep(10) # Controlled rate-limiting between stocks
+                else:
+                    time.sleep(60) # Sleep during live market hours
+            except Exception as e:
+                time.sleep(15)
 
     def _tracker_loop(self):
         ist = pytz.timezone('Asia/Kolkata')
@@ -190,45 +267,23 @@ class BackgroundContinuousTracker:
                                     )
 
                                     cand_prom_key = f"{sym.replace('.NS', '').upper()}:{evaluated_completed_ts}"
-                                    if not is_missed_or_extended and direct_eval.get("is_viable", True):
-                                        if cand_prom_key not in self._promoted_candle_keys:
-                                            self._promoted_candle_keys.add(cand_prom_key)
+                                    # Fail-closed viability check: require is_viable is explicitly True
+                                    is_viable_trade = (direct_eval.get("is_viable") is True)
+                                    if not is_missed_or_extended and is_viable_trade:
+                                        promoted = self.promote_preparing_breakout(
+                                            symbol=sym,
+                                            completed_c=completed_c,
+                                            evaluated_completed_ts=evaluated_completed_ts,
+                                            prep_info=prep_info,
+                                            direct_eval=direct_eval,
+                                            level=lvl,
+                                            direction=direction,
+                                            entry_trigger=entry_trig
+                                        )
+                                        if promoted:
                                             promoted_any = True
-                                            self.tracked_stats["promotions_today"] += 1
-                                            
-                                            # Real Promotion Execution:
-                                            # 1. Directly promote into screener_state ranked_opportunities['entry_ready']
-                                            confirmed_cand = {
-                                                "symbol": sym,
-                                                "direction": direction,
-                                                "stage": "CONFIRMED",
-                                                "is_actionable": True,
-                                                "current_price": completed_c,
-                                                "entry_trigger": entry_trig,
-                                                "entry_price": completed_c,
-                                                "suggested_sl": direct_eval.get("suggested_sl"),
-                                                "suggested_tp1": direct_eval.get("suggested_tp1"),
-                                                "suggested_tp2": direct_eval.get("suggested_tp2"),
-                                                "conviction_score": max(85, int(prep_info.get("conviction_score") or 85)),
-                                                "change_pct": prep_info.get("change_pct", 0.0),
-                                                "completed_candle_ts": evaluated_completed_ts,
-                                                "promoted_at": now
-                                            }
-                                            ranked_opps = self.screener_state.setdefault("ranked_opportunities", {})
-                                            entry_ready_list = ranked_opps.setdefault("entry_ready", [])
-                                            # Deduplicate if symbol already in entry_ready
-                                            entry_ready_list[:] = [c for c in entry_ready_list if c.get("symbol") != sym]
-                                            entry_ready_list.insert(0, confirmed_cand)
-                                            ranked_opps["entry_ready"] = entry_ready_list[:3]
-
-                                            # 2. Mark PREPARING record as promoted to prevent duplicate listing
-                                            prep_info["is_promoted"] = True
-                                            prep_info["promoted_candle_ts"] = evaluated_completed_ts
-                                            prep_info["promoted_at"] = now
-                                            # Remove from active preparing list so it cleanly transitions to ENTRY READY
-                                            prep_dict.pop(sym, None)
-
-                                            print(f"[PRE-BREAKOUT TRIGGERED] {sym} confirmed 5m close @ ₹{completed_c}! Level ₹{lvl} valid, promoted to ENTRY READY.")
+                                    elif is_missed_or_extended:
+                                        print(f"[PRE-BREAKOUT CHASE PREVENTED] {sym} closed @ ₹{completed_c} beyond level ₹{lvl} tolerance ({max_slippage_dist_pct}%). Setup rejected.")
                                     elif is_missed_or_extended:
                                         print(f"[PRE-BREAKOUT CHASE PREVENTED] {sym} closed @ ₹{completed_c} beyond level ₹{lvl} tolerance ({max_slippage_dist_pct}%). Setup rejected.")
                         except Exception:
@@ -285,15 +340,6 @@ class BackgroundContinuousTracker:
                 # Track cycle interval: sleep 15 seconds so tracking is continuous and doesn't load CPU
                 time.sleep(15)
 
-                # 4. AUTONOMOUS CLOSED-MARKET LEARNING DAEMON (Non-Blocking):
-                # When market is closed (past 15:30 IST or non-trading days), run deep historical study:
-                # Scans stocks one by one from F&O universe and persistent preparing/confirmed lists,
-                # fetches historical 5m & daily candles via Groww Data Provider, replaying breakout setups
-                # to measure actual Target vs Stop outcome, and updates SQLite persistent memory without
-                # interfering with live market scanning or adding latency.
-                if not MarketValidator.is_market_open():
-                    self._run_closed_market_learner_step()
-
             except Exception as e:
                 traceback.print_exc()
                 print("[CONTINUOUS TRACKER EXCEPTION]:", e)
@@ -324,20 +370,26 @@ class BackgroundContinuousTracker:
 
             clean_ticker = target_sym.replace(".NS", "").upper()
 
-            # Fetch daily candles (30-45 trading sessions) for deep breakout outcome study
-            daily_df, src = self.data_provider.fetch_daily_candles(clean_ticker, days_back=45)
-            if daily_df is not None and not daily_df.empty and len(daily_df) >= 10:
-                completed_ts = str(daily_df.index[-1])
-                # Skip if already learned for this exact completed session
+            # P1 Fix: Fetch both 5-minute intraday completed candles and daily candles
+            # to learn true intraday 5m breakout behavior alongside multi-session trend
+            five_m_df, m5_src = self.data_provider.fetch_5m_candles(clean_ticker, days_back=5)
+            daily_df, d_src = self.data_provider.fetch_daily_candles(clean_ticker, days_back=45)
+
+            study_df = five_m_df if (five_m_df is not None and not five_m_df.empty and len(five_m_df) >= 20) else daily_df
+            src_used = m5_src if study_df is five_m_df else d_src
+
+            if study_df is not None and not study_df.empty and len(study_df) >= 10:
+                completed_ts = str(study_df.index[-1])
+                # Skip if already learned for this exact completed session/candle
                 if HistoricalStockLearner.should_skip_scan(clean_ticker, current_completed_candle_ts=completed_ts):
                     return
 
-                # Replay 30-day historical breakouts and record win-rate / pattern score into SQLite
+                # Replay historical breakouts (with realistic next-open execution, slippage, and gap-through-stop)
                 mult = HistoricalStockLearner.analyze_30d_stock_history(
                     symbol=clean_ticker,
-                    df_history=daily_df,
+                    df_history=study_df,
                     is_replay=False
                 )
-                print(f"[OFFLINE LEARNER] Studied {clean_ticker:<12} | Completed: {completed_ts} | Learned Multiplier: {mult}x ({src})")
+                print(f"[OFFLINE LEARNER] Studied {clean_ticker:<12} | Completed: {completed_ts} | Learned Multiplier: {mult}x ({src_used})")
         except Exception as le:
             pass

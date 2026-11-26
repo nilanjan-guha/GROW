@@ -104,18 +104,19 @@ class TestAdaptiveLearnerAndTracker(unittest.TestCase):
 
     def test_real_breakout_promotion_and_idempotence(self):
         """
-        P1 Test: Directly exercises the real breakout promotion path on BackgroundContinuousTracker,
+        P1 Test: Directly invokes production method BackgroundContinuousTracker.promote_preparing_breakout(),
         verifying the candidate is promoted to ENTRY READY and that repeated runs do not duplicate promotions.
         """
+        prep_info = {
+            "symbol": "TATAMOTORS",
+            "direction": "BULLISH",
+            "entry_trigger": "Enter above ₹950.0",
+            "conviction_score": 90,
+            "change_pct": 2.5
+        }
         screener_state = {
             "persistent_preparing_stocks": {
-                "TATAMOTORS": {
-                    "symbol": "TATAMOTORS",
-                    "direction": "BULLISH",
-                    "entry_trigger": "Enter above ₹950.0",
-                    "conviction_score": 90,
-                    "change_pct": 2.5
-                }
+                "TATAMOTORS": prep_info
             },
             "ranked_opportunities": {
                 "entry_ready": []
@@ -123,57 +124,57 @@ class TestAdaptiveLearnerAndTracker(unittest.TestCase):
         }
         tracker = BackgroundContinuousTracker(screener_state)
 
-        # Build completed candle dataframe where completed candle closes above level (952.0 >= 950.0)
-        dates = pd.date_range("2026-11-26 09:15", periods=20, freq="5min")
-        highs = [955.0] * 20
-        lows = [945.0] * 20
-        closes = [952.0] * 20
-        completed_df = pd.DataFrame({"High": highs, "Low": lows, "Close": closes}, index=dates)
-        candle_ts = str(completed_df.index[-1])
-
-        # Step 1: Simulate breakout evaluation on completed candle close
+        candle_ts = "2026-11-26 14:30:00"
         completed_c = 952.0
         lvl = 950.0
-        atr_pct = tracker.calculate_atr_pct(completed_df, lvl)
-        max_slip = min(1.20, max(0.25, round(0.50 * atr_pct, 2))) if atr_pct else 0.50
-
-        cand_prom_key = f"TATAMOTORS:{candle_ts}"
-        self.assertNotIn(cand_prom_key, tracker._promoted_candle_keys)
-
-        # Perform promotion
-        tracker._promoted_candle_keys.add(cand_prom_key)
-        tracker.tracked_stats["promotions_today"] += 1
-        confirmed_cand = {
-            "symbol": "TATAMOTORS",
-            "direction": "BULLISH",
-            "stage": "CONFIRMED",
-            "is_actionable": True,
-            "current_price": completed_c,
-            "entry_trigger": "Enter above ₹950.0",
-            "entry_price": completed_c,
-            "conviction_score": 90,
-            "completed_candle_ts": candle_ts
+        direct_eval = {
+            "is_viable": True,
+            "suggested_sl": 945.0,
+            "suggested_tp1": 962.5,
+            "suggested_tp2": 970.0,
+            "room_pct": 1.8
         }
-        screener_state["ranked_opportunities"]["entry_ready"].insert(0, confirmed_cand)
-        screener_state["persistent_preparing_stocks"].pop("TATAMOTORS", None)
+
+        # Step 1: Call ACTUAL production method
+        promoted = tracker.promote_preparing_breakout(
+            symbol="TATAMOTORS",
+            completed_c=completed_c,
+            evaluated_completed_ts=candle_ts,
+            prep_info=prep_info,
+            direct_eval=direct_eval,
+            level=lvl,
+            direction="BULLISH",
+            entry_trigger="Enter above ₹950.0"
+        )
+        self.assertTrue(promoted, "Production promote_preparing_breakout must return True on fresh breakout")
 
         # Verify promotion results
-        self.assertEqual(len(screener_state["ranked_opportunities"]["entry_ready"]), 1)
-        promoted = screener_state["ranked_opportunities"]["entry_ready"][0]
-        self.assertEqual(promoted["symbol"], "TATAMOTORS")
-        self.assertEqual(promoted["stage"], "CONFIRMED")
-        self.assertTrue(promoted["is_actionable"])
+        entry_list = screener_state["ranked_opportunities"]["entry_ready"]
+        self.assertEqual(len(entry_list), 1)
+        prom_cand = entry_list[0]
+        self.assertEqual(prom_cand["symbol"], "TATAMOTORS")
+        self.assertEqual(prom_cand["stage"], "CONFIRMED")
+        self.assertTrue(prom_cand["is_actionable"])
+        self.assertEqual(prom_cand["current_price"], 952.0)
+        self.assertEqual(prom_cand["suggested_sl"], 945.0)
+        self.assertEqual(prom_cand["suggested_tp1"], 962.5)
+        # Score is calculated from actual evidence (base + room bonus), not artificially hardcoded
+        self.assertGreaterEqual(prom_cand["conviction_score"], 90)
         self.assertEqual(tracker.tracked_stats["promotions_today"], 1)
         self.assertNotIn("TATAMOTORS", screener_state["persistent_preparing_stocks"])
 
-        # Step 2: Idempotency check - subsequent scan with same candle timestamp must not promote again
-        if cand_prom_key in tracker._promoted_candle_keys:
-            duplicate_skipped = True
-        else:
-            duplicate_skipped = False
-            tracker.tracked_stats["promotions_today"] += 1
-
-        self.assertTrue(duplicate_skipped, "Subsequent scan of same completed candle must be skipped via promotion registry")
+        # Step 2: Idempotency check - subsequent scan with same candle timestamp must return False and not duplicate
+        second_prom = tracker.promote_preparing_breakout(
+            symbol="TATAMOTORS",
+            completed_c=completed_c,
+            evaluated_completed_ts=candle_ts,
+            prep_info=prep_info,
+            direct_eval=direct_eval,
+            level=lvl,
+            direction="BULLISH"
+        )
+        self.assertFalse(second_prom, "Second call with identical candle timestamp must return False (idempotent)")
+        self.assertEqual(len(screener_state["ranked_opportunities"]["entry_ready"]), 1, "Must not add duplicate candidate")
         self.assertEqual(tracker.tracked_stats["promotions_today"], 1, "Promotion counter must not be incremented repeatedly")
 
     def test_tracker_does_not_skip_failed_evaluation(self):

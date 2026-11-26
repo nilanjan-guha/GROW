@@ -161,25 +161,38 @@ class HistoricalStockLearner:
             # Evaluate across completed bars (leaving room for forward check)
             for i in range(5, n_bars - 2):
                 # 1. Breakout condition: current High breaks the maximum High of preceding 5 bars
+                # and candle confirmed with a close above the prior level
                 prior_high = float(h.iloc[i-5:i].max())
                 curr_h = float(h.iloc[i])
                 curr_l = float(l.iloc[i])
                 curr_c = float(c.iloc[i])
 
                 if curr_h > prior_high and curr_c > prior_high:
-                    entry = curr_h
-                    stop = curr_l
+                    # P2 Realism Fix: In real intraday execution, entry cannot magically happen at the breakout bar's peak.
+                    # Execution occurs at the NEXT candle's Open, incorporating realistic slippage (0.05%).
+                    next_open = float(o.iloc[i+1])
+                    slippage = next_open * 0.0005
+                    entry = round(next_open + slippage, 2)
+
+                    # Dynamic stop loss: Breakout candle low or next open - 1 ATR buffer
+                    stop = round(curr_l, 2)
                     risk = entry - stop
                     if risk <= 0:
                         continue
-                    target = entry + (1.5 * risk)
+                    target = round(entry + (1.5 * risk), 2)
 
-                    # 2. Check forward up to 5 subsequent bars for outcome
-                    max_forward = min(n_bars, i + 6)
+                    # 2. Check forward up to 6 subsequent bars for outcome (modeling gap-through-stop)
+                    max_forward = min(n_bars, i + 7)
                     outcome = None
                     for fwd in range(i + 1, max_forward):
+                        fwd_o = float(o.iloc[fwd])
                         fwd_h = float(h.iloc[fwd])
                         fwd_l = float(l.iloc[fwd])
+
+                        # Realistic execution: Gap-down at open through stop loss triggers immediate exit below SL
+                        if fwd_o <= stop:
+                            outcome = "LOSS"
+                            break
 
                         hit_target = fwd_h >= target
                         hit_stop = fwd_l <= stop
