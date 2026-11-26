@@ -934,10 +934,10 @@ def smc_scan():
 
         # 1b. Check enriched cache (TTL: 180s) strictly after validating candle freshness and completion
         # If a newer completed candle has closed since cached analysis, invalidate cache
-        if symbol in screener_state["enriched_signals_cache"]:
-            cached = screener_state["enriched_signals_cache"][symbol]
+        cached = screener_state.get("enriched_signals_cache", {}).get(symbol) or screener_state.get("enriched_signals_cache", {}).get(clean_s)
+        if cached:
             cached_candle_ts = cached.get("last_candle_ts", 0)
-            if (now - cached["timestamp"] < 180) and (latest_candle_ts <= cached_candle_ts):
+            if (now - cached.get("timestamp", 0) < 180) and (latest_candle_ts <= cached_candle_ts):
                 return jsonify({"success": True, "smc": cached["data"]})
 
         if len(dates) >= 2:
@@ -1176,11 +1176,12 @@ def smc_scan():
                 res["signal_status"] = "WATCH_ONLY"
                 res["is_actionable"] = False
                 
-                screener_state["enriched_signals_cache"][symbol] = {
+                screener_state.setdefault("enriched_signals_cache", {})[symbol] = {
                     "timestamp": now,
                     "last_candle_ts": latest_candle_ts,
                     "data": res
                 }
+                screener_state["enriched_signals_cache"][clean_s] = screener_state["enriched_signals_cache"][symbol]
                 return jsonify({"success": True, "smc": res})
 
             res["is_actionable"] = True
@@ -1259,11 +1260,12 @@ def smc_scan():
             res["signal_status"] = "NEUTRAL"
 
         # Save to enriched signals cache with TTL and latest candle timestamp
-        screener_state["enriched_signals_cache"][symbol] = {
+        screener_state.setdefault("enriched_signals_cache", {})[symbol] = {
             "timestamp": now,
             "last_candle_ts": latest_candle_ts,
             "data": res
         }
+        screener_state["enriched_signals_cache"][clean_s] = screener_state["enriched_signals_cache"][symbol]
         return jsonify({"success": True, "smc": res})
     except Exception as e:
         traceback.print_exc()
@@ -2055,12 +2057,15 @@ def get_fno_momentum_watchlists_endpoint():
                 bear.append(item)
                 seen_bear.add(p_sym)
 
-    # Enrich all watchlist stocks with cached live price and score for zero-latency client rendering
+    # Enrich all watchlist stocks with cached live price, score, rvol, and compression for zero-latency client rendering
     for stk_list in (bull, bear):
         for s in stk_list:
             s_sym = s.get("symbol", "")
             clean_s = s_sym.replace(".NS", "").upper()
             c_entry = raw_cache.get(s_sym) or raw_cache.get(f"{clean_s}.NS") or raw_cache.get(clean_s)
+            rvol = 1.0
+            compression = False
+            proximity_score = 0.0
             if c_entry and isinstance(c_entry, dict) and c_entry.get("df") is not None:
                 cdf = c_entry["df"]
                 if not cdf.empty:
@@ -2068,15 +2073,49 @@ def get_fno_momentum_watchlists_endpoint():
                     if close_col:
                         c_series = cdf[close_col].squeeze()
                         s["price"] = round(float(c_series.iloc[-1] if hasattr(c_series, 'iloc') else c_series), 2)
+                fno_data = c_entry.get("fno_filter_data") or {}
+                if isinstance(fno_data, dict):
+                    rvol = float(fno_data.get("rvol", 1.0) or 1.0)
+                    compression = bool(fno_data.get("is_bb_squeeze", False))
+                s["rvol"] = rvol
+                s["is_compressed"] = compression
             # If still missing price, check persistent or ranked cache
             if "price" not in s or not s["price"]:
                 cand = next((c for c in prep_list if c.get("symbol") in (s_sym, clean_s)), None)
                 if cand and cand.get("current_price"):
                     s["price"] = round(float(cand["current_price"]), 2)
+                    if not s.get("score"):
+                        s["score"] = cand.get("conviction_score", 70)
 
-    # Sort watchlists so the most active movers stay at the top
-    bull.sort(key=lambda x: (x.get("is_preparing", False) == False, abs(x.get("change", 0.0))), reverse=True)
-    bear.sort(key=lambda x: (x.get("is_preparing", False) == False, abs(x.get("change", 0.0))), reverse=True)
+    # Multi-factor Watchlist Prioritization (P1):
+    # Rather than solely sorting by percentage change (which pushes already-exhausted stocks to top),
+    # prioritize:
+    # 1. Setup Quality (conviction score / stage confidence)
+    # 2. Coiling / Pre-breakout Compression (imminent moves before the chase)
+    # 3. Relative Volume (RVOL >= 1.25x indicating institutional footprint)
+    # 4. Orderly session change % (reward early stage momentum over extreme overextensions)
+    def compute_watchlist_rank_priority(item):
+        score = float(item.get("score") or 50.0)
+        is_prep = 1.0 if item.get("is_preparing") else 0.0
+        is_comp = 1.0 if item.get("is_compressed") else 0.0
+        rvol = min(4.0, float(item.get("rvol") or 1.0))
+        chg = abs(float(item.get("change") or 0.0))
+        
+        # Diminishing returns for overextended percentage moves (> 6% intraday often mean exhausted climax)
+        orderly_chg = min(4.0, chg) if chg <= 5.0 else max(1.0, 5.0 - (chg - 5.0) * 0.5)
+        
+        # Composite early momentum priority
+        priority = (
+            score * 1.5 +                # Base setup quality
+            (is_prep * 45.0) +           # High priority for active pre-breakout coils
+            (is_comp * 25.0) +           # Bonus for volatility contraction
+            (rvol * 20.0) +              # Institutional volume accumulation
+            (orderly_chg * 10.0)         # Controlled directional momentum
+        )
+        return priority
+
+    bull.sort(key=compute_watchlist_rank_priority, reverse=True)
+    bear.sort(key=compute_watchlist_rank_priority, reverse=True)
 
     return jsonify({
         "success": True,

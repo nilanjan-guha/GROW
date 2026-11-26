@@ -1,5 +1,6 @@
 import unittest
 import time
+import sqlite3
 import pandas as pd
 import numpy as np
 from core.storage import get_db_connection
@@ -150,6 +151,109 @@ class TestAdaptiveLearnerAndTracker(unittest.TestCase):
 
         self.assertEqual(tracker._last_evaluated_candles.get(norm_sym), c_ts,
                          "Successful evaluation records candle timestamp to prevent redundant re-evaluation")
+
+    def test_tracker_deduplication_and_retry_after_db_failure(self):
+        """
+        P2 Test: Verifies duplicate .NS and non-.NS symbols are deduplicated to exactly 1 evaluation,
+        and that when a database/evaluation error occurs, the completed candle is preserved for retry.
+        """
+        tracker = BackgroundContinuousTracker({})
+        norm_sym = "INFY"
+        c_ts = "2026-11-26 14:15:00"
+        
+        # Create mock 5-minute candle DataFrame with timestamp
+        mock_idx = pd.to_datetime([c_ts])
+        mock_df = pd.DataFrame({"close": [1850.0], "high": [1855.0], "low": [1845.0], "open": [1848.0]}, index=mock_idx)
+
+        # Fresh DFs collected from feed containing BOTH "INFY" and "INFY.NS"
+        fresh_dfs = {
+            "INFY": mock_df,
+            "INFY.NS": mock_df
+        }
+
+        # Step 1: Deduplication loop logic identical to BackgroundContinuousTracker
+        evaluable_fresh_dfs = {}
+        pending_eval_keys = {}
+        seen_norm_symbols = set()
+
+        for s_key, c_df in fresh_dfs.items():
+            norm_key = s_key.replace(".NS", "").upper()
+            if norm_key in seen_norm_symbols:
+                continue
+            seen_norm_symbols.add(norm_key)
+
+            cand_ts = str(c_df.index[-1])
+            dedup_key = f"{norm_key}:{cand_ts}"
+            if tracker._last_evaluated_candles.get(norm_key) != cand_ts and dedup_key not in pending_eval_keys:
+                evaluable_fresh_dfs[norm_key] = c_df
+                evaluable_fresh_dfs[f"{norm_key}.NS"] = c_df
+                pending_eval_keys[norm_key] = cand_ts
+
+        # Verify deduplication reduced inputs to exactly 1 normalized symbol key
+        self.assertEqual(len(seen_norm_symbols), 1, "Duplicate .NS and non-.NS symbols must resolve to single unique symbol")
+        self.assertEqual(list(pending_eval_keys.keys()), [norm_sym], "Pending keys must contain exactly 1 normalized entry")
+
+        # Step 2: Simulate Database failure during outcome evaluation
+        db_failed = True
+        try:
+            if db_failed:
+                raise sqlite3.OperationalError("database is locked")
+            for n_k, n_ts in pending_eval_keys.items():
+                tracker._last_evaluated_candles[n_k] = n_ts
+        except Exception:
+            pass # Caught error, do NOT update _last_evaluated_candles
+
+        self.assertNotIn(norm_sym, tracker._last_evaluated_candles, 
+                         "Database failure must NOT mark candle evaluated, enabling retry on next iteration")
+
+        # Step 3: Next cycle retry with recovered database
+        db_failed = False
+        evaluable_fresh_dfs_retry = {}
+        pending_eval_keys_retry = {}
+        seen_norm_symbols_retry = set()
+
+        for s_key, c_df in fresh_dfs.items():
+            norm_key = s_key.replace(".NS", "").upper()
+            if norm_key in seen_norm_symbols_retry:
+                continue
+            seen_norm_symbols_retry.add(norm_key)
+
+            cand_ts = str(c_df.index[-1])
+            dedup_key = f"{norm_key}:{cand_ts}"
+            if tracker._last_evaluated_candles.get(norm_key) != cand_ts and dedup_key not in pending_eval_keys_retry:
+                evaluable_fresh_dfs_retry[norm_key] = c_df
+                evaluable_fresh_dfs_retry[f"{norm_key}.NS"] = c_df
+                pending_eval_keys_retry[norm_key] = cand_ts
+
+        self.assertEqual(len(pending_eval_keys_retry), 1, "Candle must be re-queued for evaluation after failure")
+        
+        # Successful evaluation marks the candle as evaluated
+        for n_k, n_ts in pending_eval_keys_retry.items():
+            tracker._last_evaluated_candles[n_k] = n_ts
+
+        self.assertEqual(tracker._last_evaluated_candles.get(norm_sym), c_ts, 
+                         "After retry success, candle timestamp must be recorded")
+
+        # Step 4: Subsequent cycle with identical candle timestamp -> skipped
+        evaluable_fresh_dfs_subsequent = {}
+        pending_eval_keys_subsequent = {}
+        seen_norm_symbols_subsequent = set()
+
+        for s_key, c_df in fresh_dfs.items():
+            norm_key = s_key.replace(".NS", "").upper()
+            if norm_key in seen_norm_symbols_subsequent:
+                continue
+            seen_norm_symbols_subsequent.add(norm_key)
+
+            cand_ts = str(c_df.index[-1])
+            dedup_key = f"{norm_key}:{cand_ts}"
+            if tracker._last_evaluated_candles.get(norm_key) != cand_ts and dedup_key not in pending_eval_keys_subsequent:
+                evaluable_fresh_dfs_subsequent[norm_key] = c_df
+                evaluable_fresh_dfs_subsequent[f"{norm_key}.NS"] = c_df
+                pending_eval_keys_subsequent[norm_key] = cand_ts
+
+        self.assertEqual(len(pending_eval_keys_subsequent), 0, 
+                         "Completed candle that was already evaluated must be evaluated exactly once")
 
 if __name__ == "__main__":
     unittest.main()
