@@ -1178,22 +1178,33 @@
                     return;
                 }
                 const ageMs = nowMs - (item.last_updated || 0);
-                // If still within 60 minutes, check structural level validity
                 if (ageMs > MAX_PREP_AGE_MS) {
                     delete persistentPreparingMap[sym];
-                } else if (ageMs > 25 * 60 * 1000) {
-                    // Between 25m and 60m: keep if setup remains structurally valid (price near trigger)
+                    return;
+                }
+
+                // P1 Requirement: Refresh latest price from active watchlist/mover cards or fresh scan
+                // to evaluate structural validity on refreshed price rather than stale price.
+                let refreshedPrice = item.current_price;
+                const moverEl = document.querySelector(`.stock-mover-card[data-symbol="${sym}"]`);
+                if (moverEl && moverEl.getAttribute('data-price')) {
+                    const elPrice = parseFloat(moverEl.getAttribute('data-price'));
+                    if (elPrice > 0) refreshedPrice = elPrice;
+                }
+
+                if (ageMs > 25 * 60 * 1000) {
+                    // Between 25m and 60m: keep if setup remains structurally valid near breakout level
                     const trigStr = String(item.entry_trigger || '');
                     let isInvalidated = false;
                     if (trigStr.includes('Enter above')) {
                         const lvl = parseFloat(trigStr.split('₹')[1] || 0);
-                        if (lvl > 0 && item.current_price && (lvl - item.current_price) / lvl > 0.035) {
+                        if (lvl > 0 && refreshedPrice && (lvl - refreshedPrice) / lvl > 0.035) {
                             // Dumped > 3.5% away from breakout level -> structurally invalidated
                             isInvalidated = true;
                         }
                     } else if (trigStr.includes('Enter below')) {
                         const lvl = parseFloat(trigStr.split('₹')[1] || 0);
-                        if (lvl > 0 && item.current_price && (item.current_price - lvl) / lvl > 0.035) {
+                        if (lvl > 0 && refreshedPrice && (refreshedPrice - lvl) / lvl > 0.035) {
                             // Rallied > 3.5% away from breakdown level -> structurally invalidated
                             isInvalidated = true;
                         }

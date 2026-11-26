@@ -1,5 +1,6 @@
 import time
 import datetime
+import math
 import pytz
 import traceback
 import pandas as pd
@@ -29,6 +30,7 @@ class BackgroundContinuousTracker:
         self.last_track_cycle = 0
         self.last_outcome_check = 0
         self._last_evaluated_candles = {} # {symbol: last_completed_candle_ts} to prevent duplicate evaluations (P1)
+        self._promoted_candle_keys = set() # {f"{symbol}:{candle_ts}"} idempotent promotion registry (P1)
         self.tracked_stats = {
             "active_prep_count": 0,
             "open_signals_count": 0,
@@ -36,6 +38,29 @@ class BackgroundContinuousTracker:
             "last_evaluated_ts": None,
             "promotions_today": 0
         }
+
+    @staticmethod
+    def calculate_atr_pct(eval_completed_df, reference_level):
+        """
+        Production helper: calculates 14-period ATR as a percentage of reference_level.
+        Returns float ATR% or None if insufficient history or invalid values.
+        """
+        if eval_completed_df is None or len(eval_completed_df) < 14 or reference_level <= 0:
+            return None
+        try:
+            high_s = eval_completed_df["high"] if "high" in eval_completed_df.columns else eval_completed_df["High"]
+            low_s = eval_completed_df["low"] if "low" in eval_completed_df.columns else eval_completed_df["Low"]
+            close_s = eval_completed_df["close"] if "close" in eval_completed_df.columns else eval_completed_df["Close"]
+            tr1 = high_s - low_s
+            tr2 = (high_s - close_s.shift()).abs()
+            tr3 = (low_s - close_s.shift()).abs()
+            tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+            atr14 = float(tr.rolling(14).mean().iloc[-1])
+            if not math.isnan(atr14) and atr14 > 0:
+                return (atr14 / reference_level) * 100.0
+        except Exception:
+            pass
+        return None
 
     def start(self):
         import threading
@@ -136,24 +161,10 @@ class BackgroundContinuousTracker:
                                         pass
 
                                 if is_breakout:
-                                    # Anti-Chasing & Viability Safeguard (P1):
-                                    # Use dynamic volatility/ATR-based threshold (0.4 * 5m ATR or 0.25% - 1.25% adaptive envelope)
-                                    # instead of a static arbitrary percentage.
-                                    raw_atr = None
-                                    if eval_completed_df is not None and len(eval_completed_df) >= 14:
-                                        try:
-                                            high_s = eval_completed_df["high"] if "high" in eval_completed_df.columns else eval_completed_df["High"]
-                                            low_s = eval_completed_df["low"] if "low" in eval_completed_df.columns else eval_completed_df["Low"]
-                                            close_s = eval_completed_df["close"] if "close" in eval_completed_df.columns else eval_completed_df["Close"]
-                                            tr1 = high_s - low_s
-                                            tr2 = (high_s - close_s.shift()).abs()
-                                            tr3 = (low_s - close_s.shift()).abs()
-                                            tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-                                            atr14 = float(tr.rolling(14).mean().iloc[-1])
-                                            if not math.isnan(atr14) and atr14 > 0 and lvl > 0:
-                                                raw_atr = (atr14 / lvl) * 100.0
-                                        except Exception:
-                                            raw_atr = None
+                                    # P1 Requirement: Use ONLY the completed candle close (completed_c) and
+                                    # completed-candle dataframe (eval_completed_df) for every promotion,
+                                    # anti-chasing, and viability decision.
+                                    raw_atr = self.calculate_atr_pct(eval_completed_df, lvl)
                                     
                                     # Adaptive slippage tolerance: 0.5x of 5m ATR%, bounded between [0.25%, 1.20%]
                                     if raw_atr is not None:
@@ -163,26 +174,63 @@ class BackgroundContinuousTracker:
 
                                     is_missed_or_extended = False
                                     if "Enter above" in entry_trig:
-                                        # Bullish breakout: reject if price fell back below level or stretched too far above
-                                        if live_forming_price < lvl or ((live_forming_price - lvl) / lvl * 100.0) > max_slippage_dist_pct:
+                                        # Bullish breakout: check completed candle close against level and max slippage
+                                        if completed_c < lvl or ((completed_c - lvl) / lvl * 100.0) > max_slippage_dist_pct:
                                             is_missed_or_extended = True
                                     elif "Enter below" in entry_trig:
-                                        # Bearish breakdown: reject if price popped back above level or dumped too far below
-                                        if live_forming_price > lvl or ((lvl - live_forming_price) / lvl * 100.0) > max_slippage_dist_pct:
+                                        # Bearish breakdown: check completed candle close against level and max slippage
+                                        if completed_c > lvl or ((lvl - completed_c) / lvl * 100.0) > max_slippage_dist_pct:
                                             is_missed_or_extended = True
 
-                                    # Evaluate expansion room strictly on completed candle dataframe and verified live level
+                                    # Evaluate expansion room strictly on completed candle dataframe and completed candle close
                                     direct_eval = OpportunityPotentialEngine.evaluate_potential(
                                         df=eval_completed_df,
-                                        current_price=live_forming_price,
+                                        current_price=completed_c,
                                         direction="BUY" if direction == "BULLISH" else "SELL"
                                     )
+
+                                    cand_prom_key = f"{sym.replace('.NS', '').upper()}:{evaluated_completed_ts}"
                                     if not is_missed_or_extended and direct_eval.get("is_viable", True):
-                                        promoted_any = True
-                                        self.tracked_stats["promotions_today"] += 1
-                                        print(f"[PRE-BREAKOUT TRIGGERED] {sym} confirmed 5m close @ ₹{completed_c} (Live: ₹{live_forming_price})! Level ₹{lvl} valid, actionable trade entry.")
+                                        if cand_prom_key not in self._promoted_candle_keys:
+                                            self._promoted_candle_keys.add(cand_prom_key)
+                                            promoted_any = True
+                                            self.tracked_stats["promotions_today"] += 1
+                                            
+                                            # Real Promotion Execution:
+                                            # 1. Directly promote into screener_state ranked_opportunities['entry_ready']
+                                            confirmed_cand = {
+                                                "symbol": sym,
+                                                "direction": direction,
+                                                "stage": "CONFIRMED",
+                                                "is_actionable": True,
+                                                "current_price": completed_c,
+                                                "entry_trigger": entry_trig,
+                                                "entry_price": completed_c,
+                                                "suggested_sl": direct_eval.get("suggested_sl"),
+                                                "suggested_tp1": direct_eval.get("suggested_tp1"),
+                                                "suggested_tp2": direct_eval.get("suggested_tp2"),
+                                                "conviction_score": max(85, int(prep_info.get("conviction_score") or 85)),
+                                                "change_pct": prep_info.get("change_pct", 0.0),
+                                                "completed_candle_ts": evaluated_completed_ts,
+                                                "promoted_at": now
+                                            }
+                                            ranked_opps = self.screener_state.setdefault("ranked_opportunities", {})
+                                            entry_ready_list = ranked_opps.setdefault("entry_ready", [])
+                                            # Deduplicate if symbol already in entry_ready
+                                            entry_ready_list[:] = [c for c in entry_ready_list if c.get("symbol") != sym]
+                                            entry_ready_list.insert(0, confirmed_cand)
+                                            ranked_opps["entry_ready"] = entry_ready_list[:3]
+
+                                            # 2. Mark PREPARING record as promoted to prevent duplicate listing
+                                            prep_info["is_promoted"] = True
+                                            prep_info["promoted_candle_ts"] = evaluated_completed_ts
+                                            prep_info["promoted_at"] = now
+                                            # Remove from active preparing list so it cleanly transitions to ENTRY READY
+                                            prep_dict.pop(sym, None)
+
+                                            print(f"[PRE-BREAKOUT TRIGGERED] {sym} confirmed 5m close @ ₹{completed_c}! Level ₹{lvl} valid, promoted to ENTRY READY.")
                                     elif is_missed_or_extended:
-                                        print(f"[PRE-BREAKOUT CHASE PREVENTED] {sym} crossed level ₹{lvl} but live price ₹{live_forming_price} is overextended (Tolerance: {max_slippage_dist_pct}%). Scan rejected stale chase.")
+                                        print(f"[PRE-BREAKOUT CHASE PREVENTED] {sym} closed @ ₹{completed_c} beyond level ₹{lvl} tolerance ({max_slippage_dist_pct}%). Setup rejected.")
                         except Exception:
                             pass
                         time.sleep(0.08)
@@ -237,7 +285,59 @@ class BackgroundContinuousTracker:
                 # Track cycle interval: sleep 15 seconds so tracking is continuous and doesn't load CPU
                 time.sleep(15)
 
+                # 4. AUTONOMOUS CLOSED-MARKET LEARNING DAEMON (Non-Blocking):
+                # When market is closed (past 15:30 IST or non-trading days), run deep historical study:
+                # Scans stocks one by one from F&O universe and persistent preparing/confirmed lists,
+                # fetches historical 5m & daily candles via Groww Data Provider, replaying breakout setups
+                # to measure actual Target vs Stop outcome, and updates SQLite persistent memory without
+                # interfering with live market scanning or adding latency.
+                if not MarketValidator.is_market_open():
+                    self._run_closed_market_learner_step()
+
             except Exception as e:
                 traceback.print_exc()
                 print("[CONTINUOUS TRACKER EXCEPTION]:", e)
                 time.sleep(10)
+
+    def _run_closed_market_learner_step(self):
+        """
+        Processes closed-market historical learning incrementally (1-2 stocks per cycle)
+        to keep memory low, never block the tracker loop, and record individual stock personality.
+        """
+        try:
+            from engine.learning.historical_stock_learner import HistoricalStockLearner
+            HistoricalStockLearner.init_memory_table()
+
+            # Compile candidate pool: F&O universe + persistent preparing + tracked stocks
+            fno_univ = self.screener_state.get("fno_universe", [])
+            prep_dict = self.screener_state.get("persistent_preparing_stocks", {})
+            raw_candidates = list(dict.fromkeys(list(prep_dict.keys()) + fno_univ))
+
+            if not raw_candidates or not self.data_provider:
+                return
+
+            if not hasattr(self, "_closed_learner_index"):
+                self._closed_learner_index = 0
+
+            target_sym = raw_candidates[self._closed_learner_index % len(raw_candidates)]
+            self._closed_learner_index += 1
+
+            clean_ticker = target_sym.replace(".NS", "").upper()
+
+            # Fetch daily candles (30-45 trading sessions) for deep breakout outcome study
+            daily_df, src = self.data_provider.fetch_daily_candles(clean_ticker, days_back=45)
+            if daily_df is not None and not daily_df.empty and len(daily_df) >= 10:
+                completed_ts = str(daily_df.index[-1])
+                # Skip if already learned for this exact completed session
+                if HistoricalStockLearner.should_skip_scan(clean_ticker, current_completed_candle_ts=completed_ts):
+                    return
+
+                # Replay 30-day historical breakouts and record win-rate / pattern score into SQLite
+                mult = HistoricalStockLearner.analyze_30d_stock_history(
+                    symbol=clean_ticker,
+                    df_history=daily_df,
+                    is_replay=False
+                )
+                print(f"[OFFLINE LEARNER] Studied {clean_ticker:<12} | Completed: {completed_ts} | Learned Multiplier: {mult}x ({src})")
+        except Exception as le:
+            pass

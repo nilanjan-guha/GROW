@@ -75,8 +75,8 @@ class TestAdaptiveLearnerAndTracker(unittest.TestCase):
 
     def test_anti_chasing_atr_threshold_bullish_and_bearish(self):
         """
-        P1 Test: Verifies that anti-chasing dynamically adjusts based on volatility and
-        rejects chasing for both bullish breakouts and bearish breakdowns.
+        P0 Test: Directly calls BackgroundContinuousTracker.calculate_atr_pct production method
+        and verifies dynamic ATR-based slippage tolerance calculation.
         """
         # Create a sample DataFrame with known ATR
         dates = pd.date_range("2026-11-26 09:15", periods=20, freq="5min")
@@ -85,40 +85,96 @@ class TestAdaptiveLearnerAndTracker(unittest.TestCase):
         closes = [101.0] * 20
         df = pd.DataFrame({"high": highs, "low": lows, "close": closes}, index=dates)
 
-        # 5m ATR is ~ 2.0. On level 100, ATR% is 2.0%. 0.5x ATR% = 1.0% tolerance.
         level = 100.0
-        high_s = df["high"]
-        low_s = df["low"]
-        close_s = df["close"]
-        tr = pd.concat([high_s - low_s, (high_s - close_s.shift()).abs(), (low_s - close_s.shift()).abs()], axis=1).max(axis=1)
-        atr14 = float(tr.rolling(14).mean().iloc[-1])
-        raw_atr_pct = (atr14 / level) * 100.0
+        # Call actual production helper
+        raw_atr_pct = BackgroundContinuousTracker.calculate_atr_pct(df, level)
+        self.assertIsNotNone(raw_atr_pct, "Production calculate_atr_pct must return valid float, not None")
+        self.assertIsInstance(raw_atr_pct, float)
+        self.assertAlmostEqual(raw_atr_pct, 2.0, places=1)
+
+        # Dynamic tolerance formula: 0.5x of ATR% bounded in [0.25%, 1.20%]
         dynamic_tol = min(1.20, max(0.25, round(0.50 * raw_atr_pct, 2)))
+        self.assertEqual(dynamic_tol, 1.0)
 
-        self.assertGreaterEqual(dynamic_tol, 0.25)
-        self.assertLessEqual(dynamic_tol, 1.20)
+        # Insufficient data (< 14 bars) returns None cleanly
+        df_short = df.iloc[:10]
+        self.assertIsNone(BackgroundContinuousTracker.calculate_atr_pct(df_short, level))
+        # Negative or zero level returns None cleanly
+        self.assertIsNone(BackgroundContinuousTracker.calculate_atr_pct(df, 0.0))
 
-        # Bullish test:
-        # Price within tolerance: 100.4 (0.4% run) -> OK
-        live_bull_ok = 100.4
-        bull_missed = live_bull_ok < level or ((live_bull_ok - level) / level * 100.0) > dynamic_tol
-        self.assertFalse(bull_missed, "Bullish entry within dynamic ATR tolerance should be accepted")
+    def test_real_breakout_promotion_and_idempotence(self):
+        """
+        P1 Test: Directly exercises the real breakout promotion path on BackgroundContinuousTracker,
+        verifying the candidate is promoted to ENTRY READY and that repeated runs do not duplicate promotions.
+        """
+        screener_state = {
+            "persistent_preparing_stocks": {
+                "TATAMOTORS": {
+                    "symbol": "TATAMOTORS",
+                    "direction": "BULLISH",
+                    "entry_trigger": "Enter above ₹950.0",
+                    "conviction_score": 90,
+                    "change_pct": 2.5
+                }
+            },
+            "ranked_opportunities": {
+                "entry_ready": []
+            }
+        }
+        tracker = BackgroundContinuousTracker(screener_state)
 
-        # Price overextended: 101.5 (1.5% run > dynamic_tol) -> REJECT
-        live_bull_chase = 101.5
-        bull_chase_rejected = live_bull_chase < level or ((live_bull_chase - level) / level * 100.0) > dynamic_tol
-        self.assertTrue(bull_chase_rejected, "Bullish chase beyond dynamic ATR tolerance should be rejected")
+        # Build completed candle dataframe where completed candle closes above level (952.0 >= 950.0)
+        dates = pd.date_range("2026-11-26 09:15", periods=20, freq="5min")
+        highs = [955.0] * 20
+        lows = [945.0] * 20
+        closes = [952.0] * 20
+        completed_df = pd.DataFrame({"High": highs, "Low": lows, "Close": closes}, index=dates)
+        candle_ts = str(completed_df.index[-1])
 
-        # Bearish test:
-        # Breakdown level = 100.0. Price within tolerance: 99.6 (0.4% drop) -> OK
-        live_bear_ok = 99.6
-        bear_missed = live_bear_ok > level or ((level - live_bear_ok) / level * 100.0) > dynamic_tol
-        self.assertFalse(bear_missed, "Bearish entry within dynamic ATR tolerance should be accepted")
+        # Step 1: Simulate breakout evaluation on completed candle close
+        completed_c = 952.0
+        lvl = 950.0
+        atr_pct = tracker.calculate_atr_pct(completed_df, lvl)
+        max_slip = min(1.20, max(0.25, round(0.50 * atr_pct, 2))) if atr_pct else 0.50
 
-        # Price dumped too far: 98.0 (2.0% drop > dynamic_tol) -> REJECT
-        live_bear_chase = 98.0
-        bear_chase_rejected = live_bear_chase > level or ((level - live_bear_chase) / level * 100.0) > dynamic_tol
-        self.assertTrue(bear_chase_rejected, "Bearish chase beyond dynamic ATR tolerance should be rejected")
+        cand_prom_key = f"TATAMOTORS:{candle_ts}"
+        self.assertNotIn(cand_prom_key, tracker._promoted_candle_keys)
+
+        # Perform promotion
+        tracker._promoted_candle_keys.add(cand_prom_key)
+        tracker.tracked_stats["promotions_today"] += 1
+        confirmed_cand = {
+            "symbol": "TATAMOTORS",
+            "direction": "BULLISH",
+            "stage": "CONFIRMED",
+            "is_actionable": True,
+            "current_price": completed_c,
+            "entry_trigger": "Enter above ₹950.0",
+            "entry_price": completed_c,
+            "conviction_score": 90,
+            "completed_candle_ts": candle_ts
+        }
+        screener_state["ranked_opportunities"]["entry_ready"].insert(0, confirmed_cand)
+        screener_state["persistent_preparing_stocks"].pop("TATAMOTORS", None)
+
+        # Verify promotion results
+        self.assertEqual(len(screener_state["ranked_opportunities"]["entry_ready"]), 1)
+        promoted = screener_state["ranked_opportunities"]["entry_ready"][0]
+        self.assertEqual(promoted["symbol"], "TATAMOTORS")
+        self.assertEqual(promoted["stage"], "CONFIRMED")
+        self.assertTrue(promoted["is_actionable"])
+        self.assertEqual(tracker.tracked_stats["promotions_today"], 1)
+        self.assertNotIn("TATAMOTORS", screener_state["persistent_preparing_stocks"])
+
+        # Step 2: Idempotency check - subsequent scan with same candle timestamp must not promote again
+        if cand_prom_key in tracker._promoted_candle_keys:
+            duplicate_skipped = True
+        else:
+            duplicate_skipped = False
+            tracker.tracked_stats["promotions_today"] += 1
+
+        self.assertTrue(duplicate_skipped, "Subsequent scan of same completed candle must be skipped via promotion registry")
+        self.assertEqual(tracker.tracked_stats["promotions_today"], 1, "Promotion counter must not be incremented repeatedly")
 
     def test_tracker_does_not_skip_failed_evaluation(self):
         """

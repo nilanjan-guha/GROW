@@ -277,6 +277,7 @@ class FNOMomentumFilter:
                 },
                 "is_nr4": is_nr4,
                 "is_nr7": is_nr7,
+                "is_bb_squeeze": is_bb_squeeze,
                 "bb_width": round(bb_width, 2),
                 "velocity": velocity,
                 "df": eval_df

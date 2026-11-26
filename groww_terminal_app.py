@@ -2076,7 +2076,13 @@ def get_fno_momentum_watchlists_endpoint():
                 fno_data = c_entry.get("fno_filter_data") or {}
                 if isinstance(fno_data, dict):
                     rvol = float(fno_data.get("rvol", 1.0) or 1.0)
-                    compression = bool(fno_data.get("is_bb_squeeze", False))
+                    is_bb = bool(fno_data.get("is_bb_squeeze", False))
+                    is_nr4 = bool(fno_data.get("is_nr4", False))
+                    is_nr7 = bool(fno_data.get("is_nr7", False))
+                    compression = is_bb or is_nr4 or is_nr7
+                    s["is_bb_squeeze"] = is_bb
+                    s["is_nr4"] = is_nr4
+                    s["is_nr7"] = is_nr7
                 s["rvol"] = rvol
                 s["is_compressed"] = compression
             # If still missing price, check persistent or ranked cache
@@ -2091,13 +2097,16 @@ def get_fno_momentum_watchlists_endpoint():
     # Rather than solely sorting by percentage change (which pushes already-exhausted stocks to top),
     # prioritize:
     # 1. Setup Quality (conviction score / stage confidence)
-    # 2. Coiling / Pre-breakout Compression (imminent moves before the chase)
+    # 2. Coiling / Pre-breakout Compression (imminent moves before the chase, using BB squeeze, NR4, NR7)
     # 3. Relative Volume (RVOL >= 1.25x indicating institutional footprint)
     # 4. Orderly session change % (reward early stage momentum over extreme overextensions)
     def compute_watchlist_rank_priority(item):
         score = float(item.get("score") or 50.0)
         is_prep = 1.0 if item.get("is_preparing") else 0.0
-        is_comp = 1.0 if item.get("is_compressed") else 0.0
+        is_bb = 1.0 if item.get("is_bb_squeeze") else 0.0
+        is_nr4 = 1.0 if item.get("is_nr4") else 0.0
+        is_nr7 = 1.0 if item.get("is_nr7") else 0.0
+        compression_bonus = (is_bb * 20.0) + (is_nr7 * 25.0) + (is_nr4 * 15.0)
         rvol = min(4.0, float(item.get("rvol") or 1.0))
         chg = abs(float(item.get("change") or 0.0))
         
@@ -2108,7 +2117,7 @@ def get_fno_momentum_watchlists_endpoint():
         priority = (
             score * 1.5 +                # Base setup quality
             (is_prep * 45.0) +           # High priority for active pre-breakout coils
-            (is_comp * 25.0) +           # Bonus for volatility contraction
+            compression_bonus +          # Bonus for volatility contraction (BB Squeeze, NR4, NR7)
             (rvol * 20.0) +              # Institutional volume accumulation
             (orderly_chg * 10.0)         # Controlled directional momentum
         )
