@@ -805,6 +805,8 @@
         let currentStockSymbol = null;
         let sectorCountdown = 300;
         let activeConfirmedTrades = {};
+        let sessionTrackedOutcomes = {}; // Persistent map of today's triggered, active, and completed (TP/SL) trades
+        let persistentPreparingMap = {}; // Persistent map of today's PREPARING coils so they are never forgotten
         let notifiedPreparingStocksSet = new Set();
         let notifiedTradesSet = new Set();
         let userLastInteractionTime = 0;
@@ -817,10 +819,14 @@
             return `data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='48' height='48' viewBox='0 0 48 48'><rect width='48' height='48' rx='24' fill='%230f172a' stroke='%2300f0ff' stroke-width='2'/><text x='50%25' y='55%25' dominant-baseline='middle' text-anchor='middle' font-family='sans-serif' font-weight='900' font-size='18' fill='%2300f0ff'>${clean}</text></svg>`;
         }
 
-        // Restore any stored trades from localStorage
+        // Restore any stored trades and preparing stocks from localStorage
         try {
             const saved = localStorage.getItem('activeConfirmedTrades');
             if (saved) activeConfirmedTrades = JSON.parse(saved);
+            const savedOutcomes = localStorage.getItem('sessionTrackedOutcomes');
+            if (savedOutcomes) sessionTrackedOutcomes = JSON.parse(savedOutcomes);
+            const savedPrep = localStorage.getItem('persistentPreparingMap');
+            if (savedPrep) persistentPreparingMap = JSON.parse(savedPrep);
         } catch (e) { }
 
         async function init() {
@@ -1068,17 +1074,42 @@
             const entryContainer = document.getElementById('rankedEntryReadyList');
             if (!prepContainer || !entryContainer) return;
 
-            // Strictly sort by highest score first
-            const preparing = (ranked.preparing || []).slice().sort((a, b) => {
+            // 1. Accumulate all PREPARING stocks persistently (remember previous coils across scans)
+            (ranked.preparing || []).forEach(p => {
+                if (p && p.symbol) {
+                    persistentPreparingMap[p.symbol] = {
+                        ...p,
+                        last_updated: Date.now()
+                    };
+                }
+            });
+            try { localStorage.setItem('persistentPreparingMap', JSON.stringify(persistentPreparingMap)); } catch (e) { }
+
+            // Strictly sort by highest score first across all remembered and current preparing coils
+            const preparing = Object.values(persistentPreparingMap).sort((a, b) => {
                 const scoreA = Number(a.conviction_score !== undefined ? a.conviction_score : (a.confirmation_score || 0));
                 const scoreB = Number(b.conviction_score !== undefined ? b.conviction_score : (b.confirmation_score || 0));
                 return scoreB - scoreA;
             });
+
             const entryReady = (ranked.entry_ready || []).slice().sort((a, b) => {
                 const scoreA = Number(a.conviction_score !== undefined ? a.conviction_score : (a.confirmation_score || 0));
                 const scoreB = Number(b.conviction_score !== undefined ? b.conviction_score : (b.confirmation_score || 0));
                 return scoreB - scoreA;
             });
+
+            // If any preparing stock has triggered an active or confirmed trade, remove from preparing list
+            entryReady.forEach(e => {
+                if (e && e.symbol && persistentPreparingMap[e.symbol]) {
+                    delete persistentPreparingMap[e.symbol];
+                }
+            });
+            Object.keys(sessionTrackedOutcomes).forEach(sym => {
+                if (persistentPreparingMap[sym]) {
+                    delete persistentPreparingMap[sym];
+                }
+            });
+            try { localStorage.setItem('persistentPreparingMap', JSON.stringify(persistentPreparingMap)); } catch (e) { }
 
             const pBadge = document.getElementById('prepCountBadge');
             if (pBadge) pBadge.innerText = preparing.length;
@@ -1130,24 +1161,97 @@
                 prepContainer.innerHTML = html;
             }
 
-            // 2. Render Entry Ready
-            if (entryReady.length === 0) {
+            // 2. Render Entry Ready (Combines fresh ranked signals + persistent active/closed trades)
+            // Gather all candidate trades to display in Entry Ready:
+            const combinedEntryMap = new Map();
+
+            // First, populate from sessionTrackedOutcomes (active, target hit, SL hit)
+            Object.values(sessionTrackedOutcomes).forEach(tr => {
+                if (tr && tr.symbol) combinedEntryMap.set(tr.symbol, tr);
+            });
+
+            // Second, merge activeConfirmedTrades from memory
+            Object.values(activeConfirmedTrades).forEach(tr => {
+                if (tr && tr.symbol) {
+                    const smc = tr.smc || {};
+                    const isBull = smc.action && smc.action.includes('BUY');
+                    combinedEntryMap.set(tr.symbol, {
+                        symbol: tr.symbol,
+                        direction: isBull ? 'BULLISH' : 'BEARISH',
+                        current_price: smc.live_price || smc.current_price || smc.entry_price,
+                        change_pct: smc.change_pct || 0.0,
+                        suggested_sl: smc.suggested_sl,
+                        suggested_tp1: smc.suggested_tp1,
+                        suggested_tp2: smc.suggested_tp2,
+                        risk_reward_ratio: smc.risk_reward_ratio || 1.2,
+                        conviction_score: smc.composite_score || 95,
+                        outcome: 'ACTIVE',
+                        stage: 'CONFIRMED'
+                    });
+                }
+            });
+
+            // Third, merge or overwrite with fresh ranked entryReady items
+            entryReady.forEach(c => {
+                if (c && c.symbol) {
+                    const existing = combinedEntryMap.get(c.symbol) || {};
+                    combinedEntryMap.set(c.symbol, {
+                        ...existing,
+                        ...c,
+                        outcome: existing.outcome || 'ACTIVE',
+                        stage: c.stage || 'CONFIRMED'
+                    });
+                }
+            });
+
+            const allDisplayEntry = Array.from(combinedEntryMap.values()).sort((a, b) => {
+                // Active trades first, then by score
+                const aActive = (a.outcome === 'ACTIVE' || !a.outcome) ? 1 : 0;
+                const bActive = (b.outcome === 'ACTIVE' || !b.outcome) ? 1 : 0;
+                if (aActive !== bActive) return bActive - aActive;
+                const scoreA = Number(a.conviction_score || a.confirmation_score || 0);
+                const scoreB = Number(b.conviction_score || b.confirmation_score || 0);
+                return scoreB - scoreA;
+            });
+
+            if (eBadge) eBadge.innerText = allDisplayEntry.filter(x => x.outcome === 'ACTIVE' || !x.outcome).length;
+
+            if (allDisplayEntry.length === 0) {
                 entryContainer.innerHTML = '<div style="font-size:0.75rem; color:var(--text-muted); padding:20px 0; text-align:center;">NO 5M TRADE (Default state: waiting for confirmed structure)</div>';
             } else {
                 let html = '';
-                entryReady.forEach((c, idx) => {
+                allDisplayEntry.forEach((c, idx) => {
                     const sym = c.symbol.replace('.NS', '');
-                    const isBull = c.direction === 'BULLISH';
+                    const isBull = c.direction === 'BULLISH' || c.direction === 'BUY';
                     const col = isBull ? 'var(--neon-green)' : 'var(--neon-red)';
                     const logoUrl = getStockLogoUrl(sym);
                     const logoHtml = logoUrl ? `<img src="${logoUrl}" style="width:22px; height:22px; border-radius:50%; object-fit:contain; background:#1e293b;" onerror="this.style.display='none';">` : '';
                     const prc = c.current_price ? `₹${Number(c.current_price).toFixed(2)}` : '';
+                    
+                    // Distinct styling for closed outcomes (SL hit or Target hit)
+                    const outcome = (c.outcome || 'ACTIVE').toUpperCase();
+                    let cardOpacity = '1.0';
+                    let statusBadge = `<span style="font-size:0.68rem; background:${col}; color:#000; padding:2px 6px; border-radius:3px; font-weight:900;">${isBull ? 'BUY (CALL)' : 'SELL (PUT)'}</span>`;
+                    let cardBorder = col;
+                    let cardBg = 'rgba(0,255,163,0.08)';
+
+                    if (outcome.includes('TARGET') || outcome.includes('TP') || outcome.includes('WIN')) {
+                        cardOpacity = '0.65';
+                        cardBg = 'rgba(0,255,163,0.04)';
+                        statusBadge = `<span style="font-size:0.68rem; background:var(--neon-green); color:#000; padding:2px 6px; border-radius:3px; font-weight:900;">🎯 TARGET HIT</span>`;
+                    } else if (outcome.includes('STOP') || outcome.includes('SL') || outcome.includes('LOSS')) {
+                        cardOpacity = '0.50';
+                        cardBorder = 'var(--neon-red)';
+                        cardBg = 'rgba(255,0,85,0.04)';
+                        statusBadge = `<span style="font-size:0.68rem; background:var(--neon-red); color:#fff; padding:2px 6px; border-radius:3px; font-weight:900;">🛑 STOP LOSS HIT</span>`;
+                    }
+
                     html += `
-                    <div class="stock-mover-card" data-symbol="${c.symbol}" onclick="userSelectStock('${c.symbol}')" style="border-left-color:${col}; border-color:${col}; background:rgba(0,255,163,0.08); margin-bottom:6px; padding:10px 14px;">
+                    <div class="stock-mover-card" data-symbol="${c.symbol}" onclick="userSelectStock('${c.symbol}')" style="border-left-color:${cardBorder}; border-color:${cardBorder}; background:${cardBg}; opacity:${cardOpacity}; margin-bottom:6px; padding:10px 14px; transition:opacity 0.3s ease;">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
                             <span style="font-weight:900; font-size:0.92rem; color:#fff; display:flex; align-items:center; gap:8px;">
                                 ${logoHtml}
-                                #${idx + 1} ${sym} <span style="font-size:0.68rem; background:${col}; color:#000; padding:2px 6px; border-radius:3px; font-weight:900;">${isBull ? 'BUY (CALL)' : 'SELL (PUT)'}</span>
+                                #${idx + 1} ${sym} ${statusBadge}
                             </span>
                             <span style="display:flex; align-items:center; gap:8px;">
                                 <span style="font-size:0.88rem; color:#fff; font-weight:800;">${prc}</span>
@@ -1234,30 +1338,105 @@
         function renderConfirmedBanner(recentTracked) {
             const banner = document.getElementById('confirmedTradeAlert');
             const details = document.getElementById('alertDetails');
-            const activeKeys = Object.keys(activeConfirmedTrades);
+            const alertTimeEl = document.getElementById('alertTime');
 
-            // Only display confirmed trade banner when live position is actually ACTIVE
-            if (activeKeys.length === 0) {
+            // Gather candidate confirmed trades: active confirmed trades + active signals from DB + entry ready setups
+            const candidateTrades = [];
+
+            // 1. From activeConfirmedTrades (live paper/executed trades in memory)
+            Object.values(activeConfirmedTrades).forEach(tr => {
+                if (!tr || !tr.symbol) return;
+                const smc = tr.smc || {};
+                const isBuy = smc.action && smc.action.includes('BUY');
+                candidateTrades.push({
+                    symbol: tr.symbol,
+                    direction: isBuy ? 'BUY' : 'SELL',
+                    entry_price: smc.entry_price || smc.current_price,
+                    stop_loss: smc.suggested_sl,
+                    target_1: smc.suggested_tp1,
+                    target_2: smc.suggested_tp2,
+                    score: smc.composite_score || 95,
+                    strategy: smc.primary_strategy || 'SMC Momentum Ignition',
+                    is_live_position: true,
+                    status: 'ACTIVE'
+                });
+            });
+
+            // 2. From recentTracked (database active signals)
+            (recentTracked || []).forEach(s => {
+                if (!s || !s.symbol) return;
+                if ((s.outcome || '').toUpperCase() === 'ACTIVE') {
+                    if (!candidateTrades.some(t => t.symbol === s.symbol)) {
+                        candidateTrades.push({
+                            symbol: s.symbol,
+                            direction: s.direction || 'BUY',
+                            entry_price: s.signal_price || s.entry_price,
+                            stop_loss: s.stop_loss,
+                            target_1: s.target_1,
+                            target_2: s.target_2,
+                            score: s.score || 90,
+                            strategy: s.strategy || 'SMC Structure',
+                            is_live_position: true,
+                            status: 'ACTIVE'
+                        });
+                    }
+                }
+            });
+
+            // If no active or entry-ready trades exist, hide banner
+            if (candidateTrades.length === 0) {
                 banner.style.display = 'none';
                 return;
             }
 
+            // Pick the single HIGHEST SCORE trade as the TOP RECOMMENDATION
+            candidateTrades.sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
+            const bestTrade = candidateTrades[0];
+            const cleanSym = bestTrade.symbol.replace('.NS', '');
+            const isBuy = bestTrade.direction === 'BUY' || bestTrade.direction === 'BULLISH';
+            const actionText = isBuy ? 'BUY / CALL (CE)' : 'SELL / PUT (PE)';
+            const actionBg = isBuy ? 'var(--neon-green)' : 'var(--neon-red)';
+            const actionColor = isBuy ? '#000' : '#fff';
+
             banner.style.display = 'block';
-            let html = '';
-            // Live Active Trades Only
-            activeKeys.forEach(sym => {
-                const tr = activeConfirmedTrades[sym];
-                const smc = tr.smc;
-                const isBuy = smc.action && smc.action.includes('BUY');
+            banner.style.borderColor = isBuy ? 'var(--neon-green)' : 'var(--neon-red)';
+            banner.style.background = isBuy ? 'rgba(0,255,163,0.08)' : 'rgba(255,0,85,0.08)';
+
+            if (alertTimeEl) {
+                alertTimeEl.innerText = `TOP PICK • SCORE ${bestTrade.score}/100`;
+                alertTimeEl.style.color = 'var(--neon-cyan)';
+            }
+
+            let html = `
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                <div style="display:flex; align-items:center; gap:12px;">
+                    <span style="font-size:1.05rem; font-weight:900; color:#fff;">⭐ TOP CONFIRMED TRADE: <b>${cleanSym}</b></span>
+                    <span style="font-size:0.75rem; background:${actionBg}; color:${actionColor}; padding:3px 8px; border-radius:4px; font-weight:900; letter-spacing:0.5px;">${actionText}</span>
+                    <span style="font-size:0.88rem; font-weight:800; color:#fff;">Entry: ₹${Number(bestTrade.entry_price).toFixed(2)}</span>
+                </div>
+                <div style="display:flex; align-items:center; gap:14px; font-size:0.80rem;">
+                    <span>SL: <b style="color:var(--neon-red);">₹${bestTrade.stop_loss}</b></span>
+                    <span>TP: <b style="color:var(--neon-green);">₹${bestTrade.target_1}</b></span>
+                    <button onclick="userSelectStock('${bestTrade.symbol}')" style="background:var(--neon-cyan); color:#000; font-weight:900; border:none; border-radius:4px; padding:3px 10px; cursor:pointer; font-size:0.72rem; font-family:'JetBrains Mono',monospace;">VIEW SETUP ➔</button>
+                </div>
+            </div>`;
+
+            // If there are other confirmed trades, show compact tickers
+            if (candidateTrades.length > 1) {
+                const others = candidateTrades.slice(1);
                 html += `
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px; padding:4px 8px; background:rgba(0,255,163,0.08); border-radius:4px; border:1px solid rgba(0,255,163,0.2);">
-                    <span style="font-size:0.80rem; font-weight:800; color:#fff;"><b>${sym.replace('.NS', '')}</b> [${isBuy ? 'CALL / LONG' : 'PUT / SHORT'}] Entry: ₹${smc.entry_price}</span>
-                    <span style="display:flex; align-items:center; gap:8px;">
-                        <span style="font-size:0.75rem;">SL: <b style="color:var(--neon-amber);">₹${smc.suggested_sl}</b> | TP: <b style="color:var(--neon-cyan);">₹${smc.suggested_tp1}</b></span>
-                        <span style="font-size:0.58rem; background:var(--neon-green); color:#000; padding:2px 6px; border-radius:3px; font-weight:900;">ACTIVE IN LIVE TRADE</span>
-                    </span>
-                </div>`;
-            });
+                <div style="margin-top:6px; pt:4px; border-top:1px solid rgba(255,255,255,0.1); font-size:0.72rem; color:var(--text-muted); display:flex; align-items:center; gap:8px;">
+                    <span>Other Confirmed:</span>`;
+                others.forEach(oth => {
+                    const oSym = oth.symbol.replace('.NS', '');
+                    const oBuy = oth.direction === 'BUY' || oth.direction === 'BULLISH';
+                    html += `
+                    <span onclick="userSelectStock('${oth.symbol}')" style="cursor:pointer; color:#fff; background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:3px; font-weight:700;">
+                        ${oSym} <b style="color:${oBuy ? 'var(--neon-green)' : 'var(--neon-red)'}; font-size:0.65rem;">${oBuy ? 'BUY' : 'SELL'}</b> (₹${oth.entry_price})
+                    </span>`;
+                });
+                html += `</div>`;
+            }
 
             details.innerHTML = html;
         }
@@ -1270,6 +1449,26 @@
                     const activeDbList = data.active_signals || [];
                     const recentTracked = data.recent_tracked || [];
 
+                    // Populate or update persistent sessionTrackedOutcomes
+                    recentTracked.forEach(s => {
+                        if (!s || !s.symbol) return;
+                        const outcome = (s.outcome || 'ACTIVE').toUpperCase();
+                        sessionTrackedOutcomes[s.symbol] = {
+                            symbol: s.symbol,
+                            direction: s.direction || 'BUY',
+                            current_price: s.signal_price || s.entry_price,
+                            change_pct: 0.0,
+                            suggested_sl: s.stop_loss,
+                            suggested_tp1: s.target_1,
+                            suggested_tp2: s.target_2,
+                            risk_reward_ratio: 1.5,
+                            conviction_score: s.score || 95,
+                            outcome: outcome,
+                            stage: outcome === 'ACTIVE' ? 'CONFIRMED' : outcome
+                        };
+                    });
+                    try { localStorage.setItem('sessionTrackedOutcomes', JSON.stringify(sessionTrackedOutcomes)); } catch (e) { }
+
                     if (activeDbList.length === 0) {
                         activeConfirmedTrades = {};
                         try { localStorage.removeItem('activeConfirmedTrades'); } catch (e) { }
@@ -1281,10 +1480,30 @@
                     Object.keys(activeConfirmedTrades).forEach(sym => {
                         const tr = activeConfirmedTrades[sym];
                         if (tr.signal_id && !activeDbIds.has(tr.signal_id)) {
+                            // If closed, move into sessionTrackedOutcomes with appropriate badge
+                            const matchingRecent = recentTracked.find(r => r.id === tr.signal_id);
+                            if (matchingRecent) {
+                                sessionTrackedOutcomes[sym] = {
+                                    symbol: sym,
+                                    direction: matchingRecent.direction || 'BUY',
+                                    current_price: matchingRecent.signal_price || matchingRecent.entry_price,
+                                    change_pct: 0.0,
+                                    suggested_sl: matchingRecent.stop_loss,
+                                    suggested_tp1: matchingRecent.target_1,
+                                    suggested_tp2: matchingRecent.target_2,
+                                    risk_reward_ratio: 1.5,
+                                    conviction_score: matchingRecent.score || 95,
+                                    outcome: matchingRecent.outcome,
+                                    stage: matchingRecent.outcome
+                                };
+                            }
                             delete activeConfirmedTrades[sym];
                         }
                     });
-                    try { localStorage.setItem('activeConfirmedTrades', JSON.stringify(activeConfirmedTrades)); } catch (e) { }
+                    try { 
+                        localStorage.setItem('activeConfirmedTrades', JSON.stringify(activeConfirmedTrades)); 
+                        localStorage.setItem('sessionTrackedOutcomes', JSON.stringify(sessionTrackedOutcomes));
+                    } catch (e) { }
                     renderConfirmedBanner(recentTracked);
                 }
             } catch (e) { }

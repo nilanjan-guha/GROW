@@ -1473,6 +1473,9 @@ def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
                 "symbol": p_sym,
                 "direction": prep_item.get("direction"),
                 "entry_trigger": prep_item.get("entry_trigger"),
+                "change_pct": prep_item.get("change_pct", 0.0),
+                "conviction_score": prep_item.get("conviction_score", 70),
+                "current_price": prep_item.get("current_price"),
                 "first_detected_date": today_str,
                 "first_detected_ts": now,
                 "last_seen_candle_ts": current_candle_ts
@@ -1961,27 +1964,59 @@ def get_fno_momentum_watchlists_endpoint():
 
     seen_bull = {s.get("symbol") for s in bull}
     seen_bear = {s.get("symbol") for s in bear}
+    raw_cache = screener_state.get("raw_market_cache") or {}
 
     for p in prep_list:
         p_sym = p.get("symbol")
         if not p_sym:
             continue
         p_dir = (p.get("direction") or "BULLISH").upper()
+        
+        # Calculate or lookup actual day change percentage (avoid 0.0% default)
+        calc_chg = p.get("change_pct")
+        if calc_chg is None or float(calc_chg) == 0.0:
+            clean_p = p_sym.replace(".NS", "").upper()
+            c_entry = raw_cache.get(p_sym) or raw_cache.get(f"{clean_p}.NS") or raw_cache.get(clean_p)
+            if c_entry and isinstance(c_entry, dict) and c_entry.get("df") is not None:
+                cdf = c_entry["df"]
+                if len(cdf) >= 2:
+                    try:
+                        curr_c = float(cdf['Close'].iloc[-1])
+                        # Look for session open or previous session close
+                        df_d = cdf.copy()
+                        if not pd.api.types.is_datetime64_any_dtype(df_d.index):
+                            df_d.index = pd.to_datetime(df_d.index)
+                        df_d['Date'] = df_d.index.date
+                        dates = sorted(df_d['Date'].unique())
+                        if len(dates) >= 2:
+                            prev_d = dates[-2]
+                            prev_c = float(df_d[df_d['Date'] == prev_d]['Close'].iloc[-1])
+                        else:
+                            prev_c = float(df_d['Open'].iloc[0])
+                        if prev_c > 0:
+                            calc_chg = round(((curr_c - prev_c) / prev_c) * 100.0, 2)
+                    except Exception:
+                        pass
+
         item = {
             "symbol": p_sym,
-            "change": p.get("change_pct", 0.0),
+            "change": float(calc_chg) if calc_chg is not None else 0.0,
             "velocity": "COIL",
             "is_preparing": True,
             "score": p.get("conviction_score", 70)
         }
         if p_dir in ("BULLISH", "BUY"):
             if p_sym not in seen_bull:
-                bull.insert(0, item)
+                bull.append(item)
                 seen_bull.add(p_sym)
         else:
             if p_sym not in seen_bear:
-                bear.insert(0, item)
+                bear.append(item)
                 seen_bear.add(p_sym)
+
+    # Sort watchlists so the most active movers stay at the top
+    bull.sort(key=lambda x: (x.get("is_preparing", False) == False, abs(x.get("change", 0.0))), reverse=True)
+    bear.sort(key=lambda x: (x.get("is_preparing", False) == False, abs(x.get("change", 0.0))), reverse=True)
 
     return jsonify({
         "success": True,

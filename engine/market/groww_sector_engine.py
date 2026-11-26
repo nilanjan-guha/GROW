@@ -480,7 +480,7 @@ class GrowwSectorEngine:
         safe_sector_name = urllib.parse.quote(sector_name)
         url = f'https://groww.in/stocks/sectors-trending/{safe_sector_name}?industryCodes={industry_code}'
         try:
-            r = requests.get(url, headers=HEADERS, timeout=6)
+            r = requests.get(url, headers=HEADERS, timeout=2.5)
             if r.status_code != 200:
                 return [], 0, f"HTTP_{r.status_code}"
             soup = BeautifulSoup(r.text, 'html.parser')
@@ -490,7 +490,6 @@ class GrowwSectorEngine:
             data = json.loads(script.string)
             stocks_raw = data.get('props', {}).get('pageProps', {}).get('data', [])
         except Exception as e:
-            print(f"[GROWW SECTOR PARSE ERROR] {sector_name}: {e}")
             return [], 0, f"EXCEPTION_{type(e).__name__}"
 
         all_fno_constituents = []
