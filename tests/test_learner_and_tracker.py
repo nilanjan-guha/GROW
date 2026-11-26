@@ -129,10 +129,9 @@ class TestAdaptiveLearnerAndTracker(unittest.TestCase):
         lvl = 950.0
         direct_eval = {
             "is_viable": True,
-            "suggested_sl": 945.0,
-            "suggested_tp1": 962.5,
-            "suggested_tp2": 970.0,
-            "room_pct": 1.8
+            "tp1": 962.5,
+            "tp2": 970.0,
+            "potential_pct": 1.8
         }
 
         # Step 1: Call ACTUAL production method

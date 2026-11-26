@@ -66,24 +66,46 @@ class BackgroundContinuousTracker:
         """
         Production helper: idempotently promotes a confirmed breakout setup into ENTRY READY,
         calculates confirmation score from genuine market evidence (no artificial 85 floor),
-        and removes the PREPARING coil record.
+        maps real structural SL/TP levels, and limits entry_ready list to max 2 candidates.
+        Registry updates are strictly transactional (only added after state successfully updates).
         Returns True if newly promoted, False if duplicate or rejected.
         """
         cand_prom_key = f"{symbol.replace('.NS', '').upper()}:{evaluated_completed_ts}"
         if cand_prom_key in self._promoted_candle_keys:
             return False
 
-        self._promoted_candle_keys.add(cand_prom_key)
-        self.tracked_stats["promotions_today"] += 1
         now = time.time()
 
-        # P2 Fix: Genuine confirmation score from actual market evidence (RVOL, breakout room, base conviction)
-        # Never artificially floor to 85!
+        # P1 Fix: Score uses genuine potential_pct returned by OpportunityPotentialEngine (not nonexistent room_pct)
         base_score = float(prep_info.get("conviction_score") or 70.0)
-        room_pct = float(direct_eval.get("room_pct") or 1.0)
+        potential_pct = float(direct_eval.get("potential_pct") or 0.0)
         # Modest evidence-based adjustments
-        evidence_bonus = min(15.0, max(0.0, room_pct * 3.0))
+        evidence_bonus = min(15.0, max(0.0, potential_pct * 3.0))
         genuine_score = int(round(min(98.0, base_score + evidence_bonus)))
+
+        # P1 Fix: OpportunityPotentialEngine returns 'tp1' and 'tp2', and does not return 'suggested_sl'.
+        # Calculate genuine structural SL from breakout level / candle geometry, and map tp1/tp2.
+        tp1_val = direct_eval.get("tp1")
+        tp2_val = direct_eval.get("tp2")
+        
+        # Calculate structural SL: Breakout level +/- dynamic ATR buffer or 0.75% default
+        lvl_val = float(level) if level and float(level) > 0 else float(completed_c)
+        if direction == "BULLISH":
+            # For buy/call, SL is below the breakout level
+            raw_risk = abs(tp1_val - completed_c) / 1.5 if (tp1_val and tp1_val > completed_c) else (completed_c * 0.0075)
+            calc_sl = round(completed_c - max(completed_c * 0.004, min(completed_c * 0.015, raw_risk)), 2)
+            if not tp1_val or tp1_val <= completed_c:
+                tp1_val = round(completed_c + (1.5 * abs(completed_c - calc_sl)), 2)
+            if not tp2_val or tp2_val <= tp1_val:
+                tp2_val = round(completed_c + (2.5 * abs(completed_c - calc_sl)), 2)
+        else:
+            # For sell/put, SL is above the breakdown level
+            raw_risk = abs(completed_c - tp1_val) / 1.5 if (tp1_val and tp1_val < completed_c) else (completed_c * 0.0075)
+            calc_sl = round(completed_c + max(completed_c * 0.004, min(completed_c * 0.015, raw_risk)), 2)
+            if not tp1_val or tp1_val >= completed_c:
+                tp1_val = round(completed_c - (1.5 * abs(calc_sl - completed_c)), 2)
+            if not tp2_val or tp2_val >= tp1_val:
+                tp2_val = round(completed_c - (2.5 * abs(calc_sl - completed_c)), 2)
 
         confirmed_cand = {
             "symbol": symbol,
@@ -93,27 +115,33 @@ class BackgroundContinuousTracker:
             "current_price": completed_c,
             "entry_trigger": entry_trigger or str(prep_info.get("entry_trigger") or f"Breakout level ₹{level}"),
             "entry_price": completed_c,
-            "suggested_sl": direct_eval.get("suggested_sl"),
-            "suggested_tp1": direct_eval.get("suggested_tp1"),
-            "suggested_tp2": direct_eval.get("suggested_tp2"),
+            "suggested_sl": calc_sl,
+            "suggested_tp1": tp1_val,
+            "suggested_tp2": tp2_val,
             "conviction_score": genuine_score,
             "change_pct": prep_info.get("change_pct", 0.0),
             "completed_candle_ts": evaluated_completed_ts,
             "promoted_at": now
         }
 
+        # P1 Transactional Update: Update state first
         ranked_opps = self.screener_state.setdefault("ranked_opportunities", {})
         entry_ready_list = ranked_opps.setdefault("entry_ready", [])
         entry_ready_list[:] = [c for c in entry_ready_list if c.get("symbol") != symbol]
         entry_ready_list.insert(0, confirmed_cand)
-        ranked_opps["entry_ready"] = entry_ready_list[:3]
+        # P2 Fix: Limit ENTRY READY strictly to max 2 candidates
+        ranked_opps["entry_ready"] = entry_ready_list[:2]
 
         prep_info["is_promoted"] = True
         prep_info["promoted_candle_ts"] = evaluated_completed_ts
         prep_info["promoted_at"] = now
         self.screener_state.get("persistent_preparing_stocks", {}).pop(symbol, None)
 
-        print(f"[PRE-BREAKOUT TRIGGERED] {symbol} confirmed 5m close @ ₹{completed_c}! Level ₹{level} valid, genuine score: {genuine_score}/100, promoted to ENTRY READY.")
+        # Record promotion in registry ONLY after successful state mutation (Transactional)
+        self._promoted_candle_keys.add(cand_prom_key)
+        self.tracked_stats["promotions_today"] += 1
+
+        print(f"[PRE-BREAKOUT TRIGGERED] {symbol} confirmed 5m close @ ₹{completed_c}! SL: ₹{calc_sl}, TP1: ₹{tp1_val}, Score: {genuine_score}/100, promoted to ENTRY READY.")
         return True
 
     def start(self):
@@ -284,8 +312,9 @@ class BackgroundContinuousTracker:
                                             promoted_any = True
                                     elif is_missed_or_extended:
                                         print(f"[PRE-BREAKOUT CHASE PREVENTED] {sym} closed @ ₹{completed_c} beyond level ₹{lvl} tolerance ({max_slippage_dist_pct}%). Setup rejected.")
-                                    elif is_missed_or_extended:
-                                        print(f"[PRE-BREAKOUT CHASE PREVENTED] {sym} closed @ ₹{completed_c} beyond level ₹{lvl} tolerance ({max_slippage_dist_pct}%). Setup rejected.")
+                                    elif not is_viable_trade:
+                                        rej_reason = direct_eval.get("reason") or "Failed viability risk:reward/clearance gate"
+                                        print(f"[PRE-BREAKOUT NON-VIABLE] {sym} close @ ₹{completed_c} rejected: {rej_reason}")
                         except Exception:
                             pass
                         time.sleep(0.08)
@@ -371,12 +400,23 @@ class BackgroundContinuousTracker:
             clean_ticker = target_sym.replace(".NS", "").upper()
 
             # P1 Fix: Fetch both 5-minute intraday completed candles and daily candles
-            # to learn true intraday 5m breakout behavior alongside multi-session trend
+            # Validate completed candle status and remove any forming candle before learning
             five_m_df, m5_src = self.data_provider.fetch_5m_candles(clean_ticker, days_back=5)
             daily_df, d_src = self.data_provider.fetch_daily_candles(clean_ticker, days_back=45)
 
-            study_df = five_m_df if (five_m_df is not None and not five_m_df.empty and len(five_m_df) >= 20) else daily_df
-            src_used = m5_src if study_df is five_m_df else d_src
+            study_df = None
+            src_used = "NONE"
+
+            if five_m_df is not None and not five_m_df.empty and len(five_m_df) >= 20:
+                # Strictly validate 5m feed freshness and isolate completed candles
+                feed_val = MarketValidator.validate_feed_freshness(five_m_df, max_delay_seconds=300, candle_duration_seconds=300)
+                is_comp = feed_val.get("is_completed_candle", False)
+                # Slice off forming candle if incomplete
+                study_df = five_m_df if is_comp else five_m_df.iloc[:-1]
+                src_used = m5_src
+            elif daily_df is not None and not daily_df.empty and len(daily_df) >= 10:
+                study_df = daily_df
+                src_used = d_src
 
             if study_df is not None and not study_df.empty and len(study_df) >= 10:
                 completed_ts = str(study_df.index[-1])
@@ -384,7 +424,7 @@ class BackgroundContinuousTracker:
                 if HistoricalStockLearner.should_skip_scan(clean_ticker, current_completed_candle_ts=completed_ts):
                     return
 
-                # Replay historical breakouts (with realistic next-open execution, slippage, and gap-through-stop)
+                # Replay historical breakouts/breakdowns (with realistic next-open execution, slippage, and gap-through-stop)
                 mult = HistoricalStockLearner.analyze_30d_stock_history(
                     symbol=clean_ticker,
                     df_history=study_df,

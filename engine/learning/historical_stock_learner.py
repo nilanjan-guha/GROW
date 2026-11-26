@@ -157,62 +157,78 @@ class HistoricalStockLearner:
             losses = 0
             n_bars = len(df)
 
-            # Analyze prior breakout events with genuine Target vs Stop evaluation
+            # Analyze prior breakout and breakdown events with genuine Target vs Stop evaluation
             # Evaluate across completed bars (leaving room for forward check)
             for i in range(5, n_bars - 2):
-                # 1. Breakout condition: current High breaks the maximum High of preceding 5 bars
-                # and candle confirmed with a close above the prior level
                 prior_high = float(h.iloc[i-5:i].max())
+                prior_low = float(l.iloc[i-5:i].min())
                 curr_h = float(h.iloc[i])
                 curr_l = float(l.iloc[i])
                 curr_c = float(c.iloc[i])
 
+                # 1. Bullish Breakout condition: close and high above prior 5-bar high
                 if curr_h > prior_high and curr_c > prior_high:
-                    # P2 Realism Fix: In real intraday execution, entry cannot magically happen at the breakout bar's peak.
-                    # Execution occurs at the NEXT candle's Open, incorporating realistic slippage (0.05%).
                     next_open = float(o.iloc[i+1])
                     slippage = next_open * 0.0005
                     entry = round(next_open + slippage, 2)
-
-                    # Dynamic stop loss: Breakout candle low or next open - 1 ATR buffer
                     stop = round(curr_l, 2)
                     risk = entry - stop
-                    if risk <= 0:
-                        continue
-                    target = round(entry + (1.5 * risk), 2)
+                    if risk > 0:
+                        target = round(entry + (1.5 * risk), 2)
+                        max_forward = min(n_bars, i + 7)
+                        for fwd in range(i + 1, max_forward):
+                            fwd_o = float(o.iloc[fwd])
+                            fwd_h = float(h.iloc[fwd])
+                            fwd_l = float(l.iloc[fwd])
 
-                    # 2. Check forward up to 6 subsequent bars for outcome (modeling gap-through-stop)
-                    max_forward = min(n_bars, i + 7)
-                    outcome = None
-                    for fwd in range(i + 1, max_forward):
-                        fwd_o = float(o.iloc[fwd])
-                        fwd_h = float(h.iloc[fwd])
-                        fwd_l = float(l.iloc[fwd])
+                            if fwd_o <= stop:
+                                losses += 1
+                                break
 
-                        # Realistic execution: Gap-down at open through stop loss triggers immediate exit below SL
-                        if fwd_o <= stop:
-                            outcome = "LOSS"
-                            break
+                            hit_target = fwd_h >= target
+                            hit_stop = fwd_l <= stop
 
-                        hit_target = fwd_h >= target
-                        hit_stop = fwd_l <= stop
+                            if hit_target and hit_stop:
+                                losses += 1
+                                break
+                            elif hit_stop:
+                                losses += 1
+                                break
+                            elif hit_target:
+                                wins += 1
+                                break
 
-                        # Conservative Stop-First Rule (P0): If both levels are touched within the same bar,
-                        # assume Stop Loss triggered first to strictly avoid optimistic bias!
-                        if hit_target and hit_stop:
-                            outcome = "LOSS"
-                            break
-                        elif hit_stop:
-                            outcome = "LOSS"
-                            break
-                        elif hit_target:
-                            outcome = "WIN"
-                            break
+                # 2. Bearish Breakdown condition (P2 Fix): close and low below prior 5-bar low
+                elif curr_l < prior_low and curr_c < prior_low:
+                    next_open = float(o.iloc[i+1])
+                    slippage = next_open * 0.0005
+                    entry = round(next_open - slippage, 2)
+                    stop = round(curr_h, 2)
+                    risk = stop - entry
+                    if risk > 0:
+                        target = round(entry - (1.5 * risk), 2)
+                        max_forward = min(n_bars, i + 7)
+                        for fwd in range(i + 1, max_forward):
+                            fwd_o = float(o.iloc[fwd])
+                            fwd_h = float(h.iloc[fwd])
+                            fwd_l = float(l.iloc[fwd])
 
-                    if outcome == "WIN":
-                        wins += 1
-                    elif outcome == "LOSS":
-                        losses += 1
+                            if fwd_o >= stop:
+                                losses += 1
+                                break
+
+                            hit_target = fwd_l <= target
+                            hit_stop = fwd_h >= stop
+
+                            if hit_target and hit_stop:
+                                losses += 1
+                                break
+                            elif hit_stop:
+                                losses += 1
+                                break
+                            elif hit_target:
+                                wins += 1
+                                break
 
             total_trades = wins + losses
             if total_trades >= 3:

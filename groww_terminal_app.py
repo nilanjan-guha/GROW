@@ -2097,20 +2097,51 @@ def get_fno_momentum_watchlists_endpoint():
                         s["price"] = round(float(cand["current_price"]), 2)
 
                 trig_str = str(cand.get("entry_trigger") or "")
+                direction = str(cand.get("direction") or "BULLISH").upper()
                 curr_price = float(s.get("price") or 0.0)
                 if curr_price > 0 and trig_str:
                     try:
                         lvl = float(trig_str.split("₹")[-1].strip())
                         if lvl > 0:
-                            dist_pct = abs(curr_price - lvl) / lvl * 100.0
-                            if dist_pct <= 0.35:
-                                proximity_score = 30.0 # Extremely close to breakout level!
-                            elif dist_pct <= 0.85:
-                                proximity_score = 20.0
-                            elif dist_pct <= 1.50:
-                                proximity_score = 10.0
-                            elif dist_pct > 3.5:
-                                is_invalidated = True
+                            # P2 Fix: Direction-aware trigger proximity & structural invalidation
+                            # Bullish setup: price coiling below level (or up to 0.5% above on breakout)
+                            if "Enter above" in trig_str or direction in ("BULLISH", "BUY"):
+                                if curr_price < lvl:
+                                    diff_pct = ((lvl - curr_price) / lvl) * 100.0
+                                    if diff_pct <= 0.35:
+                                        proximity_score = 30.0 # On the verge of breakout!
+                                    elif diff_pct <= 0.85:
+                                        proximity_score = 20.0
+                                    elif diff_pct <= 1.50:
+                                        proximity_score = 10.0
+                                    elif diff_pct > 4.0:
+                                        is_invalidated = True # Dumped too far below setup structure
+                                elif curr_price >= lvl:
+                                    # Already at or slightly above level
+                                    overshoot_pct = ((curr_price - lvl) / lvl) * 100.0
+                                    if overshoot_pct <= 0.50:
+                                        proximity_score = 35.0 # Right at breakout trigger!
+                                    elif overshoot_pct > 2.0:
+                                        # Overextended run, not an early entry candidate
+                                        proximity_score = 0.0
+                            # Bearish setup: price coiling above breakdown level
+                            elif "Enter below" in trig_str or direction in ("BEARISH", "SELL"):
+                                if curr_price > lvl:
+                                    diff_pct = ((curr_price - lvl) / lvl) * 100.0
+                                    if diff_pct <= 0.35:
+                                        proximity_score = 30.0 # On the verge of breakdown!
+                                    elif diff_pct <= 0.85:
+                                        proximity_score = 20.0
+                                    elif diff_pct <= 1.50:
+                                        proximity_score = 10.0
+                                    elif diff_pct > 4.0:
+                                        is_invalidated = True # Rallied too far above setup structure
+                                elif curr_price <= lvl:
+                                    undershoot_pct = ((lvl - curr_price) / lvl) * 100.0
+                                    if undershoot_pct <= 0.50:
+                                        proximity_score = 35.0 # Right at breakdown trigger!
+                                    elif undershoot_pct > 2.0:
+                                        proximity_score = 0.0
                     except Exception:
                         pass
             s["proximity_score"] = proximity_score
