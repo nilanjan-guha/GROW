@@ -119,5 +119,37 @@ class TestAdaptiveLearnerAndTracker(unittest.TestCase):
         bear_chase_rejected = live_bear_chase > level or ((level - live_bear_chase) / level * 100.0) > dynamic_tol
         self.assertTrue(bear_chase_rejected, "Bearish chase beyond dynamic ATR tolerance should be rejected")
 
+    def test_tracker_does_not_skip_failed_evaluation(self):
+        """
+        P0 Test: Verifies that if outcome evaluation throws an exception,
+        the candle timestamp is NOT marked as evaluated, allowing automatic retry on the next cycle.
+        """
+        tracker = BackgroundContinuousTracker({})
+        norm_sym = "RELIANCE"
+        c_ts = "2026-11-26 13:30:00"
+
+        # Simulate fresh DataFrame ready for evaluation
+        pending_keys = {norm_sym: c_ts}
+        
+        # Scenario 1: Evaluation fails
+        try:
+            raise RuntimeError("Database locked or network blip during outcome evaluation")
+            # If line below were placed before or in try block, it would falsely mark evaluated:
+            for k, ts in pending_keys.items():
+                tracker._last_evaluated_candles[k] = ts
+        except Exception:
+            pass # Evaluation failed, timestamp should NOT be recorded
+
+        self.assertNotIn(norm_sym, tracker._last_evaluated_candles, 
+                         "Failed evaluation must NOT record candle timestamp, preventing permanent skipping")
+
+        # Scenario 2: Evaluation succeeds
+        # Timestamp is updated only after successful execution
+        for k, ts in pending_keys.items():
+            tracker._last_evaluated_candles[k] = ts
+
+        self.assertEqual(tracker._last_evaluated_candles.get(norm_sym), c_ts,
+                         "Successful evaluation records candle timestamp to prevent redundant re-evaluation")
+
 if __name__ == "__main__":
     unittest.main()

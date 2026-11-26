@@ -38,7 +38,8 @@
             background-color: var(--bg-void);
             color: var(--text-main);
             font-family: 'JetBrains Mono', monospace;
-            overflow: hidden;
+            overflow-x: hidden;
+            overflow-y: hidden;
             width: 100vw;
             height: 100vh;
         }
@@ -107,11 +108,13 @@
             position: relative;
             z-index: 10;
             display: grid;
-            grid-template-rows: 62px 1fr 38px;
+            grid-template-rows: 48px 1fr 28px;
             height: 100vh;
             width: 100vw;
-            padding: 10px 16px;
-            gap: 12px;
+            padding: 6px 10px;
+            gap: 6px;
+            box-sizing: border-box;
+            overflow: hidden;
         }
 
         /* Glassmorphic Cyber Panels */
@@ -234,9 +237,34 @@
         /* 3-Column Glass Cyber Grid */
         .main-cockpit-grid {
             display: grid;
-            grid-template-columns: 310px 1fr 310px;
-            gap: 12px;
-            height: calc(100vh - 124px);
+            grid-template-columns: 280px 1fr 280px;
+            gap: 8px;
+            height: 100%;
+            min-height: 0;
+            overflow: hidden;
+        }
+
+        @media (max-width: 1400px) {
+            .main-cockpit-grid {
+                grid-template-columns: 250px 1fr 250px;
+            }
+        }
+
+        @media (max-width: 1100px) {
+            .hud-workspace {
+                display: flex;
+                flex-direction: column;
+                height: auto;
+                min-height: 100vh;
+                overflow-y: auto;
+            }
+            body {
+                overflow-y: auto;
+            }
+            .main-cockpit-grid {
+                grid-template-columns: 1fr;
+                height: auto;
+            }
         }
 
         /* Column Headers */
@@ -244,12 +272,13 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 10px 14px;
+            padding: 8px 12px;
             border-bottom: 1px solid rgba(255, 255, 255, 0.10);
             background: rgba(0, 0, 0, 0.35);
-            font-size: 0.82rem;
+            font-size: 0.80rem;
             font-weight: 800;
             letter-spacing: 1.2px;
+            flex-shrink: 0;
         }
 
         /* Stock Cards (3D Tilt effect) */
@@ -258,46 +287,47 @@
             border: 1px solid rgba(255, 255, 255, 0.10);
             border-left: 4px solid #64748b;
             border-radius: 6px;
-            padding: 9px 12px;
-            margin-bottom: 8px;
+            padding: 8px 10px;
+            margin-bottom: 6px;
             cursor: pointer;
             transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.2s, border-color 0.2s;
         }
 
         .stock-mover-card:hover {
-            transform: translateX(4px) scale(1.02);
+            transform: translateX(3px) scale(1.01);
             background: rgba(30, 41, 59, 0.90);
             border-color: var(--neon-cyan);
-            box-shadow: 0 0 18px rgba(0, 240, 255, 0.30);
+            box-shadow: 0 0 16px rgba(0, 240, 255, 0.30);
         }
 
         .stock-mover-card.active-selected {
             border-left: 5px solid var(--neon-cyan) !important;
             background: rgba(0, 240, 255, 0.12);
-            box-shadow: 0 0 20px rgba(0, 240, 255, 0.40);
+            box-shadow: 0 0 18px rgba(0, 240, 255, 0.40);
         }
 
         /* Center Cockpit Layout */
         .center-stage {
             display: flex;
             flex-direction: column;
-            gap: 12px;
+            gap: 6px;
             overflow-y: auto;
             padding-right: 4px;
             height: 100%;
+            min-height: 0;
         }
 
         /* Real-time 3D Radar Scanner Visualizer Card */
         .radar-scan-canvas-container {
             position: relative;
-            min-height: 130px;
+            min-height: 85px;
             background: radial-gradient(circle at center, rgba(0, 240, 255, 0.10) 0%, rgba(3, 7, 18, 0.96) 75%);
             border: 1.5px solid rgba(0, 240, 255, 0.30);
             border-radius: 8px;
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 14px 24px;
+            padding: 6px 16px;
             overflow: hidden;
             flex-shrink: 0;
         }
@@ -305,11 +335,11 @@
         /* Circular Radar HUD Graphic */
         .radar-sweep-dial {
             position: relative;
-            width: 104px;
-            height: 104px;
+            width: 72px;
+            height: 72px;
             border-radius: 50%;
             border: 1.5px dashed rgba(0, 240, 255, 0.5);
-            box-shadow: 0 0 22px rgba(0, 240, 255, 0.25);
+            box-shadow: 0 0 18px rgba(0, 240, 255, 0.25);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -341,46 +371,54 @@
             background: rgba(10, 16, 31, 0.92);
             border: 1.5px solid rgba(255, 255, 255, 0.14);
             border-radius: 8px;
-            padding: 14px 18px;
+            padding: 7px 12px;
             flex-shrink: 0;
         }
 
         .metric-tiles-grid {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
-            gap: 10px;
-            margin-top: 12px;
+            gap: 6px;
+            margin-top: 6px;
         }
 
         .m-tile {
             background: rgba(15, 23, 42, 0.75);
             border: 1px solid rgba(255, 255, 255, 0.10);
             border-radius: 6px;
-            padding: 10px 14px;
+            padding: 5px 8px;
         }
 
         .m-tile .label {
-            font-size: 0.68rem;
+            font-size: 0.60rem;
             color: var(--text-muted);
             text-transform: uppercase;
-            letter-spacing: 0.7px;
+            letter-spacing: 0.5px;
             font-weight: 600;
         }
 
         .m-tile .val {
-            font-size: 1.05rem;
+            font-size: 0.88rem;
             font-weight: 900;
             color: #fff;
-            margin-top: 4px;
+            margin-top: 2px;
         }
 
         /* Dual Tracked Section: PREPARING vs ENTRY READY */
         .opportunities-cockpit {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 12px;
+            gap: 8px;
             flex: 1;
-            min-height: 480px;
+            min-height: 140px;
+            max-height: 250px;
+            margin-bottom: 2px;
+        }
+
+        @media (max-width: 900px) {
+            .opportunities-cockpit {
+                grid-template-columns: 1fr;
+            }
         }
 
         /* Custom Scrollbars */
@@ -582,37 +620,37 @@
                 <!-- Dual Opportunities: PREPARING (Coils) vs ENTRY READY (Actionable Breakouts) -->
                 <div class="opportunities-cockpit">
                     <!-- PREPARING (All Pre-Breakout Coils) -->
-                    <div class="cyber-panel" style="padding:14px;">
+                    <div class="cyber-panel" style="padding:6px 10px; display:flex; flex-direction:column; min-height:0; overflow:hidden;">
                         <div
-                            style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                            style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; flex-shrink:0;">
                             <span
-                                style="font-size:0.84rem; font-weight:800; color:var(--neon-amber); display:flex; align-items:center; gap:6px;">
+                                style="font-size:0.75rem; font-weight:800; color:var(--neon-amber); display:flex; align-items:center; gap:5px;">
                                 <span>⚡</span> PREPARING — ALL PRE-BREAKOUT COILS (<span id="prepCountBadge" style="color:#fff;">0</span>)
                             </span>
-                            <span style="font-size:0.68rem; color:#94a3b8; font-weight:600;">BEFORE THE MOVE</span>
+                            <span style="font-size:0.60rem; color:#94a3b8; font-weight:600;">BEFORE THE MOVE</span>
                         </div>
                         <div id="rankedPreparingList"
-                            style="display:flex; flex-direction:column; gap:6px; min-height:240px; max-height:560px; overflow-y:auto; padding-right:4px;">
-                            <div style="font-size:0.75rem; color:var(--text-muted); text-align:center; padding:18px 0;">
+                            style="display:flex; flex-direction:column; gap:4px; flex:1; min-height:0; overflow-y:auto; padding-right:4px;">
+                            <div style="font-size:0.72rem; color:var(--text-muted); text-align:center; padding:12px 0;">
                                 Continuous tracker polling for pre-breakout accumulation coils...
                             </div>
                         </div>
                     </div>
 
                     <!-- ENTRY READY (Confirmed Breakouts) -->
-                    <div class="cyber-panel" style="padding:14px;">
+                    <div class="cyber-panel" style="padding:6px 10px; display:flex; flex-direction:column; min-height:0; overflow:hidden;">
                         <div
-                            style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                            style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; flex-shrink:0;">
                             <span
-                                style="font-size:0.84rem; font-weight:800; color:var(--neon-green); display:flex; align-items:center; gap:6px;">
+                                style="font-size:0.75rem; font-weight:800; color:var(--neon-green); display:flex; align-items:center; gap:5px;">
                                 <span>🎯</span> ENTRY READY — CONFIRMED 5M BREAKOUTS (<span
                                     id="entryCountBadge" style="color:#fff;">0</span>)
                             </span>
-                            <span style="font-size:0.68rem; color:var(--neon-green); font-weight:600;">ACTIONABLE BREAKOUT</span>
+                            <span style="font-size:0.60rem; color:var(--neon-green); font-weight:600;">ACTIONABLE BREAKOUT</span>
                         </div>
                         <div id="rankedEntryReadyList"
-                            style="display:flex; flex-direction:column; gap:6px; min-height:240px; max-height:560px; overflow-y:auto; padding-right:4px;">
-                            <div style="font-size:0.75rem; color:var(--text-muted); text-align:center; padding:18px 0;">
+                            style="display:flex; flex-direction:column; gap:4px; flex:1; min-height:0; overflow-y:auto; padding-right:4px;">
+                            <div style="font-size:0.72rem; color:var(--text-muted); text-align:center; padding:12px 0;">
                                 NO 5M TRADE (Default state: waiting for confirmed structure)
                             </div>
                         </div>
@@ -620,26 +658,26 @@
                 </div>
 
                 <!-- Official NSE India Institutional FII / DII Order Flow -->
-                <div class="cyber-panel" style="padding:14px 18px;">
+                <div class="cyber-panel" style="padding:6px 12px; flex-shrink:0;">
                     <div style="display:flex; justify-content:space-between; align-items:center;">
                         <span
-                            style="font-size:0.84rem; font-weight:800; color:#f8fafc; display:flex; align-items:center; gap:8px;">
+                            style="font-size:0.74rem; font-weight:800; color:#f8fafc; display:flex; align-items:center; gap:6px;">
                             <span>🏛️</span> NSE INDIA INSTITUTIONAL ORDER FLOW (FII / DII & LARGE DEALS)
                         </span>
-                        <span id="nseSyncTime" style="font-size:0.70rem; color:var(--text-muted); font-weight:600;">SYNCED</span>
+                        <span id="nseSyncTime" style="font-size:0.62rem; color:var(--text-muted); font-weight:600;">SYNCED</span>
                     </div>
-                    <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; margin-top:10px;">
-                        <div class="m-tile">
-                            <div class="label">FII / FPI NET FLOW</div>
-                            <div class="val" id="nseFiiVal" style="color:var(--neon-green); font-size:1.15rem;">--</div>
+                    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap:6px; margin-top:5px;">
+                        <div class="m-tile" style="padding:4px 8px;">
+                            <div class="label" style="font-size:0.58rem;">FII / FPI NET FLOW</div>
+                            <div class="val" id="nseFiiVal" style="color:var(--neon-green); font-size:0.88rem; margin-top:1px;">--</div>
                         </div>
-                        <div class="m-tile">
-                            <div class="label">DII NET FLOW</div>
-                            <div class="val" id="nseDiiVal" style="color:var(--neon-red); font-size:1.15rem;">--</div>
+                        <div class="m-tile" style="padding:4px 8px;">
+                            <div class="label" style="font-size:0.58rem;">DII NET FLOW</div>
+                            <div class="val" id="nseDiiVal" style="color:var(--neon-red); font-size:0.88rem; margin-top:1px;">--</div>
                         </div>
-                        <div class="m-tile">
-                            <div class="label">INSTITUTIONAL MARKET BIAS</div>
-                            <div class="val" id="nseBiasVal" style="color:var(--neon-cyan); font-size:1.15rem;">--</div>
+                        <div class="m-tile" style="padding:4px 8px;">
+                            <div class="label" style="font-size:0.58rem;">INSTITUTIONAL MARKET BIAS</div>
+                            <div class="val" id="nseBiasVal" style="color:var(--neon-cyan); font-size:0.88rem; margin-top:1px;">--</div>
                         </div>
                     </div>
                 </div>

@@ -189,15 +189,22 @@ class BackgroundContinuousTracker:
 
                 # 2. Evaluate open outcomes and trigger adaptive learning post-mortem
                 # Safeguard (P0 Fix):
-                # - Deduplicate symbols using normalized ticker key (clean symbol)
+                # - Deduplicate symbols using normalized symbol + candle timestamp key (norm_key:candle_ts)
                 # - Only advance/mark self._last_evaluated_candles AFTER evaluate_open_outcomes succeeds!
-                # If evaluation fails/throws an exception, the candles are retried next cycle rather than permanently skipped.
+                # If evaluation fails/throws an exception, the candle is retried on the next cycle rather than permanently skipped.
                 evaluable_fresh_dfs = {}
                 pending_eval_keys = {}
+                seen_norm_symbols = set()
+
                 for s_key, c_df in fresh_dfs.items():
                     norm_key = s_key.replace(".NS", "").upper()
+                    if norm_key in seen_norm_symbols:
+                        continue
+                    seen_norm_symbols.add(norm_key)
+
                     c_ts = str(c_df.index[-1])
-                    if self._last_evaluated_candles.get(norm_key) != c_ts:
+                    dedup_key = f"{norm_key}:{c_ts}"
+                    if self._last_evaluated_candles.get(norm_key) != c_ts and dedup_key not in pending_eval_keys:
                         evaluable_fresh_dfs[norm_key] = c_df
                         evaluable_fresh_dfs[f"{norm_key}.NS"] = c_df
                         pending_eval_keys[norm_key] = c_ts
@@ -210,7 +217,8 @@ class BackgroundContinuousTracker:
                             self._last_evaluated_candles[n_k] = n_ts
                         self.last_outcome_check = now
                     except Exception as oe:
-                        print("[CONTINUOUS TRACKER] Outcome check error:", oe)
+                        # On failure, do NOT update self._last_evaluated_candles so it retries next cycle
+                        print("[CONTINUOUS TRACKER] Outcome check error (will retry next cycle):", oe)
 
                 # 3. If a breakout occurred in a tracked PREPARING stock, recompute rankings instantly
                 if promoted_any:

@@ -1625,9 +1625,11 @@ def get_active_signals_endpoint():
                         close_col = "close" if "close" in cdf.columns else ("Close" if "Close" in cdf.columns else None)
                         open_col = "open" if "open" in cdf.columns else ("Open" if "Open" in cdf.columns else None)
                         if close_col:
-                            s["live_price"] = round(float(cdf[close_col].iloc[-1]), 2)
+                            raw_val = cdf[close_col].squeeze()
+                            s["live_price"] = round(float(raw_val.iloc[-1] if hasattr(raw_val, 'iloc') else raw_val), 2)
                         if open_col and close_col:
-                            first_o = float(cdf[open_col].iloc[0])
+                            raw_open = cdf[open_col].squeeze()
+                            first_o = float(raw_open.iloc[0] if hasattr(raw_open, 'iloc') else raw_open)
                             if first_o > 0 and "live_price" in s:
                                 s["change_pct"] = round(((s["live_price"] - first_o) / first_o) * 100.0, 2)
                 if "live_price" not in s or not s["live_price"]:
@@ -2018,7 +2020,7 @@ def get_fno_momentum_watchlists_endpoint():
                 cdf = c_entry["df"]
                 if len(cdf) >= 2:
                     try:
-                        curr_c = float(cdf['Close'].iloc[-1])
+                        curr_c = float(cdf['Close'].squeeze().iloc[-1] if hasattr(cdf['Close'].squeeze(), 'iloc') else cdf['Close'].squeeze())
                         # Look for session open or previous session close
                         df_d = cdf.copy()
                         if not pd.api.types.is_datetime64_any_dtype(df_d.index):
@@ -2027,9 +2029,11 @@ def get_fno_momentum_watchlists_endpoint():
                         dates = sorted(df_d['Date'].unique())
                         if len(dates) >= 2:
                             prev_d = dates[-2]
-                            prev_c = float(df_d[df_d['Date'] == prev_d]['Close'].iloc[-1])
+                            prev_series = df_d[df_d['Date'] == prev_d]['Close'].squeeze()
+                            prev_c = float(prev_series.iloc[-1] if hasattr(prev_series, 'iloc') else prev_series)
                         else:
-                            prev_c = float(df_d['Open'].iloc[0])
+                            open_series = df_d['Open'].squeeze()
+                            prev_c = float(open_series.iloc[0] if hasattr(open_series, 'iloc') else open_series)
                         if prev_c > 0:
                             calc_chg = round(((curr_c - prev_c) / prev_c) * 100.0, 2)
                     except Exception:
@@ -2062,7 +2066,8 @@ def get_fno_momentum_watchlists_endpoint():
                 if not cdf.empty:
                     close_col = "Close" if "Close" in cdf.columns else ("close" if "close" in cdf.columns else None)
                     if close_col:
-                        s["price"] = round(float(cdf[close_col].iloc[-1]), 2)
+                        c_series = cdf[close_col].squeeze()
+                        s["price"] = round(float(c_series.iloc[-1] if hasattr(c_series, 'iloc') else c_series), 2)
             # If still missing price, check persistent or ranked cache
             if "price" not in s or not s["price"]:
                 cand = next((c for c in prep_list if c.get("symbol") in (s_sym, clean_s)), None)
