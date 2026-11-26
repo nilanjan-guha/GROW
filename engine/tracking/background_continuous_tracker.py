@@ -136,16 +136,29 @@ class BackgroundContinuousTracker:
                                         pass
 
                                 if is_breakout:
-                                    # Evaluate expansion room strictly on completed candle dataframe
+                                    # Anti-Chasing & Viability Safeguard (P0):
+                                    # Compare against live forming price so traders never chase an already-extended or missed move:
+                                    max_slippage_dist_pct = 0.65  # If live price has run > 0.65% past breakout level, do not chase!
+                                    is_missed_or_extended = False
+                                    if "Enter above" in entry_trig:
+                                        if live_forming_price < lvl or ((live_forming_price - lvl) / lvl * 100.0) > max_slippage_dist_pct:
+                                            is_missed_or_extended = True
+                                    elif "Enter below" in entry_trig:
+                                        if live_forming_price > lvl or ((lvl - live_forming_price) / lvl * 100.0) > max_slippage_dist_pct:
+                                            is_missed_or_extended = True
+
+                                    # Evaluate expansion room strictly on completed candle dataframe and verified live level
                                     direct_eval = OpportunityPotentialEngine.evaluate_potential(
                                         df=eval_completed_df,
-                                        current_price=completed_c,
+                                        current_price=live_forming_price,
                                         direction="BUY" if direction == "BULLISH" else "SELL"
                                     )
-                                    if direct_eval.get("is_viable", True):
+                                    if not is_missed_or_extended and direct_eval.get("is_viable", True):
                                         promoted_any = True
                                         self.tracked_stats["promotions_today"] += 1
-                                        print(f"[PRE-BREAKOUT TRIGGERED] {sym} confirmed 5m close above/below level @ ₹{completed_c} ({evaluated_completed_ts})!")
+                                        print(f"[PRE-BREAKOUT TRIGGERED] {sym} confirmed 5m close @ ₹{completed_c} (Live: ₹{live_forming_price})! Level ₹{lvl} valid, actionable trade entry.")
+                                    elif is_missed_or_extended:
+                                        print(f"[PRE-BREAKOUT CHASE PREVENTED] {sym} crossed level ₹{lvl} but live price ₹{live_forming_price} is overextended or reversed. Scan rejected stale chase.")
                         except Exception:
                             pass
                         time.sleep(0.08)
@@ -167,11 +180,14 @@ class BackgroundContinuousTracker:
                         print("[CONTINUOUS TRACKER] Outcome check error:", oe)
 
                 # 3. If a breakout occurred in a tracked PREPARING stock, recompute rankings instantly
-                if promoted_any and self.compute_ranking_fn:
-                    try:
-                        self.compute_ranking_fn()
-                    except Exception:
-                        pass
+                if promoted_any:
+                    # Invalidate screener cache immediately so frontend gets fresh ranked breakouts on next poll
+                    self.screener_state["ranked_opportunities_ts"] = 0
+                    if self.compute_ranking_fn:
+                        try:
+                            self.compute_ranking_fn()
+                        except Exception:
+                            pass
 
                 t1 = time.perf_counter()
                 self.tracked_stats["last_cycle_duration_ms"] = round((t1 - t0) * 1000.0, 1)

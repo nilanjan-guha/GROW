@@ -1228,6 +1228,17 @@
                     const logoHtml = logoUrl ? `<img src="${logoUrl}" style="width:22px; height:22px; border-radius:50%; object-fit:contain; background:#1e293b;" onerror="this.style.display='none';">` : '';
                     const prc = c.current_price ? `₹${Number(c.current_price).toFixed(2)}` : '';
                     
+                    // Compute realistic trade return percentage or day change percentage
+                    const currP = Number(c.current_price || c.live_price || c.entry_price || 0);
+                    const entryP = Number(c.entry_price || c.signal_price || currP);
+                    let displayChangePct = 0.0;
+                    if (c.change_pct !== undefined && c.change_pct !== null && c.change_pct !== 0.0) {
+                        displayChangePct = Number(c.change_pct);
+                    } else if (entryP > 0 && currP > 0) {
+                        displayChangePct = Number(((currP - entryP) / entryP * 100 * (isBull ? 1 : -1)).toFixed(2));
+                    }
+                    const changeColor = displayChangePct >= 0 ? 'var(--neon-green)' : 'var(--neon-red)';
+                    
                     // Distinct styling for closed outcomes (SL hit or Target hit)
                     const outcome = (c.outcome || 'ACTIVE').toUpperCase();
                     let cardOpacity = '1.0';
@@ -1255,7 +1266,7 @@
                             </span>
                             <span style="display:flex; align-items:center; gap:8px;">
                                 <span style="font-size:0.88rem; color:#fff; font-weight:800;">${prc}</span>
-                                <span style="font-size:0.84rem; color:${col}; font-weight:900;">${c.change_pct >= 0 ? '+' : ''}${c.change_pct}%</span>
+                                <span style="font-size:0.84rem; color:${changeColor}; font-weight:900;">${displayChangePct >= 0 ? '+' : ''}${displayChangePct}%</span>
                             </span>
                         </div>
                         <div style="font-size:0.72rem; color:#fff; margin-top:5px; display:flex; justify-content:space-between; font-weight:600;">
@@ -1398,6 +1409,16 @@
             const actionBg = isBuy ? 'var(--neon-green)' : 'var(--neon-red)';
             const actionColor = isBuy ? '#000' : '#fff';
 
+            // Real-time 1 Lot PnL calculation
+            const lotQty = Number(bestTrade.lot_size || bestTrade.quantity || 100);
+            const entryVal = Number(bestTrade.entry_price || 0);
+            const currentVal = Number(bestTrade.live_price || bestTrade.current_price || entryVal);
+            const ptsDiff = isBuy ? (currentVal - entryVal) : (entryVal - currentVal);
+            const pnlRs = Math.round(ptsDiff * lotQty);
+            const pnlPct = entryVal > 0 ? ((ptsDiff / entryVal) * 100).toFixed(2) : '0.00';
+            const pnlColor = pnlRs >= 0 ? 'var(--neon-green)' : 'var(--neon-red)';
+            const pnlSign = pnlRs >= 0 ? '+' : '';
+
             banner.style.display = 'block';
             banner.style.borderColor = isBuy ? 'var(--neon-green)' : 'var(--neon-red)';
             banner.style.background = isBuy ? 'rgba(0,255,163,0.08)' : 'rgba(255,0,85,0.08)';
@@ -1413,6 +1434,9 @@
                     <span style="font-size:1.05rem; font-weight:900; color:#fff;">⭐ TOP CONFIRMED TRADE: <b>${cleanSym}</b></span>
                     <span style="font-size:0.75rem; background:${actionBg}; color:${actionColor}; padding:3px 8px; border-radius:4px; font-weight:900; letter-spacing:0.5px;">${actionText}</span>
                     <span style="font-size:0.88rem; font-weight:800; color:#fff;">Entry: ₹${Number(bestTrade.entry_price).toFixed(2)}</span>
+                    <span style="font-size:0.86rem; background:rgba(0,0,0,0.6); padding:3px 10px; border-radius:4px; border:1px solid ${pnlColor}; color:${pnlColor}; font-weight:900;">
+                        1-Lot PnL (${lotQty} Qty): ${pnlSign}₹${pnlRs.toLocaleString('en-IN')} (${pnlSign}${pnlPct}%)
+                    </span>
                 </div>
                 <div style="display:flex; align-items:center; gap:14px; font-size:0.80rem;">
                     <span>SL: <b style="color:var(--neon-red);">₹${bestTrade.stop_loss}</b></span>
@@ -1453,17 +1477,22 @@
                     recentTracked.forEach(s => {
                         if (!s || !s.symbol) return;
                         const outcome = (s.outcome || 'ACTIVE').toUpperCase();
+                        const existing = sessionTrackedOutcomes[s.symbol] || {};
                         sessionTrackedOutcomes[s.symbol] = {
                             symbol: s.symbol,
                             direction: s.direction || 'BUY',
-                            current_price: s.signal_price || s.entry_price,
-                            change_pct: 0.0,
+                            current_price: s.live_price || s.signal_price || s.entry_price,
+                            live_price: s.live_price || s.signal_price || s.entry_price,
+                            entry_price: s.entry_price || s.signal_price,
+                            change_pct: (s.change_pct !== undefined && s.change_pct !== null) ? s.change_pct : (existing.change_pct || 0.0),
                             suggested_sl: s.stop_loss,
                             suggested_tp1: s.target_1,
                             suggested_tp2: s.target_2,
                             risk_reward_ratio: 1.5,
                             conviction_score: s.score || 95,
                             outcome: outcome,
+                            lot_size: s.lot_size || s.quantity || 100,
+                            quantity: s.lot_size || s.quantity || 100,
                             stage: outcome === 'ACTIVE' ? 'CONFIRMED' : outcome
                         };
                     });

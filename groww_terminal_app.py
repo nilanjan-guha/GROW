@@ -1596,6 +1596,36 @@ def get_active_signals_endpoint():
         cursor.execute("SELECT * FROM historical_signals ORDER BY id DESC LIMIT 15")
         recent_all = [dict(r) for r in cursor.fetchall()]
         conn.close()
+
+        # Enrich active and recent signals with live price, day change, and lot size from ContractMaster/raw_cache
+        from core.contract_master import ContractMaster
+        raw_cache = screener_state.get("raw_market_cache") or {}
+        for sig_list in (active, recent_all):
+            for s in sig_list:
+                sym = s.get("symbol", "")
+                clean_sym = sym.replace(".NS", "").upper()
+                # Lot size
+                spec = ContractMaster.get_contract_spec(clean_sym)
+                if spec:
+                    s["lot_size"] = spec.get("lot_size") if isinstance(spec, dict) else getattr(spec, "lot_size", s.get("quantity") or 100)
+                else:
+                    s["lot_size"] = s.get("quantity") or 100
+                # Live price & day change
+                cache_entry = raw_cache.get(sym) or raw_cache.get(clean_sym) or raw_cache.get(f"{clean_sym}.NS")
+                if cache_entry and isinstance(cache_entry, dict) and cache_entry.get("df") is not None:
+                    cdf = cache_entry["df"]
+                    if not cdf.empty:
+                        close_col = "close" if "close" in cdf.columns else ("Close" if "Close" in cdf.columns else None)
+                        open_col = "open" if "open" in cdf.columns else ("Open" if "Open" in cdf.columns else None)
+                        if close_col:
+                            s["live_price"] = round(float(cdf[close_col].iloc[-1]), 2)
+                        if open_col and close_col:
+                            first_o = float(cdf[open_col].iloc[0])
+                            if first_o > 0 and "live_price" in s:
+                                s["change_pct"] = round(((s["live_price"] - first_o) / first_o) * 100.0, 2)
+                if "live_price" not in s or not s["live_price"]:
+                    s["live_price"] = s.get("signal_price") or s.get("entry_price") or 0.0
+
         return jsonify({"success": True, "active_signals": active, "recent_tracked": recent_all, "is_market_open": mkt_open})
     except Exception as e:
         return jsonify({"success": False, "error": str(e), "active_signals": []})
