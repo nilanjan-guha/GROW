@@ -174,11 +174,24 @@ class AdaptiveTradeLearner:
             pattern_key = f"{strategy}_{direction}"
 
             if as_of_ts is not None:
-                # Query historical signals closed at or before as_of_ts
+                # Normalize timestamp to numeric Unix epoch seconds for accurate SQLite numeric comparison (P0 Fix)
+                try:
+                    ts_val = pd.Timestamp(as_of_ts)
+                    if ts_val.tzinfo is None:
+                        # Assume Asia/Kolkata for naive NSE intraday timestamps
+                        ts_val = ts_val.tz_localize("Asia/Kolkata")
+                    as_of_epoch = float(ts_val.timestamp())
+                except Exception:
+                    try:
+                        as_of_epoch = float(as_of_ts)
+                    except Exception:
+                        return 1.0 # Fail closed if timestamp normalization fails
+
+                # Query historical signals closed strictly at or before as_of_epoch
                 cursor.execute("""
                     SELECT outcome, net_pnl FROM historical_signals
                     WHERE strategy = ? AND direction = ? AND closed_at IS NOT NULL AND closed_at <= ?
-                """, (strategy, direction, as_of_ts))
+                """, (strategy, direction, as_of_epoch))
                 closed_trades = cursor.fetchall()
                 conn.close()
                 if not closed_trades:

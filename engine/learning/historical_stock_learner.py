@@ -181,13 +181,19 @@ class HistoricalStockLearner:
                         fwd_h = float(h.iloc[fwd])
                         fwd_l = float(l.iloc[fwd])
 
-                        # Did it hit target?
-                        if fwd_h >= target:
-                            outcome = "WIN"
-                            break
-                        # Did it hit stop loss?
-                        if fwd_l <= stop:
+                        hit_target = fwd_h >= target
+                        hit_stop = fwd_l <= stop
+
+                        # Conservative Stop-First Rule (P0): If both levels are touched within the same bar,
+                        # assume Stop Loss triggered first to strictly avoid optimistic bias!
+                        if hit_target and hit_stop:
                             outcome = "LOSS"
+                            break
+                        elif hit_stop:
+                            outcome = "LOSS"
+                            break
+                        elif hit_target:
+                            outcome = "WIN"
                             break
 
                     if outcome == "WIN":

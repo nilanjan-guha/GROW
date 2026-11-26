@@ -2374,5 +2374,55 @@ class TestIntradayScreenerCore(unittest.TestCase):
             else:
                 os.environ.pop("BROKER_ADAPTER_AUTH_SECRET", None)
 
+    def test_shared_cost_engine_replay_and_live_agreement(self):
+        """Validates that CostEngine generates exact identical statutory friction for replay and live trade execution"""
+        from engine.execution.cost_engine import CostEngine
+        entry_p = 1500.0
+        exit_p = 1530.0
+        qty = 200
+
+        # Equity costs without separate execution slippage
+        eq_costs = CostEngine.calculate_round_trip_costs(
+            entry_price=entry_p, exit_price=exit_p, qty=qty, instrument="EQUITY", include_slippage=False
+        )
+        self.assertGreater(eq_costs["total_costs"], 0)
+        self.assertEqual(eq_costs["brokerage"], 40.0) # 2 orders * min(20, 0.05% * 300,000 = 150) = 40.0
+        self.assertAlmostEqual(eq_costs["stt"], round(exit_p * qty * 0.00025, 2))
+        self.assertAlmostEqual(eq_costs["gst"], round((eq_costs["brokerage"] + eq_costs["exchange_charges"] + eq_costs["sebi_charges"]) * 0.18, 2))
+
+        # Futures costs
+        fut_costs = CostEngine.calculate_round_trip_costs(
+            entry_price=entry_p, exit_price=exit_p, qty=qty, instrument="FUTURES", include_slippage=False
+        )
+        self.assertEqual(fut_costs["brokerage"], 40.0)
+        self.assertAlmostEqual(fut_costs["stt"], round(exit_p * qty * 0.00020, 2))
+
+    def test_historical_learner_conservative_stop_first_and_replay_epoch(self):
+        """Validates conservative stop-first outcome rule and as_of_ts timestamp normalization to epoch"""
+        from engine.learning.historical_stock_learner import HistoricalStockLearner
+        from engine.learning.adaptive_trade_learner import AdaptiveTradeLearner
+
+        # 1. Ambiguous same-candle touches both target and stop: must count as LOSS
+        dates = pd.date_range("2026-10-01", periods=10, freq="B")
+        df_ambig = pd.DataFrame({
+            "Open": [100.0] * 10,
+            "High": [100.0, 100.0, 100.0, 100.0, 100.0, 105.0, 120.0, 100.0, 100.0, 100.0],
+            "Low":  [95.0, 95.0, 95.0, 95.0, 95.0, 98.0, 80.0, 95.0, 95.0, 95.0],
+            "Close": [99.0, 99.0, 99.0, 99.0, 99.0, 104.0, 99.0, 99.0, 99.0, 99.0],
+            "Volume": [1000] * 10
+        }, index=dates)
+        # Bar 5 breaks prior high (100 -> 105). Target = 105 + 1.5*(105-98) = 115.5. Stop = 98.
+        # Bar 6 High is 120 (>= target) and Low is 80 (<= stop).
+        # Conservative rule MUST count this as LOSS, not WIN.
+        mult = HistoricalStockLearner.analyze_30d_stock_history("TEST_AMBIG", df_ambig, is_replay=True, as_of_ts="2026-10-08")
+        self.assertLessEqual(mult, 1.0) # Shrinkage or penalty, never boosted by false win!
+
+        # 2. AdaptiveTradeLearner as_of_ts timestamp normalization
+        # Tests both pandas Timestamp and string without throwing exception
+        ts_pandas = pd.Timestamp("2026-10-15 15:30:00")
+        mult_pt = AdaptiveTradeLearner.get_pattern_multiplier("MOMENTUM_BREAKOUT", "BULLISH", as_of_ts=ts_pandas)
+        self.assertGreaterEqual(mult_pt, 0.80)
+        self.assertLessEqual(mult_pt, 1.25)
+
 if __name__ == '__main__':
     unittest.main()

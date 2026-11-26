@@ -190,7 +190,7 @@ class OpportunityRankingEngine:
         }
 
     @staticmethod
-    def evaluate_stock_opportunity(stock_df, symbol, sector_name="GENERAL", sector_change=0.0, nifty_df=None, vwap=None, opp_eval=None, time_slot_rvol=None, rvol_obs=0, is_liquid=True, sector_df=None, is_replay=False, as_of_ts=None):
+    def evaluate_stock_opportunity(stock_df, symbol, sector_name="GENERAL", sector_change=0.0, nifty_df=None, vwap=None, opp_eval=None, time_slot_rvol=None, rvol_obs=0, is_liquid=True, sector_df=None, is_replay=False, as_of_ts=None, daily_df=None):
         """
         Computes comprehensive quantitative opportunity score, breakout proximity, and prediction stage.
         Enforces hard liquidity and candle alignment gates.
@@ -468,7 +468,9 @@ class OpportunityRankingEngine:
         learn_mult_bear = AdaptiveTradeLearner.get_pattern_multiplier(strat_key, "BEARISH", as_of_ts=as_of_ts)
 
         # 30-day stock personality multiplier (rewards clean movers, penalizes wick traps)
-        stock_mult = HistoricalStockLearner.analyze_30d_stock_history(symbol, stock_df, is_replay=is_replay, as_of_ts=as_of_ts)
+        # Evaluates actual daily sessions dataset (30-45 sessions) when available (P0 Fix)
+        learner_df = daily_df if (daily_df is not None and not daily_df.empty and len(daily_df) >= 15) else stock_df
+        stock_mult = HistoricalStockLearner.analyze_30d_stock_history(symbol, learner_df, is_replay=is_replay, as_of_ts=as_of_ts)
         combined_bull_mult = learn_mult_bull * stock_mult
         combined_bear_mult = learn_mult_bear * stock_mult
 

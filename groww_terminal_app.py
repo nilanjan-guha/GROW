@@ -1412,6 +1412,20 @@ def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
         sec_ticker = groww_sector_engine.get_sector_index_ticker(sec_name)
         sec_df = screener_state.get("raw_market_cache", {}).get(sec_ticker, {}).get("df") if sec_ticker else None
 
+        # Fetch or retrieve cached 30-day daily dataset for genuine daily learning & ATR (P0 Fix)
+        daily_cached = screener_state.get("daily_market_cache", {}).get(clean_sym)
+        daily_stock_df = None
+        if daily_cached and (now - daily_cached.get("timestamp", 0) < 3600):
+            daily_stock_df = daily_cached.get("df")
+        else:
+            d_df, _ = groww_data_provider.fetch_daily_candles(clean_sym, days_back=45)
+            if d_df is not None and not d_df.empty and len(d_df) >= 15:
+                daily_stock_df = d_df
+                screener_state.setdefault("daily_market_cache", {})[clean_sym] = {
+                    "timestamp": now,
+                    "df": d_df
+                }
+
         # Extract time_slot_rvol and observation count from fno_filter_data if present
         time_slot_rvol = fno_data_item.get("rvol") if is_fno_fresh else None
         rvol_obs = fno_data_item.get("rvol_obs", 0) if is_fno_fresh else 0
@@ -1425,7 +1439,7 @@ def compute_and_update_ranked_opportunities(allowed_sector_symbols=None):
             sector_change=sec_chg,
             sector_bias=screener_state.get("sectors", {}).get(sec_name, {}).get("bias", "NEUTRAL"),
             nifty_df=eval_nifty,
-            daily_df=None,
+            daily_df=daily_stock_df,
             prev_close=None,
             time_slot_rvol=time_slot_rvol,
             rvol_obs=rvol_obs,
@@ -2066,8 +2080,13 @@ if __name__ == "__main__":
     worker.start()
 
     # Launch Dedicated Continuous Background Tracker & Learning Daemon (Runs side-by-side without blocking the screener)
+    # Passes authenticated groww_data_provider directly to ensure unified broker data flow (P0)
     from engine.background_continuous_tracker import BackgroundContinuousTracker
-    continuous_tracker = BackgroundContinuousTracker(screener_state, compute_ranking_fn=compute_and_update_ranked_opportunities)
+    continuous_tracker = BackgroundContinuousTracker(
+        screener_state,
+        compute_ranking_fn=compute_and_update_ranked_opportunities,
+        data_provider=groww_data_provider
+    )
     continuous_tracker.start()
     screener_state["continuous_tracker_instance"] = continuous_tracker
 

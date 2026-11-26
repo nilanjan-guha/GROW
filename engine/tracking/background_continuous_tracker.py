@@ -10,9 +10,6 @@ from engine.ranking.opportunity_potential_engine import OpportunityPotentialEngi
 from engine.learning.adaptive_trade_learner import AdaptiveTradeLearner
 from core.groww_data_provider import GrowwDataProvider
 
-# Shared Data Provider Instance
-groww_data_provider = GrowwDataProvider()
-
 class BackgroundContinuousTracker:
     """
     Dedicated Independent Background Tracking & Learning Daemon:
@@ -27,10 +24,11 @@ class BackgroundContinuousTracker:
     def __init__(self, screener_state_ref, compute_ranking_fn=None, data_provider=None):
         self.screener_state = screener_state_ref
         self.compute_ranking_fn = compute_ranking_fn
-        self.data_provider = data_provider or groww_data_provider
+        self.data_provider = data_provider or GrowwDataProvider()
         self.is_running = False
         self.last_track_cycle = 0
         self.last_outcome_check = 0
+        self._last_evaluated_candles = {} # {symbol: last_completed_candle_ts} to prevent duplicate evaluations (P1)
         self.tracked_stats = {
             "active_prep_count": 0,
             "open_signals_count": 0,
@@ -153,9 +151,17 @@ class BackgroundContinuousTracker:
                         time.sleep(0.08)
 
                 # 2. Evaluate open outcomes and trigger adaptive learning post-mortem
-                if (now - self.last_outcome_check > 30) and fresh_dfs:
+                # Safeguard (P1): Evaluate outcomes ONLY for fresh completed candles that have not already been evaluated
+                evaluable_fresh_dfs = {}
+                for s_key, c_df in fresh_dfs.items():
+                    c_ts = str(c_df.index[-1])
+                    if self._last_evaluated_candles.get(s_key) != c_ts:
+                        evaluable_fresh_dfs[s_key] = c_df
+                        self._last_evaluated_candles[s_key] = c_ts
+
+                if (now - self.last_outcome_check > 15) and evaluable_fresh_dfs:
                     try:
-                        evaluate_open_outcomes(fresh_dfs)
+                        evaluate_open_outcomes(evaluable_fresh_dfs)
                         self.last_outcome_check = now
                     except Exception as oe:
                         print("[CONTINUOUS TRACKER] Outcome check error:", oe)
