@@ -149,7 +149,9 @@ class HistoricalStockLearner:
         Stock breakout and breakdown performance analyzer (intraday 5-min or multi-day history).
         
         Rules:
-        - Strictly filters out future data past as_of_ts when supplied.
+        - Strictly filters out future data past as_of_ts when supplied, handling timezone-aware and timezone-naive indices.
+        - Validates input DataFrame integrity: checks for required OHLC columns, non-empty, non-finite values,
+          monotonic sorted timestamps, duplicate timestamps, and valid OHLC bounds (High >= Low/Open/Close, Low <= Open/Close).
         - Identifies breakout setups where High breaks prior N-bar resistance (Bullish),
           and breakdown setups where Low breaks prior N-bar support (Bearish).
         - Replay model:
@@ -159,21 +161,28 @@ class HistoricalStockLearner:
             Target = Entry +/- (1.5 * R)
         - Evaluates forward bars up to 6 bars.
         - Trades that hit neither Target nor Stop within the forward window are explicitly tracked
-          as unresolved/expired trades, preventing win-rate distortion.
-        - Calculates independent Bayesian-shrunk multipliers for Bullish and Bearish directions.
-        - Never writes into SQLite memory when is_replay=True.
-        - If return_directional=True, returns (bull_mult, bear_mult, stats_dict).
-        - Otherwise returns the combined/overall multiplier for backward compatibility.
+          as unresolved/expired trades.
+        - P1 Fix: Applies an unresolved-rate confidence penalty: If a direction's unresolved trade rate
+          exceeds 30%, its multiplier is discounted proportionally towards the neutral 1.0 baseline
+          or penalized, ensuring high unresolved rates cannot artificially inflate performance.
+        - P2 Fix: Logs learning failures and exposes error status in returned stats dict instead of silent swallow.
         """
+        import traceback
+        import numpy as np
         HistoricalStockLearner.init_memory_table()
 
         empty_stats = {
+            "status": "INSUFFICIENT_DATA",
             "overall_win_rate": 50.0,
             "bull_win_rate": 50.0,
             "bear_win_rate": 50.0,
             "bull_trades": 0,
             "bear_trades": 0,
             "unresolved_trades": 0,
+            "bull_unresolved": 0,
+            "bear_unresolved": 0,
+            "bull_unresolved_rate": 0.0,
+            "bear_unresolved_rate": 0.0,
             "bull_mult": 1.0,
             "bear_mult": 1.0,
             "final_mult": 1.0
@@ -187,17 +196,68 @@ class HistoricalStockLearner:
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
 
-            # Lookahead Bias Prevention: Slice df up to as_of_ts if provided
+            req_cols = ['Open', 'High', 'Low', 'Close']
+            if not all(col in df.columns for col in req_cols):
+                print(f"[HISTORICAL LEARNER ERROR] Missing required OHLC columns for {symbol}: {[c for c in req_cols if c not in df.columns]}")
+                empty_stats["status"] = "MISSING_COLUMNS"
+                return (1.0, 1.0, empty_stats) if return_directional else 1.0
+
+            # Ensure datetime index
+            if not pd.api.types.is_datetime64_any_dtype(df.index):
+                try:
+                    df.index = pd.to_datetime(df.index)
+                except Exception as ex:
+                    print(f"[HISTORICAL LEARNER ERROR] Non-datetime index for {symbol}: {ex}")
+                    empty_stats["status"] = "INVALID_INDEX"
+                    return (1.0, 1.0, empty_stats) if return_directional else 1.0
+
+            # P2 Validation: Check duplicate timestamps and chronological order
+            if df.index.has_duplicates:
+                print(f"[HISTORICAL LEARNER ERROR] Duplicate timestamps in historical feed for {symbol}")
+                empty_stats["status"] = "DUPLICATE_TIMESTAMPS"
+                return (1.0, 1.0, empty_stats) if return_directional else 1.0
+
+            if not df.index.is_monotonic_increasing:
+                df = df.sort_index()
+
+            # P2 Validation: Non-finite values check
+            for col in req_cols:
+                arr = df[col].values
+                if not np.all(np.isfinite(arr)):
+                    print(f"[HISTORICAL LEARNER ERROR] Non-finite values in column {col} for {symbol}")
+                    empty_stats["status"] = "NON_FINITE_DATA"
+                    return (1.0, 1.0, empty_stats) if return_directional else 1.0
+
+            # P2 Validation: Strict OHLC boundary sanity check
+            h_arr = df['High'].values
+            l_arr = df['Low'].values
+            o_arr = df['Open'].values
+            c_arr = df['Close'].values
+
+            if np.any(h_arr < l_arr) or np.any(h_arr < o_arr) or np.any(h_arr < c_arr) or np.any(l_arr > o_arr) or np.any(l_arr > c_arr):
+                print(f"[HISTORICAL LEARNER ERROR] Invalid OHLC price relationships in feed for {symbol}")
+                empty_stats["status"] = "CORRUPT_OHLC_RELATIONSHIPS"
+                return (1.0, 1.0, empty_stats) if return_directional else 1.0
+
+            # Lookahead Bias Prevention: Slice df up to as_of_ts if provided (handles timezone-aware and naive)
             if as_of_ts is not None:
                 try:
                     as_of_dt = pd.to_datetime(as_of_ts)
-                    if not pd.api.types.is_datetime64_any_dtype(df.index):
-                        df.index = pd.to_datetime(df.index)
+                    # Align timezone between as_of_dt and df.index
+                    if df.index.tz is not None and as_of_dt.tz is None:
+                        as_of_dt = as_of_dt.tz_localize(df.index.tz)
+                    elif df.index.tz is None and as_of_dt.tz is not None:
+                        as_of_dt = as_of_dt.tz_localize(None)
+                    elif df.index.tz is not None and as_of_dt.tz is not None:
+                        as_of_dt = as_of_dt.tz_convert(df.index.tz)
+
                     df = df[df.index <= as_of_dt]
-                except Exception:
+                except Exception as ex:
+                    print(f"[HISTORICAL LEARNER ERROR] Error slicing as_of_ts {as_of_ts} for {symbol}: {ex}")
                     pass
 
             if len(df) < 10:
+                empty_stats["status"] = "INSUFFICIENT_HISTORY"
                 return (1.0, 1.0, empty_stats) if return_directional else 1.0
 
             c = df['Close'].squeeze()
@@ -312,6 +372,10 @@ class HistoricalStockLearner:
             total_unresolved = bull_unresolved + bear_unresolved
             total_trades = total_resolved + total_unresolved
 
+            # Unresolved rates per direction
+            bull_unres_rate = round((bull_unresolved / total_bull) * 100.0, 1) if total_bull > 0 else 0.0
+            bear_unres_rate = round((bear_unresolved / total_bear) * 100.0, 1) if total_bear > 0 else 0.0
+
             # Win rates computed against resolved trades, with default 50.0 if insufficient resolved samples
             bull_win_rate = round((bull_wins / total_bull_resolved) * 100.0, 1) if total_bull_resolved >= 2 else 50.0
             bear_win_rate = round((bear_wins / total_bear_resolved) * 100.0, 1) if total_bear_resolved >= 2 else 50.0
@@ -327,20 +391,37 @@ class HistoricalStockLearner:
             # 1. Bullish Multiplier:
             bull_weight = min(1.0, total_bull_resolved / 6.0)
             raw_bull_mult = 0.70 + (bull_win_rate / 100.0 * 0.60)
-            shrunk_bull_mult = round(1.0 + bull_weight * (raw_bull_mult - 1.0), 2)
-            bull_mult = min(1.20, max(0.85, shrunk_bull_mult))
+            shrunk_bull_mult = 1.0 + bull_weight * (raw_bull_mult - 1.0)
+            
+            # P1 Fix: Unresolved-rate penalty:
+            # If unresolved rate exceeds 30%, discount the multiplier towards/below neutral (up to -0.15 penalty)
+            if bull_unres_rate > 30.0:
+                unres_penalty = min(0.15, (bull_unres_rate - 30.0) / 100.0 * 0.25)
+                shrunk_bull_mult = shrunk_bull_mult - unres_penalty
+
+            bull_mult = round(min(1.20, max(0.85, shrunk_bull_mult)), 2)
 
             # 2. Bearish Multiplier:
             bear_weight = min(1.0, total_bear_resolved / 6.0)
             raw_bear_mult = 0.70 + (bear_win_rate / 100.0 * 0.60)
-            shrunk_bear_mult = round(1.0 + bear_weight * (raw_bear_mult - 1.0), 2)
-            bear_mult = min(1.20, max(0.85, shrunk_bear_mult))
+            shrunk_bear_mult = 1.0 + bear_weight * (raw_bear_mult - 1.0)
+
+            # Unresolved-rate penalty for bearish:
+            if bear_unres_rate > 30.0:
+                unres_penalty = min(0.15, (bear_unres_rate - 30.0) / 100.0 * 0.25)
+                shrunk_bear_mult = shrunk_bear_mult - unres_penalty
+
+            bear_mult = round(min(1.20, max(0.85, shrunk_bear_mult)), 2)
 
             # 3. Overall Multiplier (for backwards compatibility)
             sample_weight = min(1.0, total_resolved / 10.0)
             raw_mult = 0.70 + (overall_win_rate / 100.0 * 0.60)
-            shrunk_mult = round(1.0 + sample_weight * (raw_mult - 1.0), 2)
-            final_mult = min(1.20, max(0.85, shrunk_mult))
+            shrunk_mult = 1.0 + sample_weight * (raw_mult - 1.0)
+            overall_unres_rate = (total_unresolved / total_trades * 100.0) if total_trades > 0 else 0.0
+            if overall_unres_rate > 30.0:
+                unres_penalty = min(0.15, (overall_unres_rate - 30.0) / 100.0 * 0.25)
+                shrunk_mult -= unres_penalty
+            final_mult = round(min(1.20, max(0.85, shrunk_mult)), 2)
 
             # Strictly persist ONLY during live trading with distinct directional stats
             if not is_replay:
@@ -362,6 +443,7 @@ class HistoricalStockLearner:
                 )
 
             stats = {
+                "status": "SUCCESS",
                 "overall_win_rate": overall_win_rate,
                 "bull_win_rate": bull_win_rate,
                 "bear_win_rate": bear_win_rate,
@@ -370,6 +452,8 @@ class HistoricalStockLearner:
                 "unresolved_trades": total_unresolved,
                 "bull_unresolved": bull_unresolved,
                 "bear_unresolved": bear_unresolved,
+                "bull_unresolved_rate": bull_unres_rate,
+                "bear_unresolved_rate": bear_unres_rate,
                 "bull_mult": bull_mult,
                 "bear_mult": bear_mult,
                 "final_mult": final_mult
@@ -378,8 +462,12 @@ class HistoricalStockLearner:
             if return_directional:
                 return (bull_mult, bear_mult, stats)
             return final_mult
-        except Exception:
-            return (1.0, 1.0, empty_stats) if return_directional else 1.0
+        except Exception as e:
+            traceback.print_exc()
+            print(f"[HISTORICAL LEARNER EXCEPTION] Error analyzing history for {symbol}: {e}")
+            fail_stats = dict(empty_stats)
+            fail_stats["status"] = f"ERROR: {e}"
+            return (1.0, 1.0, fail_stats) if return_directional else 1.0
 
     @staticmethod
     def replay_intraday_breakouts(symbol, df_5m, is_replay=False, as_of_ts=None, return_directional=False):

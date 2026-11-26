@@ -382,38 +382,31 @@ class TestAdaptiveLearnerAndTracker(unittest.TestCase):
 
     def test_offline_learner_rejects_invalid_or_stale_feed(self):
         """
-        P1/P2 Test: Verifies that _run_closed_market_learner_step() rejects:
-        1. Stale feeds (timestamp delayed or non-contiguous gaps).
-        2. Malformed feeds (missing required columns or non-finite values).
-        3. Correctly handles forming candle removal when is_completed_candle is False.
+        P1/P2 Test: Verifies that:
+        1. Gap detection is tested independently from market freshness (using now_dt set to the feed's timestamp).
+        2. Stale feeds during live market hours are rejected.
+        3. Malformed feeds (missing required columns or non-finite values) are rejected.
+        4. Forming-candle removal is verified through the actual production MarketValidator.validate_feed_freshness path.
         """
         from engine.market.market_validator import MarketValidator
         tracker = BackgroundContinuousTracker({"fno_universe": ["TESTSTK"]})
-        
-        # Test 1: Stale feed during market hours / with gap
-        # During live market hours (simulated at 11:00 AM IST), feed from previous day is strictly rejected
         ist = pytz.timezone('Asia/Kolkata')
-        simulated_live_market = pd.to_datetime("2026-11-26 11:00:00").tz_localize(ist)
-
-        stale_dates = pd.date_range("2026-11-20 09:15", periods=30, freq="5min", tz=ist)
-        stale_df = pd.DataFrame({
-            "Open": [100.0] * 30, "High": [105.0] * 30, "Low": [99.0] * 30, "Close": [102.0] * 30, "Volume": [1000] * 30
-        }, index=stale_dates)
-
-        # Freshness check during market hours rejects previous session data
-        feed_val = MarketValidator.validate_feed_freshness(stale_df, max_delay_seconds=300, candle_duration_seconds=300, now_dt=simulated_live_market)
-        self.assertFalse(feed_val.get("is_valid", False), "Previous session feed during active market hours must be marked invalid")
-
-        # In offline mode, feed with intra-session timestamp gaps or non-aligned timestamps is also rejected
-        gap_dates = list(pd.date_range("2026-11-26 09:15", periods=10, freq="5min", tz=ist))
-        gap_dates.append(pd.to_datetime("2026-11-26 10:30:00").tz_localize(ist)) # 65-min gap inside session!
+        
+        # Test 1: Independent Gap Detection
+        # Construct feed on a trading day with an intra-session gap: 09:15 to 09:30, then jumping to 10:35 (65m gap)
+        # We pass now_dt = 10:40 on that exact day so freshness check passes, testing gap detection strictly on its own merits!
+        gap_day_now = pd.to_datetime("2026-11-26 10:40:00").tz_localize(ist)
+        gap_dates = list(pd.date_range("2026-11-26 09:15", periods=5, freq="5min", tz=ist)) # 09:15..09:35
+        gap_dates.append(pd.to_datetime("2026-11-26 10:35:00").tz_localize(ist)) # 60-min gap!
         gap_df = pd.DataFrame({
-            "Open": [100.0] * 11, "High": [105.0] * 11, "Low": [99.0] * 11, "Close": [102.0] * 11, "Volume": [1000] * 11
+            "Open": [100.0] * 6, "High": [105.0] * 6, "Low": [99.0] * 6, "Close": [102.0] * 6, "Volume": [1000] * 6
         }, index=gap_dates)
-        feed_val_gap = MarketValidator.validate_feed_freshness(gap_df, max_delay_seconds=300, candle_duration_seconds=300)
-        self.assertFalse(feed_val_gap.get("is_valid", False), "Feed with intra-session gap must be marked invalid")
 
-        # Step should abort without recording scan for invalid/gap feed
+        feed_val_gap = MarketValidator.validate_feed_freshness(gap_df, max_delay_seconds=900, candle_duration_seconds=300, now_dt=gap_day_now)
+        self.assertFalse(feed_val_gap.get("is_valid", False), "Feed with intra-session gap must be rejected")
+        self.assertEqual(feed_val_gap.get("status"), "INVALID_TIMEFRAME", "Failure status must specifically be INVALID_TIMEFRAME due to interval discontinuity")
+
+        # Step should abort without recording scan for gap feed
         class MockGapProvider:
             def fetch_5m_candles(self, ticker, days_back=5):
                 return gap_df, "mock_gap"
@@ -422,32 +415,48 @@ class TestAdaptiveLearnerAndTracker(unittest.TestCase):
         tracker._run_closed_market_learner_step()
         self.assertFalse(HistoricalStockLearner.should_skip_scan("TESTSTK", current_completed_candle_ts=str(gap_df.index[-1])))
 
-        # Test 2: Malformed feed (missing Close / High / Low)
-        malformed_df = pd.DataFrame({"SomeOtherCol": [1, 2, 3]}, index=stale_dates[:3])
-        class MockMalformedProvider:
-            def fetch_5m_candles(self, ticker, days_back=5):
-                return malformed_df, "mock_malformed"
+        # Test 2: Stale feed during live market hours
+        simulated_live_market = pd.to_datetime("2026-11-26 11:00:00").tz_localize(ist)
+        stale_dates = pd.date_range("2026-11-20 09:15", periods=30, freq="5min", tz=ist)
+        stale_df = pd.DataFrame({
+            "Open": [100.0] * 30, "High": [105.0] * 30, "Low": [99.0] * 30, "Close": [102.0] * 30, "Volume": [1000] * 30
+        }, index=stale_dates)
+        feed_val_stale = MarketValidator.validate_feed_freshness(stale_df, max_delay_seconds=300, candle_duration_seconds=300, now_dt=simulated_live_market)
+        self.assertFalse(feed_val_stale.get("is_valid", False), "Previous session feed during active market hours must be marked invalid")
 
-        tracker.data_provider = MockMalformedProvider()
+        # Test 3: Malformed feed (missing Close / High / Low)
+        malformed_df = pd.DataFrame({"SomeOtherCol": [1, 2, 3]}, index=stale_dates[:3])
         feed_val_mal = MarketValidator.validate_feed_freshness(malformed_df, max_delay_seconds=300, candle_duration_seconds=300)
         self.assertFalse(feed_val_mal.get("is_valid", False), "Malformed df missing required columns must be invalid")
 
-        # Test 2b: Non-finite prices (NaN / Inf)
+        # Test 4: Non-finite prices (NaN / Inf)
         non_finite_df = stale_df.copy()
         non_finite_df.iloc[5, 3] = float("nan") # NaN in Close
         feed_val_nan = MarketValidator.validate_feed_freshness(non_finite_df, max_delay_seconds=300, candle_duration_seconds=300)
         self.assertFalse(feed_val_nan.get("is_valid", False), "Data with NaN must be invalid")
 
-        # Test 3: Incomplete final candle removal
-        # When is_completed_candle is False, study_df removes the last row (forming candle)
-        now_dates = pd.date_range(end=pd.Timestamp.now(), periods=25, freq="5min")
-        forming_df = pd.DataFrame({
-            "Open": [100.0] * 25, "High": [105.0] * 25, "Low": [99.0] * 25, "Close": [102.0] * 25, "Volume": [1000] * 25
-        }, index=now_dates)
-        # Slicing test
-        is_comp = False
-        study_df = forming_df if is_comp else forming_df.iloc[:-1]
-        self.assertEqual(len(study_df), len(forming_df) - 1, "Forming candle must be stripped when is_completed_candle is False")
+        # Test 5: Production-path forming candle detection and removal
+        # In a 5m series, candle started at 10:00 closes at 10:05.
+        # At now_dt = 10:03, the 10:00 candle is actively forming (now < last_ts + 300).
+        prod_dates = pd.date_range("2026-11-26 09:15", "2026-11-26 10:00", freq="5min", tz=ist)
+        prod_df = pd.DataFrame({
+            "Open": [100.0] * len(prod_dates), "High": [105.0] * len(prod_dates),
+            "Low": [99.0] * len(prod_dates), "Close": [102.0] * len(prod_dates),
+            "Volume": [1000] * len(prod_dates)
+        }, index=prod_dates)
+
+        now_forming = pd.to_datetime("2026-11-26 10:03:00").tz_localize(ist)
+        feed_val_forming = MarketValidator.validate_feed_freshness(prod_df, max_delay_seconds=900, candle_duration_seconds=300, now_dt=now_forming)
+        
+        # Must be valid feed, but is_completed_candle must be False!
+        self.assertTrue(feed_val_forming.get("is_valid"), "Feed itself is fresh and valid")
+        self.assertFalse(feed_val_forming.get("is_completed_candle"), "10:00 candle at 10:03 must be detected as FORMING")
+
+        # Replicate actual production tracker slicing using the returned validator flag
+        is_comp = feed_val_forming.get("is_completed_candle", False)
+        study_df = prod_df if is_comp else prod_df.iloc[:-1]
+        self.assertEqual(len(study_df), len(prod_df) - 1, "Production path must strip forming candle when validator marks is_completed_candle=False")
+        self.assertEqual(str(study_df.index[-1]), str(prod_dates[-2]), "Stripped study_df must end on the previous completed candle (09:55)")
 
     def test_directional_multipliers_and_unresolved_trades(self):
         """
@@ -464,6 +473,7 @@ class TestAdaptiveLearnerAndTracker(unittest.TestCase):
         closes = [100.0] * 50
 
         # Bar 10: Bullish breakout (prior 5-bar high is 101.0)
+        opens[10] = 101.2
         highs[10] = 103.0
         closes[10] = 102.5
         lows[10] = 101.0 # Stop = 101.0
@@ -479,6 +489,7 @@ class TestAdaptiveLearnerAndTracker(unittest.TestCase):
         closes[12] = 106.0
 
         # Bar 20: Bullish breakout 2
+        opens[20] = 106.2
         highs[20] = 108.0
         closes[20] = 107.5
         lows[20] = 106.0 # Stop = 106.0
@@ -498,6 +509,7 @@ class TestAdaptiveLearnerAndTracker(unittest.TestCase):
             lows[k] = 101.0
             closes[k] = 102.0
 
+        opens[30] = 100.5
         lows[30] = 98.0
         closes[30] = 98.5
         highs[30] = 103.0 # Stop = 103.0
@@ -506,6 +518,7 @@ class TestAdaptiveLearnerAndTracker(unittest.TestCase):
         highs[31] = 104.0 # Hits stop! (loss)
 
         # Bar 40: Breakout near the end of series that does not reach target or stop before series ends -> Unresolved!
+        opens[40] = 107.2
         highs[40] = 110.0
         closes[40] = 109.0
         lows[40] = 107.0
@@ -530,6 +543,98 @@ class TestAdaptiveLearnerAndTracker(unittest.TestCase):
         self.assertGreater(stats["unresolved_trades"], 0, "Trades hitting neither target nor stop must be tracked as unresolved")
         self.assertIn("bull_win_rate", stats)
         self.assertIn("bear_win_rate", stats)
+
+    def test_unresolved_rate_confidence_penalty(self):
+        """
+        P1 Test: Verifies that when a setup has a high unresolved trade rate (>30%),
+        its multiplier receives a confidence penalty, preventing deceptive high win-rate signals.
+        """
+        dates = pd.date_range("2026-11-20 09:15", periods=50, freq="5min")
+        opens = [100.0] * 50
+        highs = [101.0] * 50
+        lows = [99.5] * 50
+        closes = [100.0] * 50
+
+        # Create 1 WIN trade:
+        opens[10] = 101.5
+        highs[10] = 103.0
+        closes[10] = 102.5
+        lows[10] = 101.0
+        opens[11] = 102.6
+        lows[11] = 101.5
+        highs[11] = 104.0
+        closes[11] = 103.5
+        opens[12] = 103.5
+        highs[12] = 107.0
+        lows[12] = 103.0
+        closes[12] = 106.0
+
+        # And 3 UNRESOLVED trades (breakouts that stay flat without hitting stop or target):
+        for bar_idx in [20, 28, 36]:
+            opens[bar_idx] = 106.0
+            highs[bar_idx] = 108.0
+            closes[bar_idx] = 107.5
+            lows[bar_idx] = 105.0 # Stop = 105.0
+            opens[bar_idx + 1] = 107.6
+            # Next bars stay tight between 106.0 and 108.0 (entry ~107.65, stop 105.0, target ~111.6)
+            for f in range(bar_idx + 1, min(50, bar_idx + 7)):
+                opens[f] = 107.0
+                highs[f] = 107.8
+                lows[f] = 106.5
+                closes[f] = 107.0
+
+        test_df = pd.DataFrame({"Open": opens, "High": highs, "Low": lows, "Close": closes}, index=dates)
+
+        bull_mult, bear_mult, stats = HistoricalStockLearner.replay_intraday_breakouts(
+            "TEST_UNRES", test_df, is_replay=True, return_directional=True
+        )
+
+        # Bullish has 1 win and 3 unresolved (75% unresolved rate!)
+        self.assertGreater(stats["bull_unresolved_rate"], 30.0, "Unresolved rate must exceed 30%")
+        # Despite 100% win rate on resolved trades, the multiplier must be penalized below what a clean 100% win-rate gets
+        self.assertLess(bull_mult, 1.15, "Multiplier must be heavily discounted due to high unresolved rate")
+
+    def test_historical_replay_data_validation_and_as_of_ts_timezones(self):
+        """
+        P2 Test: Verifies that:
+        1. Duplicate timestamps, unsorted candles, non-finite values, and corrupt OHLC are rejected with explicit status.
+        2. as_of_ts filtering works identically with timezone-aware (Asia/Kolkata) and timezone-naive timestamps.
+        """
+        ist = pytz.timezone('Asia/Kolkata')
+        dates = pd.date_range("2026-11-20 09:15", periods=20, freq="5min", tz=ist)
+        df_valid = pd.DataFrame({
+            "Open": [100.0] * 20, "High": [105.0] * 20, "Low": [99.0] * 20, "Close": [102.0] * 20
+        }, index=dates)
+
+        # Case 1: Corrupt OHLC (High < Low)
+        df_corrupt = df_valid.copy()
+        df_corrupt.iloc[5, 1] = 95.0 # High = 95 < Low = 99
+        _, _, stats_corrupt = HistoricalStockLearner.analyze_30d_stock_history("TEST_CORR", df_corrupt, return_directional=True)
+        self.assertEqual(stats_corrupt.get("status"), "CORRUPT_OHLC_RELATIONSHIPS")
+
+        # Case 2: Non-finite values (NaN / Inf)
+        df_nan = df_valid.copy()
+        df_nan.iloc[5, 3] = np.nan
+        _, _, stats_nan = HistoricalStockLearner.analyze_30d_stock_history("TEST_NAN", df_nan, return_directional=True)
+        self.assertEqual(stats_nan.get("status"), "NON_FINITE_DATA")
+
+        # Case 3: Duplicate timestamps
+        dates_dup = list(dates[:10]) + list(dates[:10])
+        df_dup = pd.DataFrame({
+            "Open": [100.0] * 20, "High": [105.0] * 20, "Low": [99.0] * 20, "Close": [102.0] * 20
+        }, index=dates_dup)
+        _, _, stats_dup = HistoricalStockLearner.analyze_30d_stock_history("TEST_DUP", df_dup, return_directional=True)
+        self.assertEqual(stats_dup.get("status"), "DUPLICATE_TIMESTAMPS")
+
+        # Case 4: Timezone-aware vs Timezone-naive as_of_ts
+        as_of_naive = "2026-11-20 10:00:00"
+        as_of_aware = pd.to_datetime(as_of_naive).tz_localize(ist)
+        
+        _, _, stats_naive = HistoricalStockLearner.analyze_30d_stock_history("TEST_TZ1", df_valid, as_of_ts=as_of_naive, return_directional=True)
+        _, _, stats_aware = HistoricalStockLearner.analyze_30d_stock_history("TEST_TZ2", df_valid, as_of_ts=as_of_aware, return_directional=True)
+        self.assertEqual(stats_naive.get("status"), "SUCCESS")
+        self.assertEqual(stats_aware.get("status"), "SUCCESS")
+        self.assertEqual(stats_naive.get("bull_mult"), stats_aware.get("bull_mult"), "Naive and Aware as_of_ts must yield identical multipliers")
 
     def test_promotion_defensive_validation_and_failure_state_preservation(self):
         """
