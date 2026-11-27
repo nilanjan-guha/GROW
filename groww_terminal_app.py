@@ -666,7 +666,20 @@ def background_screener_worker():
                 # 3. Rotating batch of 25 stocks from the full F&O universe (ensuring every F&O stock refreshes continuously)
                 today_str = datetime.datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%Y-%m-%d')
                 
-                # Daily purge: reset persistent preparing tracking on a new trading date
+                # Daily purge: reset persistent preparing tracking and previous session ranked opportunities on a new trading date
+                if screener_state.get("last_scanned_session_date") != today_str:
+                    print(f"[SESSION RESET] Main scanner starting new trading day ({today_str}). Resetting previous session opportunities.")
+                    screener_state["last_scanned_session_date"] = today_str
+                    screener_state.setdefault("persistent_preparing_stocks", {}).clear()
+                    screener_state.setdefault("ranked_opportunities", {})["entry_ready"] = []
+                    screener_state.setdefault("ranked_opportunities", {})["preparing"] = []
+                    screener_state.setdefault("raw_market_cache", {}).clear()
+                    # Trigger auto-squareoff of any active signals from prior sessions
+                    try:
+                        evaluate_open_outcomes({}, force_eod=False)
+                    except Exception:
+                        pass
+
                 prep_dict = screener_state.setdefault("persistent_preparing_stocks", {})
                 for p_sym in list(prep_dict.keys()):
                     if prep_dict[p_sym].get("first_detected_date") != today_str:
@@ -1592,17 +1605,19 @@ def get_active_signals_endpoint():
         from core.storage import get_db_connection, evaluate_open_outcomes
         from engine.market_validator import MarketValidator
         
-        # If market is closed past 15:30 IST or non-trading day, run an EOD squareoff check
-        mkt_open = MarketValidator.is_market_open()
-        if not mkt_open:
-            evaluate_open_outcomes({}, force_eod=True)
+        # Always run outcome evaluation to auto-square off any previous session trades
+        evaluate_open_outcomes({})
 
+        today_str = datetime.datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%Y-%m-%d')
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM historical_signals WHERE outcome = 'ACTIVE' ORDER BY id DESC")
+        
+        # Only signals generated TODAY during the active session are eligible to be displayed in the active confirmed trade banner
+        cursor.execute("SELECT * FROM historical_signals WHERE outcome = 'ACTIVE' AND datetime_str LIKE ? ORDER BY id DESC", (f"{today_str}%",))
         active = [dict(r) for r in cursor.fetchall()]
-        # Also return the latest closed/tracked trades (e.g. TARGET HIT, SL HIT) with clear status tags
-        cursor.execute("SELECT * FROM historical_signals ORDER BY id DESC LIMIT 15")
+        
+        # Also return latest tracked trades strictly for today's session
+        cursor.execute("SELECT * FROM historical_signals WHERE datetime_str LIKE ? ORDER BY id DESC LIMIT 15", (f"{today_str}%",))
         recent_all = [dict(r) for r in cursor.fetchall()]
         conn.close()
 

@@ -243,11 +243,24 @@ class BackgroundContinuousTracker:
 
     def _tracker_loop(self):
         ist = pytz.timezone('Asia/Kolkata')
+        last_tracking_date = None
         while self.is_running:
             try:
                 now = time.time()
                 t0 = time.perf_counter()
-                today_str = datetime.datetime.now(ist).strftime('%Y-%m-%d')
+                now_dt = datetime.datetime.now(ist)
+                today_str = now_dt.strftime('%Y-%m-%d')
+
+                # Daily Session Reset at 09:15 / date change:
+                # When date changes or at market opening, purge prior session's entry_ready, preparing coils, and promotions
+                if last_tracking_date is not None and last_tracking_date != today_str:
+                    print(f"[SESSION RESET] New trading day detected ({today_str} vs prior {last_tracking_date}). Purging stale session candidates.")
+                    self.screener_state.setdefault("persistent_preparing_stocks", {}).clear()
+                    self.screener_state.setdefault("ranked_opportunities", {})["entry_ready"] = []
+                    self.screener_state.setdefault("ranked_opportunities", {})["preparing"] = []
+                    self._promoted_candle_keys.clear()
+                    self.tracked_stats["promotions_today"] = 0
+                last_tracking_date = today_str
 
                 # 1. Clean up obsolete day's preparing tracking
                 prep_dict = self.screener_state.setdefault("persistent_preparing_stocks", {})

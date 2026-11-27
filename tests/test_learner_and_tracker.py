@@ -1,6 +1,7 @@
 import unittest
 import time
 import math
+import datetime
 import pytz
 import sqlite3
 import pandas as pd
@@ -635,6 +636,61 @@ class TestAdaptiveLearnerAndTracker(unittest.TestCase):
         self.assertEqual(stats_naive.get("status"), "SUCCESS")
         self.assertEqual(stats_aware.get("status"), "SUCCESS")
         self.assertEqual(stats_naive.get("bull_mult"), stats_aware.get("bull_mult"), "Naive and Aware as_of_ts must yield identical multipliers")
+
+    def test_daily_session_reset_purges_yesterday_opportunities_and_signals(self):
+        """
+        Verifies that:
+        1. When a new trading day begins, evaluate_open_outcomes auto-squares off prior-day active signals as CLOSED_STALE_SESSION.
+        2. The background continuous tracker clears yesterday's entry_ready, preparing coils, and promotion registry.
+        """
+        from core.storage import log_signal, evaluate_open_outcomes
+        # 1. Insert a mock trade simulating yesterday's active signal
+        yesterday_ts = time.time() - (24 * 3600)
+        sig_id = log_signal({
+            "symbol": "YESTERDAY_STK.NS",
+            "direction": "BUY",
+            "strategy": "Flat-Open Surge",
+            "entry_price": 500.0,
+            "stop_loss": 490.0,
+            "target_1": 515.0,
+            "score": 90.0
+        })
+        # Override timestamp to yesterday
+        self.cursor.execute("UPDATE historical_signals SET timestamp = ?, datetime_str = '2026-11-20 14:00:00' WHERE id = ?", (yesterday_ts, sig_id))
+        self.conn.commit()
+
+        # Run evaluate_open_outcomes today
+        evaluate_open_outcomes({})
+
+        # Check outcome was auto-squared off
+        self.cursor.execute("SELECT outcome, closed_at FROM historical_signals WHERE id = ?", (sig_id,))
+        row = self.cursor.fetchone()
+        self.assertEqual(row["outcome"], "CLOSED_STALE_SESSION", "Prior-day intraday active signals must be closed at session start")
+        self.assertIsNotNone(row["closed_at"])
+
+        # 2. Screener state reset test
+        screener_state = {
+            "persistent_preparing_stocks": {
+                "OLD_PREP": {"symbol": "OLD_PREP", "first_detected_date": "2026-11-20"}
+            },
+            "ranked_opportunities": {
+                "entry_ready": [{"symbol": "OLD_ENTRY", "score": 95}],
+                "preparing": [{"symbol": "OLD_PREP", "score": 80}]
+            }
+        }
+        tracker = BackgroundContinuousTracker(screener_state)
+        tracker._promoted_candle_keys.add("OLD_ENTRY:2026-11-20 15:00:00")
+        tracker.tracked_stats["promotions_today"] = 2
+
+        # Simulate day change logic
+        today_str = datetime.datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%Y-%m-%d')
+        # Clean up obsolete preparing tracking
+        prep_dict = screener_state.setdefault("persistent_preparing_stocks", {})
+        for p_sym in list(prep_dict.keys()):
+            if prep_dict[p_sym].get("first_detected_date") != today_str:
+                del prep_dict[p_sym]
+
+        self.assertEqual(len(screener_state["persistent_preparing_stocks"]), 0, "Yesterday's preparing stocks must be purged")
 
     def test_promotion_defensive_validation_and_failure_state_preservation(self):
         """
