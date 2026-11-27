@@ -857,14 +857,27 @@
             return `data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='48' height='48' viewBox='0 0 48 48'><rect width='48' height='48' rx='24' fill='%230f172a' stroke='%2300f0ff' stroke-width='2'/><text x='50%25' y='55%25' dominant-baseline='middle' text-anchor='middle' font-family='sans-serif' font-weight='900' font-size='18' fill='%2300f0ff'>${clean}</text></svg>`;
         }
 
-        // Restore any stored trades and preparing stocks from localStorage
+        // Restore any stored trades and preparing stocks from localStorage (with strict daily session date validation)
+        const currentSessionDate = new Date().toISOString().slice(0, 10);
         try {
-            const saved = localStorage.getItem('activeConfirmedTrades');
-            if (saved) activeConfirmedTrades = JSON.parse(saved);
-            const savedOutcomes = localStorage.getItem('sessionTrackedOutcomes');
-            if (savedOutcomes) sessionTrackedOutcomes = JSON.parse(savedOutcomes);
-            const savedPrep = localStorage.getItem('persistentPreparingMap');
-            if (savedPrep) persistentPreparingMap = JSON.parse(savedPrep);
+            const savedDate = localStorage.getItem('lastSessionDate');
+            if (savedDate !== currentSessionDate) {
+                // New day: clear previous day's localStorage so old trades never appear in today's banner
+                localStorage.removeItem('activeConfirmedTrades');
+                localStorage.removeItem('sessionTrackedOutcomes');
+                localStorage.removeItem('persistentPreparingMap');
+                localStorage.setItem('lastSessionDate', currentSessionDate);
+                activeConfirmedTrades = {};
+                sessionTrackedOutcomes = {};
+                persistentPreparingMap = {};
+            } else {
+                const saved = localStorage.getItem('activeConfirmedTrades');
+                if (saved) activeConfirmedTrades = JSON.parse(saved);
+                const savedOutcomes = localStorage.getItem('sessionTrackedOutcomes');
+                if (savedOutcomes) sessionTrackedOutcomes = JSON.parse(savedOutcomes);
+                const savedPrep = localStorage.getItem('persistentPreparingMap');
+                if (savedPrep) persistentPreparingMap = JSON.parse(savedPrep);
+            }
         } catch (e) { }
 
         async function init() {
@@ -1598,9 +1611,10 @@
                 others.forEach(oth => {
                     const oSym = oth.symbol.replace('.NS', '');
                     const oBuy = oth.direction === 'BUY' || oth.direction === 'BULLISH';
+                    const oEntry = typeof oth.entry_price === 'number' ? oth.entry_price.toFixed(2) : parseFloat(oth.entry_price || 0).toFixed(2);
                     html += `
                     <span onclick="userSelectStock('${oth.symbol}')" style="cursor:pointer; color:#fff; background:rgba(255,255,255,0.06); padding:2px 6px; border-radius:3px; font-weight:700;">
-                        ${oSym} <b style="color:${oBuy ? 'var(--neon-green)' : 'var(--neon-red)'}; font-size:0.65rem;">${oBuy ? 'BUY' : 'SELL'}</b> (₹${oth.entry_price})
+                        ${oSym} <b style="color:${oBuy ? 'var(--neon-green)' : 'var(--neon-red)'}; font-size:0.65rem;">${oBuy ? 'BUY' : 'SELL'}</b> (₹${oEntry})
                     </span>`;
                 });
                 html += `</div>`;
@@ -1650,26 +1664,14 @@
                     }
 
                     const activeDbIds = new Set(activeDbList.map(s => s.id));
+                    const activeDbSymbols = new Set(activeDbList.map(s => s.symbol));
+
+                    // Purge any activeConfirmedTrades that do not exist as an ACTIVE trade in today's DB session
                     Object.keys(activeConfirmedTrades).forEach(sym => {
                         const tr = activeConfirmedTrades[sym];
-                        if (tr.signal_id && !activeDbIds.has(tr.signal_id)) {
-                            // If closed, move into sessionTrackedOutcomes with appropriate badge
-                            const matchingRecent = recentTracked.find(r => r.id === tr.signal_id);
-                            if (matchingRecent) {
-                                sessionTrackedOutcomes[sym] = {
-                                    symbol: sym,
-                                    direction: matchingRecent.direction || 'BUY',
-                                    current_price: matchingRecent.signal_price || matchingRecent.entry_price,
-                                    change_pct: 0.0,
-                                    suggested_sl: matchingRecent.stop_loss,
-                                    suggested_tp1: matchingRecent.target_1,
-                                    suggested_tp2: matchingRecent.target_2,
-                                    risk_reward_ratio: 1.5,
-                                    conviction_score: matchingRecent.score || 95,
-                                    outcome: matchingRecent.outcome,
-                                    stage: matchingRecent.outcome
-                                };
-                            }
+                        const isMatchById = tr.signal_id && activeDbIds.has(tr.signal_id);
+                        const isMatchBySym = activeDbSymbols.has(sym) || activeDbSymbols.has(`${sym}.NS`) || activeDbSymbols.has(sym.replace('.NS', ''));
+                        if (!isMatchById && !isMatchBySym) {
                             delete activeConfirmedTrades[sym];
                         }
                     });
