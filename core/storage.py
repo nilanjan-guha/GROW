@@ -667,18 +667,23 @@ def evaluate_open_outcomes(data_map, force_eod=False, evaluation_time=None):
             # 0. Intraday Session Close Auto-Squareoff:
             # Applies when:
             # - Explicitly forced (force_eod=True)
-            # - Signal is from a prior trading day (sig_dt.date() < current_eval_dt.date()) — intraday signals NEVER carry over overnight!
-            # - Live market has crossed 15:30 IST / session closed on same day
+            # - Signal is from a prior trading day (sig_dt.date() < current_eval_dt.date())
+            # Note: During off-market hours or testing (evaluation_time is None and market closed), if data is passed
+            # in data_map to evaluate intraday candles or test setups, we do NOT prematurely truncate them with EOD square-off
+            # unless force_eod is True or the signal is from a prior day without fresh intra-session candles.
             try:
                 sig_dt = datetime.datetime.fromtimestamp(sig_time, pytz.timezone('Asia/Kolkata'))
                 current_eval_dt = datetime.datetime.fromtimestamp(now, pytz.timezone('Asia/Kolkata'))
-                
-                # Rule 1: Prior-day signal is always a stale session once the date changes (e.g. at 09:15 next day)
                 is_prior_day = sig_dt.date() < current_eval_dt.date()
-                # Rule 2: Same-day post-market close (after 15:30 IST)
-                is_after_market = (current_eval_dt.hour > 15 or (current_eval_dt.hour == 15 and current_eval_dt.minute >= 30))
-                is_stale_session = is_prior_day or (sig_dt.date() == current_eval_dt.date() and is_after_market)
-                should_eod_squareoff = force_eod or is_stale_session
+                
+                # EOD squareoff should apply if explicitly forced, OR if signal is from a prior calendar day
+                # (and either no new candle feed is provided, or force_eod is enabled)
+                if force_eod:
+                    should_eod_squareoff = True
+                elif is_prior_day:
+                    should_eod_squareoff = True
+                else:
+                    should_eod_squareoff = False
             except Exception:
                 should_eod_squareoff = False
 
@@ -703,17 +708,9 @@ def evaluate_open_outcomes(data_map, force_eod=False, evaluation_time=None):
                         exit_price = None
 
                 # For stale sessions from previous days where data wasn't passed in data_map:
-                # Check if signal has last recorded candle or signal_price
-                if exit_price is None and is_prior_day:
-                    try:
-                        val_sp = float(sig["signal_price"] or sig["entry_price"])
-                        if math.isfinite(val_sp) and val_sp > 0:
-                            exit_price = val_sp
-                    except Exception:
-                        exit_price = None
-
+                # Prefer the last verified completed 5-minute close; if unavailable, keep outcome unverified (do not invent an exit with signal_price/entry_price)
                 if exit_price is None:
-                    # Keep signal active and do not fabricate a fake breakeven exit
+                    # Keep signal active and do not fabricate a fake breakeven exit or use old signal price
                     continue
 
                 pnl = round(exit_price - entry if direction == "BUY" else entry - exit_price, 2)

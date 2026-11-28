@@ -241,6 +241,24 @@ class BackgroundContinuousTracker:
             except Exception as e:
                 time.sleep(15)
 
+    def reset_session_state(self, session_date_str=None):
+        """
+        Production daily session reset method.
+        Purges prior day's preparing coils, entry_ready breakouts, preparing candidates,
+        clears promoted candle keys, and resets daily counter metrics.
+        """
+        if session_date_str is None:
+            ist = pytz.timezone('Asia/Kolkata')
+            session_date_str = datetime.datetime.now(ist).strftime('%Y-%m-%d')
+
+        print(f"[SESSION RESET] Executing production session reset for session date {session_date_str}.")
+        self.screener_state.setdefault("persistent_preparing_stocks", {}).clear()
+        self.screener_state.setdefault("ranked_opportunities", {})["entry_ready"] = []
+        self.screener_state.setdefault("ranked_opportunities", {})["preparing"] = []
+        self._promoted_candle_keys.clear()
+        self.tracked_stats["promotions_today"] = 0
+        return True
+
     def _tracker_loop(self):
         ist = pytz.timezone('Asia/Kolkata')
         last_tracking_date = None
@@ -255,11 +273,7 @@ class BackgroundContinuousTracker:
                 # When date changes or at market opening, purge prior session's entry_ready, preparing coils, and promotions
                 if last_tracking_date is not None and last_tracking_date != today_str:
                     print(f"[SESSION RESET] New trading day detected ({today_str} vs prior {last_tracking_date}). Purging stale session candidates.")
-                    self.screener_state.setdefault("persistent_preparing_stocks", {}).clear()
-                    self.screener_state.setdefault("ranked_opportunities", {})["entry_ready"] = []
-                    self.screener_state.setdefault("ranked_opportunities", {})["preparing"] = []
-                    self._promoted_candle_keys.clear()
-                    self.tracked_stats["promotions_today"] = 0
+                    self.reset_session_state(today_str)
                 last_tracking_date = today_str
 
                 # 1. Clean up obsolete day's preparing tracking

@@ -857,8 +857,24 @@
             return `data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='48' height='48' viewBox='0 0 48 48'><rect width='48' height='48' rx='24' fill='%230f172a' stroke='%2300f0ff' stroke-width='2'/><text x='50%25' y='55%25' dominant-baseline='middle' text-anchor='middle' font-family='sans-serif' font-weight='900' font-size='18' fill='%2300f0ff'>${clean}</text></svg>`;
         }
 
-        // Restore any stored trades and preparing stocks from localStorage (with strict daily session date validation)
-        const currentSessionDate = new Date().toISOString().slice(0, 10);
+        // Restore any stored trades and preparing stocks from localStorage (with strict daily session date validation in Asia/Kolkata)
+        function getISTDateString() {
+            try {
+                // Formats to YYYY-MM-DD explicitly in Asia/Kolkata timezone
+                const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+                const y = parts.find(p => p.type === 'year').value;
+                const m = parts.find(p => p.type === 'month').value;
+                const d = parts.find(p => p.type === 'day').value;
+                return `${y}-${m}-${d}`;
+            } catch (e) {
+                // Fallback using UTC offset calculation for IST (+05:30)
+                const now = new Date();
+                const istOffsetMs = 5.5 * 60 * 60 * 1000;
+                const istDate = new Date(now.getTime() + istOffsetMs);
+                return istDate.toISOString().slice(0, 10);
+            }
+        }
+        const currentSessionDate = getISTDateString();
         try {
             const savedDate = localStorage.getItem('lastSessionDate');
             if (savedDate !== currentSessionDate) {
@@ -1667,11 +1683,16 @@
                     const activeDbSymbols = new Set(activeDbList.map(s => s.symbol));
 
                     // Purge any activeConfirmedTrades that do not exist as an ACTIVE trade in today's DB session
+                    // P1 Requirement: When a saved trade has an ID, require an exact ID match. Use symbol matching ONLY when there is no ID.
                     Object.keys(activeConfirmedTrades).forEach(sym => {
                         const tr = activeConfirmedTrades[sym];
-                        const isMatchById = tr.signal_id && activeDbIds.has(tr.signal_id);
-                        const isMatchBySym = activeDbSymbols.has(sym) || activeDbSymbols.has(`${sym}.NS`) || activeDbSymbols.has(sym.replace('.NS', ''));
-                        if (!isMatchById && !isMatchBySym) {
+                        let isValidActive = false;
+                        if (tr.signal_id) {
+                            isValidActive = activeDbIds.has(tr.signal_id);
+                        } else {
+                            isValidActive = activeDbSymbols.has(sym) || activeDbSymbols.has(`${sym}.NS`) || activeDbSymbols.has(sym.replace('.NS', ''));
+                        }
+                        if (!isValidActive) {
                             delete activeConfirmedTrades[sym];
                         }
                     });

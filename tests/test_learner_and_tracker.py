@@ -659,16 +659,36 @@ class TestAdaptiveLearnerAndTracker(unittest.TestCase):
         self.cursor.execute("UPDATE historical_signals SET timestamp = ?, datetime_str = '2026-11-20 14:00:00' WHERE id = ?", (yesterday_ts, sig_id))
         self.conn.commit()
 
-        # Run evaluate_open_outcomes today
-        evaluate_open_outcomes({})
+        # Run evaluate_open_outcomes today with verified completed closing candle from yesterday's session
+        verified_closing_candle = {"close": 508.0, "current_price": 508.0}
+        evaluate_open_outcomes({"YESTERDAY_STK.NS": verified_closing_candle})
 
-        # Check outcome was auto-squared off
-        self.cursor.execute("SELECT outcome, closed_at FROM historical_signals WHERE id = ?", (sig_id,))
+        # Check outcome was auto-squared off with verified exit
+        self.cursor.execute("SELECT outcome, closed_at, final_pnl FROM historical_signals WHERE id = ?", (sig_id,))
         row = self.cursor.fetchone()
-        self.assertEqual(row["outcome"], "CLOSED_STALE_SESSION", "Prior-day intraday active signals must be closed at session start")
+        self.assertEqual(row["outcome"], "CLOSED_STALE_SESSION", "Prior-day intraday active signals must be closed with verified candle at session start")
+        self.assertEqual(row["final_pnl"], 8.0, "Verified exit price P&L must be 508.0 - 500.0 = 8.0")
         self.assertIsNotNone(row["closed_at"])
 
-        # 2. Screener state reset test
+        # Also verify that when NO verified candle is provided, it does not invent an exit and remains ACTIVE (unverified)
+        unverified_sig_id = log_signal({
+            "symbol": "UNVERIFIED_STK.NS",
+            "direction": "BUY",
+            "strategy": "Flat-Open Surge",
+            "entry_price": 300.0,
+            "stop_loss": 290.0,
+            "target_1": 315.0,
+            "score": 90.0
+        })
+        self.cursor.execute("UPDATE historical_signals SET timestamp = ?, datetime_str = '2026-11-20 14:00:00' WHERE id = ?", (yesterday_ts, unverified_sig_id))
+        self.conn.commit()
+
+        evaluate_open_outcomes({})  # No candle provided for UNVERIFIED_STK.NS
+        self.cursor.execute("SELECT outcome FROM historical_signals WHERE id = ?", (unverified_sig_id,))
+        unverified_row = self.cursor.fetchone()
+        self.assertEqual(unverified_row["outcome"], "ACTIVE", "Without verified completed candle, stale signal must remain ACTIVE/unverified rather than inventing an exit")
+
+        # 2. Production session reset test (invokes production reset_session_state method)
         screener_state = {
             "persistent_preparing_stocks": {
                 "OLD_PREP": {"symbol": "OLD_PREP", "first_detected_date": "2026-11-20"}
@@ -682,15 +702,59 @@ class TestAdaptiveLearnerAndTracker(unittest.TestCase):
         tracker._promoted_candle_keys.add("OLD_ENTRY:2026-11-20 15:00:00")
         tracker.tracked_stats["promotions_today"] = 2
 
-        # Simulate day change logic
-        today_str = datetime.datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%Y-%m-%d')
-        # Clean up obsolete preparing tracking
-        prep_dict = screener_state.setdefault("persistent_preparing_stocks", {})
-        for p_sym in list(prep_dict.keys()):
-            if prep_dict[p_sym].get("first_detected_date") != today_str:
-                del prep_dict[p_sym]
+        # Invoke actual production reset method
+        res_reset = tracker.reset_session_state("2026-11-21")
+        self.assertTrue(res_reset)
+        self.assertEqual(len(screener_state["persistent_preparing_stocks"]), 0, "Production reset must purge preparing stocks")
+        self.assertEqual(len(screener_state["ranked_opportunities"]["entry_ready"]), 0, "Production reset must purge entry_ready opportunities")
+        self.assertEqual(len(screener_state["ranked_opportunities"]["preparing"]), 0, "Production reset must purge preparing opportunities")
+        self.assertEqual(len(tracker._promoted_candle_keys), 0, "Production reset must clear promoted candle keys")
+        self.assertEqual(tracker.tracked_stats["promotions_today"], 0, "Production reset must reset daily promotions count to 0")
 
-        self.assertEqual(len(screener_state["persistent_preparing_stocks"]), 0, "Yesterday's preparing stocks must be purged")
+    def test_historical_learner_p2_requirements(self):
+        """
+        P2 Requirements Test:
+        1. Reject unsorted/non-monotonic timestamps with UNSORTED_TIMESTAMPS status.
+        2. Reject invalid as_of_ts (parsing error) with INVALID_AS_OF_TIMESTAMP status and safe default multipliers.
+        3. Breakout signals with incomplete forward windows (< 6 forward bars) are classified as censored, not unresolved.
+        """
+        ist = pytz.timezone('Asia/Kolkata')
+        dates = pd.date_range("2026-11-20 09:15", periods=20, freq="5min", tz=ist)
+        df = pd.DataFrame({
+            "Open": [100.0] * 20, "High": [105.0] * 20, "Low": [99.0] * 20, "Close": [102.0] * 20, "Volume": [1000] * 20
+        }, index=dates)
+
+        # 1. Unsorted timestamps rejection
+        unsorted_dates = list(dates)
+        unsorted_dates[0], unsorted_dates[1] = unsorted_dates[1], unsorted_dates[0] # swap first two
+        df_unsorted = df.copy()
+        df_unsorted.index = unsorted_dates
+        b_mult, s_mult, stats_unsorted = HistoricalStockLearner.analyze_30d_stock_history("TEST_UNSORTED", df_unsorted, return_directional=True)
+        self.assertEqual(b_mult, 1.0)
+        self.assertEqual(s_mult, 1.0)
+        self.assertEqual(stats_unsorted.get("status"), "UNSORTED_TIMESTAMPS", "Unsorted timestamps must be rejected with UNSORTED_TIMESTAMPS")
+
+        # 2. Invalid as_of_ts rejection
+        b_mult2, s_mult2, stats_as_of = HistoricalStockLearner.analyze_30d_stock_history("TEST_ASOF", df, as_of_ts="INVALID_TIMESTAMP_STRING_XYZ", return_directional=True)
+        self.assertEqual(b_mult2, 1.0)
+        self.assertEqual(s_mult2, 1.0)
+        self.assertEqual(stats_as_of.get("status"), "INVALID_AS_OF_TIMESTAMP", "Invalid as_of_ts must fail-closed and return INVALID_AS_OF_TIMESTAMP")
+
+        # 3. Forward window censoring: Breakout near end of dataset (fewer than 6 forward bars)
+        # In a 12-bar dataset, bar 8 has only 3 forward bars (bars 9, 10, 11).
+        # A breakout at bar 8 must be classified as censored, NOT unresolved!
+        dates_short = pd.date_range("2026-11-20 09:15", periods=12, freq="5min", tz=ist)
+        df_censored = pd.DataFrame({
+            "Open": [100.0] * 12, "High": [100.0] * 12, "Low": [99.0] * 12, "Close": [99.5] * 12, "Volume": [1000] * 12
+        }, index=dates_short)
+        # Create a breakout on bar 8
+        df_censored.iloc[8, df_censored.columns.get_loc("High")] = 110.0
+        df_censored.iloc[8, df_censored.columns.get_loc("Close")] = 108.0
+
+        _, _, stats_c = HistoricalStockLearner.analyze_30d_stock_history("TEST_CENSORED", df_censored, return_directional=True)
+        self.assertEqual(stats_c.get("status"), "SUCCESS")
+        self.assertEqual(stats_c.get("unresolved_trades"), 0, "Breakout without complete 6-bar forward window must NOT be counted as unresolved")
+        self.assertGreater(stats_c.get("total_censored"), 0, "Incomplete forward window breakout must be tracked as censored")
 
     def test_promotion_defensive_validation_and_failure_state_preservation(self):
         """

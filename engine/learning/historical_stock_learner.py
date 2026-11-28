@@ -218,7 +218,9 @@ class HistoricalStockLearner:
                 return (1.0, 1.0, empty_stats) if return_directional else 1.0
 
             if not df.index.is_monotonic_increasing:
-                df = df.sort_index()
+                print(f"[HISTORICAL LEARNER ERROR] Unsorted timestamps in historical feed for {symbol}")
+                empty_stats["status"] = "UNSORTED_TIMESTAMPS"
+                return (1.0, 1.0, empty_stats) if return_directional else 1.0
 
             # P2 Validation: Non-finite values check
             for col in req_cols:
@@ -254,7 +256,8 @@ class HistoricalStockLearner:
                     df = df[df.index <= as_of_dt]
                 except Exception as ex:
                     print(f"[HISTORICAL LEARNER ERROR] Error slicing as_of_ts {as_of_ts} for {symbol}: {ex}")
-                    pass
+                    empty_stats["status"] = "INVALID_AS_OF_TIMESTAMP"
+                    return (1.0, 1.0, empty_stats) if return_directional else 1.0
 
             if len(df) < 10:
                 empty_stats["status"] = "INSUFFICIENT_HISTORY"
@@ -268,24 +271,34 @@ class HistoricalStockLearner:
             bull_wins = 0
             bull_losses = 0
             bull_unresolved = 0
+            bull_censored = 0
 
             bear_wins = 0
             bear_losses = 0
             bear_unresolved = 0
+            bear_censored = 0
 
             n_bars = len(df)
 
             # Analyze prior breakout and breakdown events with genuine Target vs Stop evaluation
-            # Evaluate across completed bars (leaving room for forward check)
-            for i in range(5, n_bars - 2):
+            # Evaluate across completed bars:
+            # P2 Requirement: Only evaluate signals with a COMPLETE forward window (6 forward bars: i+1 through i+6).
+            # If fewer than 6 forward candles exist (i > n_bars - 7), classify as censored, NOT unresolved!
+            for i in range(5, n_bars - 1):
                 prior_high = float(h.iloc[i-5:i].max())
                 prior_low = float(l.iloc[i-5:i].min())
                 curr_h = float(h.iloc[i])
                 curr_l = float(l.iloc[i])
                 curr_c = float(c.iloc[i])
 
+                has_complete_forward_window = (i + 6 < n_bars)
+
                 # 1. Bullish Breakout condition: close and high above prior 5-bar high
                 if curr_h > prior_high and curr_c > prior_high:
+                    if not has_complete_forward_window:
+                        bull_censored += 1
+                        continue
+
                     next_open = float(o.iloc[i+1])
                     slippage = next_open * 0.0005
                     entry = round(next_open + slippage, 2)
@@ -293,7 +306,7 @@ class HistoricalStockLearner:
                     risk = entry - stop
                     if risk > 0:
                         target = round(entry + (1.5 * risk), 2)
-                        max_forward = min(n_bars, i + 7)
+                        max_forward = i + 7  # strictly evaluates 6 bars (i+1 to i+6)
                         resolved = False
                         for fwd in range(i + 1, max_forward):
                             fwd_o = float(o.iloc[fwd])
@@ -325,6 +338,10 @@ class HistoricalStockLearner:
 
                 # 2. Bearish Breakdown condition: close and low below prior 5-bar low
                 elif curr_l < prior_low and curr_c < prior_low:
+                    if not has_complete_forward_window:
+                        bear_censored += 1
+                        continue
+
                     next_open = float(o.iloc[i+1])
                     slippage = next_open * 0.0005
                     entry = round(next_open - slippage, 2)
@@ -332,7 +349,7 @@ class HistoricalStockLearner:
                     risk = stop - entry
                     if risk > 0:
                         target = round(entry - (1.5 * risk), 2)
-                        max_forward = min(n_bars, i + 7)
+                        max_forward = i + 7  # strictly evaluates 6 bars (i+1 to i+6)
                         resolved = False
                         for fwd in range(i + 1, max_forward):
                             fwd_o = float(o.iloc[fwd])
@@ -452,6 +469,9 @@ class HistoricalStockLearner:
                 "unresolved_trades": total_unresolved,
                 "bull_unresolved": bull_unresolved,
                 "bear_unresolved": bear_unresolved,
+                "bull_censored": bull_censored,
+                "bear_censored": bear_censored,
+                "total_censored": bull_censored + bear_censored,
                 "bull_unresolved_rate": bull_unres_rate,
                 "bear_unresolved_rate": bear_unres_rate,
                 "bull_mult": bull_mult,
